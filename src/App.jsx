@@ -990,6 +990,9 @@ function ImportModal({ onClose, onImport }) {
 
 
 
+const fmt  = (n,d=2)=>n.toLocaleString("de-DE",{minimumFractionDigits:d,maximumFractionDigits:d});
+const fmtE = (n)=>`€${fmt(Math.abs(n),0)}`;
+
 // ── StockDetail — full page (3a financials + 3b charts + 3d scorecard) ──────
 function StockDetail({ pos, onBack }) {
   const [data, setData]     = useState(null);
@@ -1783,8 +1786,6 @@ export default function App() {
   },[positions,fBroker,fType,sortBy,sortDir]);
   function toggleSort(col){ if(sortBy===col) setSortDir(d=>d==="asc"?"desc":"asc"); else{setSortBy(col);setSortDir("desc");} }
 
-  const fmt  = (n,d=2)=>n.toLocaleString("de-DE",{minimumFractionDigits:d,maximumFractionDigits:d});
-  const fmtE = (n)=>`€${fmt(Math.abs(n),0)}`;
   function toggleBM(id){ setActiveBM(prev=>prev.includes(id)?prev.filter(x=>x!==id):[...prev,id]); }
 
   function addPos() {
