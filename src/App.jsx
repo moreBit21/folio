@@ -1456,9 +1456,12 @@ export default function App() {
               </div>
               {chartError && (
                 <div style={{padding:"8px 12px",marginBottom:8,background:"rgba(255,77,109,0.1)",border:"1px solid rgba(255,77,109,0.3)",borderRadius:6,fontSize:11,color:"var(--red)",fontFamily:"IBM Plex Mono"}}>
-                  Chart error: {chartError}
+                  ⚠ Chart error: {chartError}
                 </div>
               )}
+              <div style={{padding:"6px 10px",marginBottom:6,background:"var(--surface2)",border:"1px solid var(--border)",borderRadius:6,fontSize:10,color:"var(--text3)",fontFamily:"IBM Plex Mono"}}>
+                debug: tx={transactions.length} pos={positions.length} chartRows={chartData.length} loading={String(chartLoading)} err={chartError||"none"}
+              </div>
               {chartLoading && (
                 <div style={{height:250,display:"flex",alignItems:"center",justifyContent:"center"}}>
                   <span className="mono shimmer" style={{fontSize:11,color:"var(--text3)"}}>⟳ Loading price history from FMP…</span>
