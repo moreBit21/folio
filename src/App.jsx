@@ -1287,9 +1287,12 @@ export default function App() {
         let portVal=0;
         allIsins.forEach(isin=>{
           const qty=qtyByDay[isin]?.[i]||0; if(qty<=0) return;
-          const p=priceByIsin[isin]?.[ds];
+          // Only include if we have price history for this ISIN at all
+          if(!priceByIsin[isin]) return;
+          const p=priceByIsin[isin][ds];
           if(p!=null) lastPrice[isin]=p;
-          portVal+=qty*(lastPrice[isin]||0);
+          // Only use lastPrice if it's from actual history (not carried from current price)
+          if(lastPrice[isin]) portVal+=qty*lastPrice[isin];
         });
 
         if(!bmNormBase&&portVal>0){
