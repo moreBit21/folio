@@ -1303,61 +1303,88 @@ export default function App() {
         }catch(e){}
       }));
 
-      // ── Pre-scan every single day to find norm base (step may skip over it) ──
+      // ── Build carry-forward price maps (every day, no step) ──
       const lastPrice={};
       const lastBmPrice={};
-      let bmNormBase=null;
+      // priceOnDay[isin][i] = price at day i (carry-forward filled)
+      const priceOnDay={};
+      allIsins.forEach(isin=>{ priceOnDay[isin]=new Float64Array(totalDays+1); });
       for(let i=0;i<=totalDays;i++){
         const d=new Date(from); d.setDate(d.getDate()+i);
         const ds=d.toISOString().slice(0,10);
-        // accumulate carry-forward prices
         allIsins.forEach(isin=>{
           const p=priceByIsin[isin]?.[ds];
           if(p!=null) lastPrice[isin]=p;
+          priceOnDay[isin][i]=lastPrice[isin]||0;
         });
         activeBM.forEach(id=>{ if(bmPrices[id]?.[ds]) lastBmPrice[id]=bmPrices[id][ds]; });
-        if(!bmNormBase){
-          let portVal=0;
-          allIsins.forEach(isin=>{
-            const qty=qtyByDay[isin]?.[i]||0; if(qty<=0) return;
-            if(lastPrice[isin]) portVal+=qty*lastPrice[isin];
-          });
-          const allBmReady = activeBM.length===0 || activeBM.every(id=>lastBmPrice[id]);
-          if(portVal>0 && allBmReady) bmNormBase={portVal, bp:{...lastBmPrice}};
-        }
       }
-      // Reset carry-forwards for main loop
-      Object.keys(lastPrice).forEach(k=>delete lastPrice[k]);
-      Object.keys(lastBmPrice).forEach(k=>delete lastBmPrice[k]);
+      // bmPriceOnDay[id][i] = benchmark price at day i (carry-forward filled)
+      const bmPriceOnDay={};
+      activeBM.forEach(id=>{
+        bmPriceOnDay[id]=new Float64Array(totalDays+1);
+        Object.keys(lastBmPrice).forEach(k=>delete lastBmPrice[k]);
+        for(let i=0;i<=totalDays;i++){
+          const d=new Date(from); d.setDate(d.getDate()+i);
+          const ds=d.toISOString().slice(0,10);
+          if(bmPrices[id]?.[ds]) lastBmPrice[id]=bmPrices[id][ds];
+          bmPriceOnDay[id][i]=lastBmPrice[id]||0;
+        }
+      });
+
+      // ── Benchmark = hypothetical portfolio that invested same cash flows into benchmark ──
+      // On each buy transaction, "buy" equivalent benchmark units at that day's price.
+      // This makes the comparison fair regardless of when capital was deployed.
+      const bmUnits={};  // benchmark units accumulated per id
+      activeBM.forEach(id=>{ bmUnits[id]=0; });
+      // Sort all buy transactions by date index
+      const sortedBuys = sorted
+        .filter(t=>t.type==='buy' && t.amountEur>0)
+        .map(t=>{
+          const txD = new Date(t.date);
+          const i = Math.max(0, Math.round((txD-from)/86400000));
+          return {i: Math.min(i, totalDays), amount: t.amountEur};
+        });
+      // Accumulate benchmark units as capital is deployed
+      // bmUnits[id] after all buys = total units if you'd invested all buys into benchmark
+      const bmUnitsOnDay={};
+      activeBM.forEach(id=>{
+        bmUnitsOnDay[id]=new Float64Array(totalDays+1);
+        let units=0;
+        let buyIdx=0;
+        for(let i=0;i<=totalDays;i++){
+          while(buyIdx<sortedBuys.length && sortedBuys[buyIdx].i<=i){
+            const bp=bmPriceOnDay[id][sortedBuys[buyIdx].i];
+            if(bp>0) units+=sortedBuys[buyIdx].amount/bp;
+            buyIdx++;
+          }
+          bmUnitsOnDay[id][i]=units;
+        }
+      });
 
       // ── Assemble rows ──
       const rows=[];
       for(let i=0;i<=totalDays;i+=step){
         const d=new Date(from); d.setDate(d.getDate()+i);
-        const ds=d.toISOString().slice(0,10);
         const baseRow=investedChartData[Math.round(i/step)]||{};
 
         let portVal=0;
         allIsins.forEach(isin=>{
           const qty=qtyByDay[isin]?.[i]||0; if(qty<=0) return;
-          if(!priceByIsin[isin]) return;
-          const p=priceByIsin[isin][ds];
-          if(p!=null) lastPrice[isin]=p;
-          if(lastPrice[isin]) portVal+=qty*lastPrice[isin];
+          const p=priceOnDay[isin][i]; if(!p) return;
+          portVal+=qty*p;
         });
-        activeBM.forEach(id=>{ if(bmPrices[id]?.[ds]) lastBmPrice[id]=bmPrices[id][ds]; });
 
         const row={
           date:baseRow.date||d.toLocaleDateString('de-DE',{day:'2-digit',month:'short'}),
           invested:baseRow.invested||0,
           ...(portVal>0?{portfolio:+portVal.toFixed(2)}:{}),
         };
-        if(bmNormBase){
-          activeBM.forEach(id=>{
-            const p0=bmNormBase.bp[id], p1=lastBmPrice[id];
-            if(p0&&p1) row[id]=+(bmNormBase.portVal*(p1/p0)).toFixed(0);
-          });
-        }
+        activeBM.forEach(id=>{
+          const units=bmUnitsOnDay[id][i];
+          const p=bmPriceOnDay[id][i];
+          if(units>0&&p>0) row[id]=+(units*p).toFixed(0);
+        });
         rows.push(row);
       }
 
