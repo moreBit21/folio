@@ -131,7 +131,7 @@ const BENCHMARKS    = [
   {id:"btc",   label:"BTC",       color:"#f7931a"},
 ];
 const RANGES        = ["1M","3M","6M","YTD","1Y","ALL"];
-const RANGE_MONTHS  = {"1M":1,"3M":3,"6M":6,"YTD":2,"1Y":12,"ALL":18};
+const RANGE_MONTHS  = {"1M":1,"3M":3,"6M":6,"YTD":2,"1Y":12,"ALL":999};
 const ALLOC_COLORS  = ["#00e5a0","#627eea","#f7931a","#9945ff","#f0b429","#76b900","#e84142"];
 const BROKERS_OPT   = ["Bitvavo","Smartbroker+","Trade Republic","Manual"];
 const ASSET_TYPES   = ["stock","etf","crypto"];
@@ -1121,11 +1121,14 @@ export default function App() {
     if(!transactions.length) return [];
     const months = RANGE_MONTHS[range] ?? 12;
     const now    = new Date(2026,2,7);
-    const from   = new Date(now); from.setMonth(from.getMonth()-months);
+    const sorted0 = [...transactions].sort((a,b)=>a.date.localeCompare(b.date));
+    const requestedFrom = new Date(now); requestedFrom.setMonth(requestedFrom.getMonth()-months);
+    const firstTx = sorted0[0]?.date;
+    const from = (firstTx && new Date(firstTx) > requestedFrom) ? new Date(firstTx) : requestedFrom;
     const fromStr = from.toISOString().slice(0,10);
     const toStr   = now.toISOString().slice(0,10);
     const totalDays = Math.round((now-from)/86400000);
-    const sorted = [...transactions].sort((a,b)=>a.date.localeCompare(b.date));
+    const sorted = sorted0;
 
     // Cumulative buys = total capital ever deployed (always positive)
     let cumBuys = 0;
@@ -1551,7 +1554,7 @@ export default function App() {
 
                     {activeBM.map(id=>{
                       const b=BENCHMARKS.find(x=>x.id===id);
-                      return <Area key={id} type="linear" dataKey={id} name={b.label} stroke={b.color} strokeWidth={1.5} fill={"url(#g_"+id+")"} dot={false}/>;
+                      return <Area key={id} type="linear" dataKey={id} name={b.label} stroke={b.color} strokeWidth={1.5} strokeOpacity={0.8} fill="none" dot={false}/>;
                     })}
                     <Area type="linear" dataKey="portfolio" name="Portfolio" stroke="#00e5a0" strokeWidth={2.5} fill="url(#gPort)" dot={false}/>
                   </AreaChart>
