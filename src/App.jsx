@@ -1148,7 +1148,10 @@ export default function App() {
       const now    = new Date(2026,2,7);
       const toStr  = now.toISOString().slice(0,10);
 
-      // Clamp window start to first transaction date — no point showing before we have data
+      // ── Sort transactions first (needed to clamp window start) ──
+      const sorted = [...transactions].sort((a,b)=>a.date.localeCompare(b.date));
+
+      // Clamp window start to first transaction date
       const requestedFrom = new Date(now); requestedFrom.setMonth(requestedFrom.getMonth()-months);
       const firstTxDate = sorted[0]?.date;
       const from = firstTxDate && new Date(firstTxDate) > requestedFrom
@@ -1169,7 +1172,6 @@ export default function App() {
       };
 
       // ── Reconstruct exact qty per ISIN per day ──
-      const sorted = [...transactions].sort((a,b)=>a.date.localeCompare(b.date));
       const allIsins = [...new Set(sorted.map(t=>t.isin).filter(Boolean))];
 
       // ── Qty reconstruction ──
