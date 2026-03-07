@@ -1196,8 +1196,15 @@ export default function App() {
 
       // ── Resolve ISIN → FMP ticker ──
       const isinToTicker={};
-      const pickTicker = results => {
+      const pickTicker = (results, isin) => {
         if(!Array.isArray(results)||!results.length) return null;
+        // US ISINs: prefer clean US ticker (no suffix) — APC.DE/NVD.DE are wrong German mappings
+        if(isin?.startsWith('US')) {
+          return (results.find(r=>!r.symbol?.includes('.'))
+            || results.find(r=>r.marketCap>0)
+            || results[0])?.symbol || null;
+        }
+        // EU ISINs: prefer home exchange
         return (results.find(r=>r.symbol?.endsWith('.DE'))
           || results.find(r=>r.symbol?.endsWith('.F'))
           || results.find(r=>r.symbol?.endsWith('.AS')||r.symbol?.endsWith('.PA'))
@@ -1222,7 +1229,7 @@ export default function App() {
       await Promise.all(needsSearch.slice(0,30).map(async isin=>{
         try{
           const res = await fmpGet('/search-isin?isin='+isin);
-          const t = pickTicker(res);
+          const t = pickTicker(res, isin);
           if(t) { isinToTicker[isin]=t; console.log(isin,'->',t); }
           else console.warn('no ticker for', isin);
         }catch(e){ console.warn('search fail', isin, e.message); }
@@ -1285,18 +1292,13 @@ export default function App() {
         const baseRow=investedChartData[Math.round(i/step)]||{};
 
         let portVal=0;
-        const portBreakdown=[];
         allIsins.forEach(isin=>{
           const qty=qtyByDay[isin]?.[i]||0; if(qty<=0) return;
           if(!priceByIsin[isin]) return;
           const p=priceByIsin[isin][ds];
           if(p!=null) lastPrice[isin]=p;
-          if(lastPrice[isin]){
-            portVal+=qty*lastPrice[isin];
-            portBreakdown.push({isin,qty,price:lastPrice[isin],val:qty*lastPrice[isin]});
-          }
+          if(lastPrice[isin]) portVal+=qty*lastPrice[isin];
         });
-        if(portVal>500000 && !rows.length) console.warn('HIGH portVal',ds,portVal,portBreakdown.sort((a,b)=>b.val-a.val).slice(0,5));
 
         if(!bmNormBase&&portVal>0){
           const bp={};
