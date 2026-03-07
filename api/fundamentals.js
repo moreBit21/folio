@@ -1,4 +1,4 @@
-// FMP fundamentals proxy — income statement, cash flow, key metrics, ratios
+// FMP stable API — fundamentals proxy
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
@@ -12,24 +12,22 @@ export default async function handler(req, res) {
 
   const fmp = async (path) => {
     const sep = path.includes('?') ? '&' : '?';
-    const r = await fetch(`https://financialmodelingprep.com/api/v3${path}${sep}apikey=${FMP_KEY}`);
+    const r = await fetch(`https://financialmodelingprep.com/stable${path}${sep}apikey=${FMP_KEY}`);
     return r.json();
   };
 
   try {
-    // Fetch all in parallel
     const [income, cashflow, ratios, profile, quote] = await Promise.all([
-      fmp(`/income-statement/${symbol}?limit=5`),
-      fmp(`/cash-flow-statement/${symbol}?limit=5`),
-      fmp(`/key-metrics/${symbol}?limit=5`),
-      fmp(`/profile/${symbol}`),
-      fmp(`/quote/${symbol}`),
+      fmp(`/income-statement?symbol=${symbol}&limit=5`),
+      fmp(`/cash-flow-statement?symbol=${symbol}&limit=5`),
+      fmp(`/key-metrics?symbol=${symbol}&limit=5`),
+      fmp(`/profile?symbol=${symbol}`),
+      fmp(`/quotes?symbols=${symbol}`),
     ]);
 
-    const p = Array.isArray(profile) ? profile[0] : {};
-    const q = Array.isArray(quote)   ? quote[0]   : {};
+    const p = Array.isArray(profile)  ? profile[0]  : {};
+    const q = Array.isArray(quote)    ? quote[0]    : {};
 
-    // Merge income + cashflow by year
     const years = [...new Set([
       ...(Array.isArray(income)   ? income.map(r=>r.calendarYear||r.date?.slice(0,4))   : []),
       ...(Array.isArray(cashflow) ? cashflow.map(r=>r.calendarYear||r.date?.slice(0,4)) : []),
@@ -41,36 +39,34 @@ export default async function handler(req, res) {
       const km  = (Array.isArray(ratios)   ? ratios   : []).find(r=>(r.calendarYear||r.date?.slice(0,4))===yr)||{};
       return {
         year: yr,
-        revenue:          inc.revenue          ?? null,
-        grossProfit:      inc.grossProfit       ?? null,
-        operatingIncome:  inc.operatingIncome   ?? null,
-        netIncome:        inc.netIncome         ?? null,
-        eps:              inc.eps               ?? null,
-        operatingCF:      cf.operatingCashFlow  ?? null,
-        capex:            cf.capitalExpenditure ?? null,
-        freeCashFlow:     cf.freeCashFlow       ?? null,
-        grossMargin:      inc.grossProfitRatio  ?? null,
-        operatingMargin:  inc.operatingIncomeRatio ?? null,
-        netMargin:        inc.netIncomeRatio    ?? null,
-        roe:              km.roe                ?? null,
-        peRatio:          km.peRatio            ?? null,
+        revenue:         inc.revenue             ?? null,
+        grossProfit:     inc.grossProfit          ?? null,
+        operatingIncome: inc.operatingIncome      ?? null,
+        netIncome:       inc.netIncome            ?? null,
+        eps:             inc.eps                  ?? null,
+        operatingCF:     cf.operatingCashFlow     ?? null,
+        capex:           cf.capitalExpenditure    ?? null,
+        freeCashFlow:    cf.freeCashFlow          ?? null,
+        grossMargin:     inc.grossProfitRatio      ?? null,
+        operatingMargin: inc.operatingIncomeRatio  ?? null,
+        netMargin:       inc.netIncomeRatio        ?? null,
+        roe:             km.roe                   ?? null,
+        peRatio:         km.peRatio               ?? null,
       };
     });
 
     res.status(200).json({
       symbol,
-      name:            p.companyName  || symbol,
-      currency:        p.currency     || 'USD',
-      sector:          p.sector       || null,
-      industry:        p.industry     || null,
-      marketCap:       q.marketCap    ?? null,
-      peRatio:         q.pe           ?? null,
-      forwardPE:       p.forwardPE    ?? null,
-      dividendYield:   p.lastDiv      ?? null,
-      beta:            p.beta         ?? null,
-      description:     p.description  || null,
-      image:           p.image        || null,
-      website:         p.website      || null,
+      name:          p.companyName || symbol,
+      currency:      p.currency    || 'USD',
+      sector:        p.sector      || null,
+      industry:      p.industry    || null,
+      marketCap:     q.marketCap   ?? null,
+      peRatio:       q.pe          ?? null,
+      dividendYield: p.lastDiv     ?? null,
+      beta:          p.beta        ?? null,
+      description:   p.description || null,
+      image:         p.image       || null,
       byYear,
     });
   } catch (e) {

@@ -987,7 +987,7 @@ export default function App() {
   const [positions,   setPositions]   = useState([]);
   const positionsRef = React.useRef([]);
   React.useEffect(()=>{ positionsRef.current = positions; }, [positions]);
-  const fmpKey = '0oKyM5KLG4i5kCtiINTnWCE5IZs25XjD';
+  // FMP key is server-side only (Vercel env var FMP_KEY)
   const [transactions, setTransactions] = useState([]);
   const [priceLoading,setPriceLoading]= useState(true);
   const [lastUpdated, setLastUpdated] = useState(null);
@@ -1046,7 +1046,7 @@ export default function App() {
         return p.symbol;
       };
       const tickerList=[...new Set(stockPos.map(getT))];
-      const quotes = await fmpGet('/quote/'+tickerList.join(','));
+      const quotes = await fmpGet('/quotes?symbols='+tickerList.join(','));
       const pm={};
       (Array.isArray(quotes)?quotes:[]).forEach(q=>{ pm[q.symbol]=q.currency==='USD'?q.price/eurUsd:q.price; });
       setPositions(prev=>prev.map(p=>{
@@ -1056,7 +1056,7 @@ export default function App() {
       setLastUpdated(new Date());
     } catch(e){ console.warn('fetchPrices error:',e); }
     finally{ setPriceLoading(false); }
-  }, [fmpKey, fmpGet]);
+  }, [fmpGet]);
 
   useEffect(() => { fetchPrices(); }, [fetchPrices]);
 
@@ -1172,7 +1172,7 @@ export default function App() {
       const needsSearch = allIsins.filter(isin=>!isinToTicker[isin] && !positions.find(p=>p.isin===isin));
       await Promise.all(needsSearch.slice(0,20).map(async isin=>{
         try{
-          const res = await fmpGet('/search?query='+isin+'&limit=5');
+          const res = await fmpGet('/search-isin?isin='+isin);
           if(!Array.isArray(res)||!res.length) return;
           const pick = res.find(r=>r.exchangeShortName==='XETRA')
             || res.find(r=>['EURONEXT','LSE','SIX'].includes(r.exchangeShortName))
@@ -1186,7 +1186,7 @@ export default function App() {
       const uniqueTickers = [...new Set(Object.values(isinToTicker))];
       await Promise.all(uniqueTickers.map(async ticker=>{
         try{
-          const data = await fmpGet('/historical-price-full/'+ticker+'?from='+fromStr+'&to='+toStr);
+          const data = await fmpGet('/historical-price-eod/full?symbol='+ticker+'&from='+fromStr+'&to='+toStr);
           const hist = data?.historical||[];
           if(!hist.length) return;
           const isins = Object.entries(isinToTicker).filter(([,t])=>t===ticker).map(([i])=>i);
@@ -1210,11 +1210,11 @@ export default function App() {
       }));
 
       // ── Benchmark history ──
-      const BM_FMP={sp500:'SPY',nasdaq:'QQQ',dax:'DAX',btc:'BTCUSD'};
+      const BM_FMP={sp500:'SPY',nasdaq:'QQQ',dax:'^GDAXI',btc:'BTC/USD'};
       const bmPrices={};
       await Promise.all(activeBM.map(async id=>{
         try{
-          const data=await fmpGet('/historical-price-full/'+BM_FMP[id]+'?from='+fromStr+'&to='+toStr);
+          const data=await fmpGet('/historical-price-eod/full?symbol='+encodeURIComponent(BM_FMP[id])+'&from='+fromStr+'&to='+toStr);
           bmPrices[id]={};
           (data?.historical||[]).forEach(h=>{ bmPrices[id][h.date]=h.close; });
         }catch(e){}
