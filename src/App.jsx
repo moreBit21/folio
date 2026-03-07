@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useCallback } from "react";
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, AreaChart, Area, XAxis, YAxis, CartesianGrid } from "recharts";
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, AreaChart, Area, Line, XAxis, YAxis, CartesianGrid } from "recharts";
 
 const FONTS = `@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=IBM+Plex+Mono:wght@300;400;500;600&family=DM+Sans:wght@300;400;500&display=swap');`;
 
@@ -1306,6 +1306,7 @@ export default function App() {
       // ── Assemble rows ──
       const lastPrice={};
       let bmNormBase=null;
+      const lastBmPrice={};  // carry-forward for weekends/gaps
       const rows=[];
 
       for(let i=0;i<=totalDays;i+=step){
@@ -1322,10 +1323,13 @@ export default function App() {
           if(lastPrice[isin]) portVal+=qty*lastPrice[isin];
         });
 
+        // Update carry-forward benchmark prices
+        activeBM.forEach(id=>{ if(bmPrices[id]?.[ds]) lastBmPrice[id]=bmPrices[id][ds]; });
+
+        // Set norm base on first day we have BOTH portfolio value AND all benchmark prices
         if(!bmNormBase&&portVal>0){
-          const bp={};
-          activeBM.forEach(id=>{ if(bmPrices[id]?.[ds]) bp[id]=bmPrices[id][ds]; });
-          if(Object.keys(bp).length||!activeBM.length) bmNormBase={portVal,bp};
+          const allBmReady = activeBM.length===0 || activeBM.every(id=>lastBmPrice[id]);
+          if(allBmReady) bmNormBase={portVal, bp:{...lastBmPrice}};
         }
 
         const row={
@@ -1335,7 +1339,7 @@ export default function App() {
         };
         if(bmNormBase){
           activeBM.forEach(id=>{
-            const p0=bmNormBase.bp[id],p1=bmPrices[id]?.[ds];
+            const p0=bmNormBase.bp[id], p1=lastBmPrice[id];
             if(p0&&p1) row[id]=+(bmNormBase.portVal*(p1/p0)).toFixed(0);
           });
         }
@@ -1554,7 +1558,7 @@ export default function App() {
 
                     {activeBM.map(id=>{
                       const b=BENCHMARKS.find(x=>x.id===id);
-                      return <Area key={id} type="linear" dataKey={id} name={b.label} stroke={b.color} strokeWidth={1.5} strokeOpacity={0.8} fill="none" dot={false}/>;
+                      return <Line key={id} type="linear" dataKey={id} name={b.label} stroke={b.color} strokeWidth={1.5} strokeOpacity={0.75} dot={false} isAnimationActive={false}/>;
                     })}
                     <Area type="linear" dataKey="portfolio" name="Portfolio" stroke="#00e5a0" strokeWidth={2.5} fill="url(#gPort)" dot={false}/>
                   </AreaChart>
