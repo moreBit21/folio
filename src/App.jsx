@@ -1256,14 +1256,14 @@ export default function App() {
           // premium check now handled in fmpGet via throw
           // Stable API returns flat array, not {historical:[]}
           const hist = Array.isArray(data) ? data : (data?.historical||[]);
-          if(!hist.length){ skippedTickers.push(ticker); return; }
+          if(!hist.length){ skippedTickers.push(ticker+'(no data)'); return; }
           const isins = Object.entries(isinToTicker).filter(([,t])=>t===ticker).map(([i])=>i);
           const isUsd = !ticker.endsWith('.DE')&&!ticker.endsWith('.F')&&!ticker.endsWith('.AS')&&!ticker.endsWith('.PA')&&!ticker.endsWith('.L');
           isins.forEach(isin=>{
             priceByIsin[isin]={};
             hist.forEach(h=>{ priceByIsin[isin][h.date]=isUsd?h.close/eurUsd:h.close; });
           });
-        }catch(e){ if(e.message==='Premium') skippedTickers.push(ticker); else console.warn('hist fail:',ticker,e.message); }
+        }catch(e){ if(e.message==='Premium') skippedTickers.push(ticker+'(premium)'); else { skippedTickers.push(ticker+'(err)'); console.warn('hist fail:',ticker,e.message); } }
       }));
 
       // ── Crypto via CoinGecko ──
@@ -1278,7 +1278,7 @@ export default function App() {
       }));
 
       // ── Benchmark history ──
-      const BM_FMP={sp500:'SPY',nasdaq:'QQQ',dax:'^GDAXI',btc:'BTC/USD'};
+      const BM_FMP={sp500:'SPY',nasdaq:'QQQ',dax:'EWG',btc:'GBTC'};
       const bmPrices={};
       await Promise.all(activeBM.map(async id=>{
         try{
@@ -1332,7 +1332,7 @@ export default function App() {
       setChartData(rows);
       if(skippedTickers.length>0){
         const covered = uniqueTickers.length - skippedTickers.length;
-        setChartError(`Partial data — ${covered}/${uniqueTickers.length} positions loaded. Some require a higher data plan.`);
+        setChartError(`Partial data — ${covered}/${uniqueTickers.length} positions loaded. Missing: ${skippedTickers.join(', ')}`);
       }
     }catch(e){ console.error('fetchChart:',e); setChartError(e.message); }
     finally{ setChartLoading(false); }
