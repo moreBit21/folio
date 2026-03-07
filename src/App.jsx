@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useCallback } from "react";
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, AreaChart, Area, Line, XAxis, YAxis, CartesianGrid } from "recharts";
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, AreaChart, ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid } from "recharts";
 
 const FONTS = `@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=IBM+Plex+Mono:wght@300;400;500;600&family=DM+Sans:wght@300;400;500&display=swap');`;
 
@@ -1540,7 +1540,7 @@ export default function App() {
               )}
               {!chartLoading && transactions.length>0 && (
                 <ResponsiveContainer width="100%" height={250}>
-                  <AreaChart data={chartData.length ? chartData : investedChartData} margin={{top:4,right:4,left:0,bottom:0}}>
+                  <ComposedChart data={chartData.length ? chartData : investedChartData} margin={{top:4,right:4,left:0,bottom:0}}>
                     <defs>
                       <linearGradient id="gPort" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="5%" stopColor="#00e5a0" stopOpacity={0.15}/><stop offset="95%" stopColor="#00e5a0" stopOpacity={0}/>
@@ -1558,10 +1558,10 @@ export default function App() {
 
                     {activeBM.map(id=>{
                       const b=BENCHMARKS.find(x=>x.id===id);
-                      return <Line key={id} type="linear" dataKey={id} name={b.label} stroke={b.color} strokeWidth={1.5} strokeOpacity={0.75} dot={false} isAnimationActive={false}/>;
+                      return <Line key={id} type="linear" dataKey={id} name={b.label} stroke={b.color} strokeWidth={1.5} strokeOpacity={0.75} dot={false} connectNulls isAnimationActive={false}/>;
                     })}
                     <Area type="linear" dataKey="portfolio" name="Portfolio" stroke="#00e5a0" strokeWidth={2.5} fill="url(#gPort)" dot={false}/>
-                  </AreaChart>
+                  </ComposedChart>
                 </ResponsiveContainer>
               )}
               <div className="mono" style={{fontSize:9,color:"var(--text3)",marginTop:6,textAlign:"right"}}>
