@@ -1206,19 +1206,21 @@ export default function App() {
 
       // ── Price history per ticker ──
       const priceByIsin={};
+      const skippedTickers=[];
       const uniqueTickers = [...new Set(Object.values(isinToTicker))];
       await Promise.all(uniqueTickers.map(async ticker=>{
         try{
           const data = await fmpGet('/historical-price-eod/full?symbol='+ticker+'&from='+fromStr+'&to='+toStr);
+          if(data?.['Error Message']?.includes('Premium')){ skippedTickers.push(ticker); return; }
           const hist = data?.historical||[];
-          if(!hist.length) return;
+          if(!hist.length){ skippedTickers.push(ticker); return; }
           const isins = Object.entries(isinToTicker).filter(([,t])=>t===ticker).map(([i])=>i);
           const isUsd = !ticker.endsWith('.DE')&&!ticker.endsWith('.F')&&!ticker.endsWith('.AS')&&!ticker.endsWith('.PA')&&!ticker.endsWith('.L');
           isins.forEach(isin=>{
             priceByIsin[isin]={};
             hist.forEach(h=>{ priceByIsin[isin][h.date]=isUsd?h.close/eurUsd:h.close; });
           });
-        }catch(e){ console.warn('price fail:',ticker,e.message); }
+        }catch(e){ skippedTickers.push(ticker); }
       }));
 
       // ── Crypto via CoinGecko ──
@@ -1238,6 +1240,7 @@ export default function App() {
       await Promise.all(activeBM.map(async id=>{
         try{
           const data=await fmpGet('/historical-price-eod/full?symbol='+encodeURIComponent(BM_FMP[id])+'&from='+fromStr+'&to='+toStr);
+          if(data?.['Error Message']?.includes('Premium')){ skippedTickers.push(BM_FMP[id]); return; }
           bmPrices[id]={};
           (data?.historical||[]).forEach(h=>{ bmPrices[id][h.date]=h.close; });
         }catch(e){}
@@ -1282,6 +1285,10 @@ export default function App() {
       }
 
       setChartData(rows);
+      if(skippedTickers.length>0){
+        const covered = uniqueTickers.length - skippedTickers.length;
+        setChartError(`Partial data — ${covered}/${uniqueTickers.length} positions loaded. Some require a higher data plan.`);
+      }
     }catch(e){ console.error('fetchChart:',e); setChartError(e.message); }
     finally{ setChartLoading(false); }
   }, [transactions, positions, range, activeBM, fmpGet, investedChartData]);
@@ -1448,7 +1455,12 @@ export default function App() {
                 </div>
               </div>
               {chartError && (
-                <div style={{padding:"8px 12px",marginBottom:8,background:"rgba(255,77,109,0.1)",border:"1px solid rgba(255,77,109,0.3)",borderRadius:6,fontSize:11,color:"var(--red)",fontFamily:"IBM Plex Mono"}}>
+                <div style={{padding:"8px 12px",marginBottom:8,
+                  background:chartError.includes('Partial')?"rgba(240,180,41,0.08)":"rgba(255,77,109,0.1)",
+                  border:"1px solid "+(chartError.includes('Partial')?"rgba(240,180,41,0.3)":"rgba(255,77,109,0.3)"),
+                  borderRadius:6,fontSize:11,
+                  color:chartError.includes('Partial')?"var(--gold)":"var(--red)",
+                  fontFamily:"IBM Plex Mono"}}>
                   ⚠ {chartError}
                 </div>
               )}
