@@ -1167,13 +1167,26 @@ export default function App() {
       const allIsins = [...new Set(sorted.map(t=>t.isin).filter(Boolean))];
       const inWindow = sorted.filter(t=>t.date>=fromStr&&t.date<=toStr);
 
+      // qtyAtEnd: for held positions use current qty, for sold positions use 0
+      const heldQty = {};
+      positions.forEach(p=>{ if(p.isin) heldQty[p.isin]=p.qty||0; });
+
+      // Work out qty at START of window by going backwards from qty at END of window
       const qtyAtStart = {};
-      positions.forEach(p=>{ if(p.isin) qtyAtStart[p.isin]=p.qty||0; });
+      allIsins.forEach(isin=>{ qtyAtStart[isin] = heldQty[isin]||0; });
+      // Reverse all in-window transactions to get qty at window start
       [...inWindow].reverse().forEach(t=>{
         if(!t.isin) return;
-        if(qtyAtStart[t.isin]===undefined) qtyAtStart[t.isin]=0;
         qtyAtStart[t.isin] -= t.type==='buy' ? t.qty : -t.qty;
       });
+      // Also reverse post-window transactions (between window end and now)
+      const postWindow = sorted.filter(t=>t.date>toStr);
+      [...postWindow].reverse().forEach(t=>{
+        if(!t.isin) return;
+        qtyAtStart[t.isin] -= t.type==='buy' ? t.qty : -t.qty;
+      });
+      // Clamp negatives to 0 (data gaps / partial history)
+      allIsins.forEach(isin=>{ qtyAtStart[isin]=Math.max(0,qtyAtStart[isin]||0); });
 
       const qtyByDay = {};
       allIsins.forEach(isin=>{
@@ -1291,19 +1304,14 @@ export default function App() {
         const ds=d.toISOString().slice(0,10);
         const baseRow=investedChartData[Math.round(i/step)]||{};
 
-        let portVal=0; let maxVal=0; let maxIsin='';
+        let portVal=0;
         allIsins.forEach(isin=>{
           const qty=qtyByDay[isin]?.[i]||0; if(qty<=0) return;
           if(!priceByIsin[isin]) return;
           const p=priceByIsin[isin][ds];
           if(p!=null) lastPrice[isin]=p;
-          if(lastPrice[isin]){
-            const v=qty*lastPrice[isin];
-            portVal+=v;
-            if(v>maxVal){maxVal=v;maxIsin=isin;}
-          }
+          if(lastPrice[isin]) portVal+=qty*lastPrice[isin];
         });
-        if(portVal>500000) console.warn('SPIKE',ds,'total:',portVal.toFixed(0),'biggest:',maxIsin,'val:',maxVal.toFixed(0),'qty:',(qtyByDay[maxIsin]?.[i]||0).toFixed(2),'price:',(lastPrice[maxIsin]||0).toFixed(2));
 
         if(!bmNormBase&&portVal>0){
           const bp={};
