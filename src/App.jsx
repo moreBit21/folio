@@ -741,38 +741,33 @@ async function resolveISINs(positions) {
     return p;
   });
 
-  // Second pass: try OpenFIGI API for any still unresolved
+  // Second pass: try FMP search-isin for any still unresolved
   const stillISIN = resolved.filter(p => isISIN(p.symbol));
   if (stillISIN.length > 0) {
-    try {
-      const body = stillISIN.map(p => ({ idType: "ID_ISIN", idValue: p.symbol }));
-      const res = await fetch("https://api.openfigi.com/v3/mapping", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        data.forEach((result, i) => {
-          if (result.data && result.data.length > 0) {
-            const best = result.data.find(d => d.exchCode === "GY" || d.exchCode === "US") || result.data[0];
-            const idx = resolved.findIndex(p => p.symbol === stillISIN[i].symbol);
-            if (idx >= 0) {
-              resolved[idx] = {
-                ...resolved[idx],
-                symbol: best.ticker || resolved[idx].symbol,
-                name: best.name || resolved[idx].symbol,
-                type: guessTypeFromISIN(resolved[idx].symbol, best.ticker || ""),
-                isin: resolved[idx].symbol,
-              };
-            }
-          }
-        });
-      }
-    } catch(e) {
-      // OpenFIGI failed — keep ISINs as-is, user can rename
-      console.log("OpenFIGI lookup failed:", e);
-    }
+    await Promise.all(stillISIN.slice(0, 20).map(async p => {
+      try {
+        const r = await fetch('/api/fmp?path=' + encodeURIComponent('/search-isin?isin=' + p.symbol));
+        if (!r.ok) return;
+        const data = await r.json();
+        if (!Array.isArray(data) || !data.length) return;
+        const pick = data.find(d => d.symbol?.endsWith('.DE'))
+          || data.find(d => d.symbol?.endsWith('.F'))
+          || data.find(d => d.symbol?.endsWith('.AS') || d.symbol?.endsWith('.PA'))
+          || data.find(d => d.marketCap > 0) || data[0];
+        if (!pick?.symbol) return;
+        const idx = resolved.findIndex(q => q.symbol === p.symbol);
+        if (idx >= 0) {
+          resolved[idx] = {
+            ...resolved[idx],
+            fmpTicker: pick.symbol,
+            symbol: pick.symbol,
+            name: pick.name || resolved[idx].name,
+            type: guessTypeFromISIN(resolved[idx].symbol, pick.symbol),
+            isin: p.symbol,
+          };
+        }
+      } catch(e) {}
+    }));
   }
 
   return resolved;
@@ -916,7 +911,7 @@ function ImportModal({ onClose, onImport }) {
           <div style={{textAlign:"center",padding:"40px 20px"}}>
             <div style={{fontSize:32,marginBottom:16}}>🔍</div>
             <div style={{fontSize:14,color:"var(--text)",marginBottom:8}}>Resolving ISINs to tickers...</div>
-            <div style={{fontSize:12,color:"var(--text3)"}}>Looking up {fileName} via OpenFIGI</div>
+            <div style={{fontSize:12,color:"var(--text3)"}}>Resolving tickers via FMP…</div>
           </div>
         )}
 
