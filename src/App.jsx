@@ -1196,19 +1196,38 @@ export default function App() {
 
       // ── Resolve ISIN → FMP ticker ──
       const isinToTicker={};
-      positions.forEach(p=>{ if(p.isin&&p.type!=='crypto'&&p.type!=='derivative') isinToTicker[p.isin]=getT(p); });
-      // For ISINs only in transactions (already sold positions), search FMP
-      const needsSearch = allIsins.filter(isin=>!isinToTicker[isin] && !positions.find(p=>p.isin===isin));
-      await Promise.all(needsSearch.slice(0,20).map(async isin=>{
+      const pickTicker = results => {
+        if(!Array.isArray(results)||!results.length) return null;
+        return (results.find(r=>r.symbol?.endsWith('.DE'))
+          || results.find(r=>r.symbol?.endsWith('.F'))
+          || results.find(r=>r.symbol?.endsWith('.AS')||r.symbol?.endsWith('.PA'))
+          || results.find(r=>r.marketCap>0)
+          || results[0])?.symbol || null;
+      };
+
+      // Step 1: use fmpTicker if already resolved, or ISIN_MAP
+      positions.forEach(p=>{
+        if(!p.isin||p.type==='crypto'||p.type==='derivative') return;
+        if(p.fmpTicker) { isinToTicker[p.isin]=p.fmpTicker; return; }
+        if(ISIN_MAP[p.isin]) { isinToTicker[p.isin]=ISIN_MAP[p.isin]; return; }
+      });
+
+      // Step 2: search FMP for all remaining ISINs (current + sold positions)
+      const needsSearch = allIsins.filter(isin=>{
+        const pos = positions.find(p=>p.isin===isin);
+        if(pos?.type==='crypto'||pos?.type==='derivative') return false;
+        return !isinToTicker[isin];
+      });
+      console.log('Searching FMP for', needsSearch.length, 'ISINs, already resolved:', Object.keys(isinToTicker).length);
+      await Promise.all(needsSearch.slice(0,30).map(async isin=>{
         try{
           const res = await fmpGet('/search-isin?isin='+isin);
-          if(!Array.isArray(res)||!res.length) return;
-          const pick = res.find(r=>r.exchangeShortName==='XETRA')
-            || res.find(r=>['EURONEXT','LSE','SIX'].includes(r.exchangeShortName))
-            || res[0];
-          if(pick?.symbol) isinToTicker[isin]=pick.symbol;
-        }catch(e){}
+          const t = pickTicker(res);
+          if(t) { isinToTicker[isin]=t; console.log(isin,'->',t); }
+          else console.warn('no ticker for', isin);
+        }catch(e){ console.warn('search fail', isin, e.message); }
       }));
+      console.log('Total resolved:', Object.keys(isinToTicker).length, '/', allIsins.length);
 
       // ── Price history per ticker ──
       const priceByIsin={};
