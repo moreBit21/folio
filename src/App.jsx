@@ -1177,14 +1177,16 @@ export default function App() {
       // Test proxy first
       try {
         const t = await fmpGet('/search?query=US67066G1040&limit=2');
-        console.log('FMP proxy OK, NVDA result:', JSON.stringify(t?.slice(0,1)));
+        console.log('FMP proxy raw response:', JSON.stringify(t));
+        if(Array.isArray(t)) console.log('FMP proxy OK:', t.length, 'results');
+        else console.error('FMP returned non-array:', JSON.stringify(t));
       } catch(e) { console.error('FMP proxy FAILED:', e.message); }
 
       // Batch ISIN searches
       await Promise.all(stockIsins.slice(0,30).map(async isin=>{
         try{
           const res=await fmpGet('/search?query='+isin+'&limit=5');
-          if(!res?.length){ console.warn('no FMP result for',isin); return; }
+          if(!Array.isArray(res)||!res.length){ console.warn('no FMP result for',isin, JSON.stringify(res)?.slice(0,80)); return; }
           const pick=res.find(r=>r.exchangeShortName==='XETRA')
             ||res.find(r=>['EURONEXT','LSE','SIX'].includes(r.exchangeShortName))
             ||res[0];
@@ -1199,7 +1201,7 @@ export default function App() {
         try{
           const data=await fmpGet('/historical-price-full/'+ticker+'?from='+fromStr+'&to='+toStr);
           const hist=data?.historical||[];
-          if(!hist.length) return;
+          if(!hist.length){ console.warn('no history for', ticker, JSON.stringify(data)?.slice(0,80)); return; }
           const isUsd=!ticker.endsWith('.DE')&&!ticker.endsWith('.AS')&&!ticker.endsWith('.PA');
           priceByIsin[isin]={};
           hist.forEach(h=>{ priceByIsin[isin][h.date]=isUsd?h.close/eurUsd:h.close; });
