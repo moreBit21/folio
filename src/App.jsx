@@ -1004,21 +1004,32 @@ export default function App() {
   const [newPos,      setNewPos]      = useState({symbol:"",name:"",type:"stock",qty:"",avgPrice:"",currentPrice:"",broker:"Smartbroker+"});
 
   // ── Fetch live prices ──
+  // Yahoo Finance proxy — free, no key needed
+  const yahooSearch = useCallback(async (isin) => {
+    const r = await fetch('/api/fmp?type=search&isin=' + encodeURIComponent(isin));
+    if(!r.ok) throw new Error('search ' + r.status);
+    return r.json(); // [{symbol, name, exchange}]
+  }, []);
+  const yahooHistory = useCallback(async (symbol, from, to) => {
+    const r = await fetch('/api/fmp?type=history&symbol=' + encodeURIComponent(symbol) + '&from=' + from + '&to=' + to);
+    if(!r.ok) throw new Error('history ' + r.status);
+    return r.json(); // [{date, close, currency}]
+  }, []);
+  const yahooQuote = useCallback(async (symbols) => {
+    const r = await fetch('/api/fmp?type=quote&symbol=' + encodeURIComponent(symbols));
+    if(!r.ok) throw new Error('quote ' + r.status);
+    return r.json(); // [{symbol, price, currency}]
+  }, []);
+  // Keep fmpGet as alias so fetchPrices still works
   const fmpGet = useCallback(async (path) => {
-    // Use local proxy on Vercel (avoids CORS + keeps key server-side)
-    // Fall back to direct call if running on localhost with key
-    const isVercel = !window.location.hostname.includes('localhost');
-    let url;
-    if (isVercel) {
-      url = '/api/fmp?path=' + encodeURIComponent(path);
-    } else {
-      const sep = path.includes('?') ? '&' : '?';
-      url = 'https://financialmodelingprep.com/api/v3' + path + sep + 'apikey=' + fmpKey;
+    // Extract ticker from path like /quote/NVDA or /historical-price-full/NVDA?from=...
+    if(path.startsWith('/quote/')) {
+      const symbols = path.replace('/quote/','').split('?')[0];
+      return yahooQuote(symbols);
     }
-    const res = await fetch(url);
-    if (!res.ok) throw new Error('FMP ' + res.status);
-    return res.json();
-  }, [fmpKey]);
+    // fallback - not used for historical anymore
+    return [];
+  }, [yahooQuote]);
 
   const fetchPrices = useCallback(async () => {
     const cur = positionsRef.current;
@@ -1051,8 +1062,8 @@ export default function App() {
         if(p.isin.startsWith('IE')) return p.symbol+'.AS';
         return p.symbol;
       };
-      const tickers=[...new Set(stockPos.map(getT))].join(',');
-      const quotes = await fmpGet('/quote/'+tickers);
+      const tickerList=[...new Set(stockPos.map(getT))];
+      const quotes = await yahooQuote(tickerList.join(','));
       const pm={};
       (quotes||[]).forEach(q=>{ pm[q.symbol]=q.currency==='USD'?q.price/eurUsd:q.price; });
       setPositions(prev=>prev.map(p=>{
@@ -1173,38 +1184,33 @@ export default function App() {
         return pos?.type!=='crypto'&&pos?.type!=='derivative';
       });
 
-      // Test proxy first
-      try {
-        const t = await fmpGet('/search?query=US67066G1040&limit=2');
-        console.log('FMP proxy raw response:', JSON.stringify(t));
-        if(Array.isArray(t)) console.log('FMP proxy OK:', t.length, 'results');
-        else console.error('FMP returned non-array:', JSON.stringify(t));
-      } catch(e) { console.error('FMP proxy FAILED:', e.message); }
-
-      // Batch ISIN searches
+      // Resolve ISINs to Yahoo tickers
       await Promise.all(stockIsins.slice(0,30).map(async isin=>{
         try{
-          const res=await fmpGet('/search?query='+isin+'&limit=5');
-          if(!Array.isArray(res)||!res.length){ console.warn('no FMP result for',isin, JSON.stringify(res)?.slice(0,80)); return; }
-          const pick=res.find(r=>r.exchangeShortName==='XETRA')
-            ||res.find(r=>['EURONEXT','LSE','SIX'].includes(r.exchangeShortName))
-            ||res[0];
-          if(pick?.symbol){ isinToTicker[isin]=pick.symbol; console.log(isin,'->', pick.symbol, pick.exchangeShortName); }
+          const res = await yahooSearch(isin);
+          if(!res?.length){ console.warn('no Yahoo result for', isin); return; }
+          // Prefer German exchanges (.DE, .F), then other EU, then US
+          const pick = res.find(r=>r.symbol?.endsWith('.DE')||r.symbol?.endsWith('.F'))
+            || res.find(r=>r.symbol?.endsWith('.AS')||r.symbol?.endsWith('.PA')||r.symbol?.endsWith('.L'))
+            || res[0];
+          if(pick?.symbol){ isinToTicker[isin]=pick.symbol; console.log(isin,'->',pick.symbol); }
         }catch(e){ console.error('search fail',isin,e.message); }
       }));
       console.log('Resolved', Object.keys(isinToTicker).length, 'of', stockIsins.length, 'ISINs');
 
-      // Fetch price history
+      // Fetch price history via Yahoo
       const priceByIsin={};
       await Promise.all(Object.entries(isinToTicker).map(async ([isin,ticker])=>{
         try{
-          const data=await fmpGet('/historical-price-full/'+ticker+'?from='+fromStr+'&to='+toStr);
-          const hist=data?.historical||[];
-          if(!hist.length){ console.warn('no history for', ticker, JSON.stringify(data)?.slice(0,80)); return; }
-          const isUsd=!ticker.endsWith('.DE')&&!ticker.endsWith('.AS')&&!ticker.endsWith('.PA');
+          const hist = await yahooHistory(ticker, fromStr, toStr);
+          if(!hist?.length){ console.warn('no history for', ticker); return; }
           priceByIsin[isin]={};
-          hist.forEach(h=>{ priceByIsin[isin][h.date]=isUsd?h.close/eurUsd:h.close; });
-        }catch(e){ console.warn('price fail',ticker); }
+          hist.forEach(h=>{
+            const isUsd = h.currency==='USD' || (!ticker.endsWith('.DE')&&!ticker.endsWith('.F')&&!ticker.endsWith('.AS')&&!ticker.endsWith('.PA'));
+            priceByIsin[isin][h.date] = isUsd ? h.close/eurUsd : h.close;
+          });
+          console.log(ticker, Object.keys(priceByIsin[isin]).length, 'days');
+        }catch(e){ console.warn('history fail',ticker,e.message); }
       }));
 
       // Crypto via CoinGecko
@@ -1221,15 +1227,15 @@ export default function App() {
 
       console.log('Price data for', Object.keys(priceByIsin).length, 'of', allIsins.length, 'ISINs');
 
-      // Benchmarks
-      const BM_TICKERS={sp500:'SPY',nasdaq:'QQQ',dax:'DAX',btc:'BTCUSD'};
+      // Benchmark history via Yahoo (SPY, QQQ, ^GDAXI, BTC-USD)
+      const BM_YAHOO={sp500:'SPY',nasdaq:'QQQ',dax:'^GDAXI',btc:'BTC-USD'};
       const bmPrices={};
       await Promise.all(activeBM.map(async id=>{
         try{
-          const data=await fmpGet('/historical-price-full/'+BM_TICKERS[id]+'?from='+fromStr+'&to='+toStr);
+          const hist = await yahooHistory(BM_YAHOO[id], fromStr, toStr);
           bmPrices[id]={};
-          (data?.historical||[]).forEach(h=>{ bmPrices[id][h.date]=h.close; });
-          console.log(BM_TICKERS[id], Object.keys(bmPrices[id]).length, 'days');
+          hist.forEach(h=>{ bmPrices[id][h.date]=h.close; });
+          console.log(BM_YAHOO[id], Object.keys(bmPrices[id]).length, 'days');
         }catch(e){ console.warn('bm fail',id,e.message); }
       }));
 
