@@ -1004,32 +1004,15 @@ export default function App() {
   const [newPos,      setNewPos]      = useState({symbol:"",name:"",type:"stock",qty:"",avgPrice:"",currentPrice:"",broker:"Smartbroker+"});
 
   // ── Fetch live prices ──
-  // Yahoo Finance proxy — free, no key needed
-  const yahooSearch = useCallback(async (isin) => {
-    const r = await fetch('/api/fmp?type=search&isin=' + encodeURIComponent(isin));
-    if(!r.ok) throw new Error('search ' + r.status);
-    return r.json(); // [{symbol, name, exchange}]
-  }, []);
-  const yahooHistory = useCallback(async (symbol, from, to) => {
-    const r = await fetch('/api/fmp?type=history&symbol=' + encodeURIComponent(symbol) + '&from=' + from + '&to=' + to);
-    if(!r.ok) throw new Error('history ' + r.status);
-    return r.json(); // [{date, close, currency}]
-  }, []);
-  const yahooQuote = useCallback(async (symbols) => {
-    const r = await fetch('/api/fmp?type=quote&symbol=' + encodeURIComponent(symbols));
-    if(!r.ok) throw new Error('quote ' + r.status);
-    return r.json(); // [{symbol, price, currency}]
-  }, []);
-  // Keep fmpGet as alias so fetchPrices still works
+  // ── Data fetching — powered by FMP (Financial Modeling Prep) ──
+  // All calls go through /api/fmp Vercel proxy to keep key server-side
   const fmpGet = useCallback(async (path) => {
-    // Extract ticker from path like /quote/NVDA or /historical-price-full/NVDA?from=...
-    if(path.startsWith('/quote/')) {
-      const symbols = path.replace('/quote/','').split('?')[0];
-      return yahooQuote(symbols);
-    }
-    // fallback - not used for historical anymore
-    return [];
-  }, [yahooQuote]);
+    const r = await fetch('/api/fmp?path=' + encodeURIComponent(path));
+    if (!r.ok) throw new Error('fmp ' + r.status);
+    const data = await r.json();
+    if (data?.['Error Message'] || data?.error) throw new Error(data['Error Message'] || data.error);
+    return data;
+  }, []);
 
   const fetchPrices = useCallback(async () => {
     const cur = positionsRef.current;
@@ -1063,9 +1046,9 @@ export default function App() {
         return p.symbol;
       };
       const tickerList=[...new Set(stockPos.map(getT))];
-      const quotes = await yahooQuote(tickerList.join(','));
+      const quotes = await fmpGet('/quote/'+tickerList.join(','));
       const pm={};
-      (quotes||[]).forEach(q=>{ pm[q.symbol]=q.currency==='USD'?q.price/eurUsd:q.price; });
+      (Array.isArray(quotes)?quotes:[]).forEach(q=>{ pm[q.symbol]=q.currency==='USD'?q.price/eurUsd:q.price; });
       setPositions(prev=>prev.map(p=>{
         if(p.type==='crypto'||p.type==='derivative') return p;
         const t=getT(p); return pm[t]?{...p,currentPrice:pm[t]}:p;
@@ -1138,13 +1121,23 @@ export default function App() {
       const fromStr = from.toISOString().slice(0,10);
       const toStr   = now.toISOString().slice(0,10);
       const totalDays = Math.round((now-from)/86400000);
-      const sorted = [...transactions].sort((a,b)=>a.date.localeCompare(b.date));
+      const step = Math.max(1, Math.floor(totalDays/180));
 
-      // Reconstruct exact qty per ISIN per day
+      // ── Ticker resolver ──
+      const getT = p => {
+        if(p.fmpTicker) return p.fmpTicker;
+        if(!p.isin) return p.symbol;
+        if(p.isin.startsWith('DE')||p.isin.startsWith('LU')) return p.symbol+'.DE';
+        if(p.isin.startsWith('IE')) return p.symbol+'.AS';
+        if(p.isin.startsWith('GB')) return p.symbol+'.L';
+        return p.symbol;
+      };
+
+      // ── Reconstruct exact qty per ISIN per day ──
+      const sorted = [...transactions].sort((a,b)=>a.date.localeCompare(b.date));
       const allIsins = [...new Set(sorted.map(t=>t.isin).filter(Boolean))];
       const inWindow = sorted.filter(t=>t.date>=fromStr&&t.date<=toStr);
 
-      // Start qty = current qty minus in-window transactions (reverse)
       const qtyAtStart = {};
       positions.forEach(p=>{ if(p.isin) qtyAtStart[p.isin]=p.qty||0; });
       [...inWindow].reverse().forEach(t=>{
@@ -1153,7 +1146,6 @@ export default function App() {
         qtyAtStart[t.isin] -= t.type==='buy' ? t.qty : -t.qty;
       });
 
-      // Build forward day-by-day qty timeline
       const qtyByDay = {};
       allIsins.forEach(isin=>{
         const isinTx = inWindow.filter(t=>t.isin===isin);
@@ -1169,101 +1161,69 @@ export default function App() {
         }
       });
 
-      // Ticker resolver — same logic as fetchPrices
-      const getT = p => {
-        if(p.fmpTicker) return p.fmpTicker;
-        if(!p.isin) return p.symbol;
-        if(p.isin.startsWith('DE')||p.isin.startsWith('LU')) return p.symbol+'.DE';
-        if(p.isin.startsWith('IE')) return p.symbol+'.AS';
-        if(p.isin.startsWith('GB')) return p.symbol+'.L';
-        return p.symbol;
-      };
-
-      // EUR/USD
+      // ── EUR/USD ──
       let eurUsd=1.085;
       try{ const fx=await fetch('https://api.frankfurter.app/latest?from=USD&to=EUR').then(r=>r.json()); eurUsd=1/(fx?.rates?.EUR||0.92); }catch(e){}
 
-      // FMP: search ISIN → ticker, then fetch price history
-      // FMP supports CORS from browser on paid plans — test with one ticker first
+      // ── Resolve ISIN → FMP ticker ──
       const isinToTicker={};
-      // Pre-populate from positions using our ticker logic
-      positions.forEach(p=>{ 
-        if(p.isin&&p.type!=='crypto'&&p.type!=='derivative') {
-          isinToTicker[p.isin] = p.fmpTicker || getT(p);
-        }
-      });
-
-      const stockIsins = allIsins.filter(isin=>{
-        if(isinToTicker[isin]) return false;
-        const pos=positions.find(p=>p.isin===isin);
-        return pos?.type!=='crypto'&&pos?.type!=='derivative';
-      });
-
-      // Resolve ISINs to Yahoo tickers
-      await Promise.all(stockIsins.slice(0,30).map(async isin=>{
+      positions.forEach(p=>{ if(p.isin&&p.type!=='crypto'&&p.type!=='derivative') isinToTicker[p.isin]=getT(p); });
+      // For ISINs only in transactions (already sold positions), search FMP
+      const needsSearch = allIsins.filter(isin=>!isinToTicker[isin] && !positions.find(p=>p.isin===isin));
+      await Promise.all(needsSearch.slice(0,20).map(async isin=>{
         try{
-          const res = await yahooSearch(isin);
-          if(!res?.length){ console.warn('no Yahoo result for', isin); return; }
-          // Prefer German exchanges (.DE, .F), then other EU, then US
-          const pick = res.find(r=>r.symbol?.endsWith('.DE')||r.symbol?.endsWith('.F'))
-            || res.find(r=>r.symbol?.endsWith('.AS')||r.symbol?.endsWith('.PA')||r.symbol?.endsWith('.L'))
+          const res = await fmpGet('/search?query='+isin+'&limit=5');
+          if(!Array.isArray(res)||!res.length) return;
+          const pick = res.find(r=>r.exchangeShortName==='XETRA')
+            || res.find(r=>['EURONEXT','LSE','SIX'].includes(r.exchangeShortName))
             || res[0];
-          if(pick?.symbol){ isinToTicker[isin]=pick.symbol; console.log(isin,'->',pick.symbol); }
-        }catch(e){ console.error('search fail',isin,e.message); }
-      }));
-      console.log('Resolved', Object.keys(isinToTicker).length, 'of', stockIsins.length, 'ISINs');
-
-      // Fetch price history via Yahoo
-      const priceByIsin={};
-      await Promise.all(Object.entries(isinToTicker).map(async ([isin,ticker])=>{
-        try{
-          const hist = await yahooHistory(ticker, fromStr, toStr);
-          if(!hist?.length){ console.warn('no history for', ticker); return; }
-          priceByIsin[isin]={};
-          hist.forEach(h=>{
-            const isUsd = h.currency==='USD' || (!ticker.endsWith('.DE')&&!ticker.endsWith('.F')&&!ticker.endsWith('.AS')&&!ticker.endsWith('.PA'));
-            priceByIsin[isin][h.date] = isUsd ? h.close/eurUsd : h.close;
-          });
-          console.log(ticker, Object.keys(priceByIsin[isin]).length, 'days');
-        }catch(e){ console.warn('history fail',ticker,e.message); }
-      }));
-
-      // Crypto via CoinGecko
-      await Promise.all(allIsins.filter(isin=>{
-        const p=positions.find(x=>x.isin===isin); return p?.type==='crypto'&&p?.coinId;
-      }).map(async isin=>{
-        const pos=positions.find(p=>p.isin===isin);
-        try{
-          const cg=await fetch('https://api.coingecko.com/api/v3/coins/'+pos.coinId+'/market_chart?vs_currency=eur&days='+(months*30+5)).then(r=>r.json());
-          priceByIsin[isin]={};
-          (cg.prices||[]).forEach(([ts,p])=>{ priceByIsin[isin][new Date(ts).toISOString().slice(0,10)]=p; });
+          if(pick?.symbol) isinToTicker[isin]=pick.symbol;
         }catch(e){}
       }));
 
-      console.log('Price data for', Object.keys(priceByIsin).length, 'of', allIsins.length, 'ISINs');
+      // ── Price history per ticker ──
+      const priceByIsin={};
+      const uniqueTickers = [...new Set(Object.values(isinToTicker))];
+      await Promise.all(uniqueTickers.map(async ticker=>{
+        try{
+          const data = await fmpGet('/historical-price-full/'+ticker+'?from='+fromStr+'&to='+toStr);
+          const hist = data?.historical||[];
+          if(!hist.length) return;
+          const isins = Object.entries(isinToTicker).filter(([,t])=>t===ticker).map(([i])=>i);
+          const isUsd = !ticker.endsWith('.DE')&&!ticker.endsWith('.F')&&!ticker.endsWith('.AS')&&!ticker.endsWith('.PA')&&!ticker.endsWith('.L');
+          isins.forEach(isin=>{
+            priceByIsin[isin]={};
+            hist.forEach(h=>{ priceByIsin[isin][h.date]=isUsd?h.close/eurUsd:h.close; });
+          });
+        }catch(e){ console.warn('price fail:',ticker,e.message); }
+      }));
 
-      // Benchmark history via Yahoo (SPY, QQQ, ^GDAXI, BTC-USD)
-      const BM_YAHOO={sp500:'SPY',nasdaq:'QQQ',dax:'^GDAXI',btc:'BTC-USD'};
+      // ── Crypto via CoinGecko ──
+      const cryptoPos = positions.filter(p=>p.type==='crypto'&&p.coinId&&p.qty>0);
+      await Promise.all(cryptoPos.map(async p=>{
+        if(!p.isin) return;
+        try{
+          const cg=await fetch('https://api.coingecko.com/api/v3/coins/'+p.coinId+'/market_chart?vs_currency=eur&days='+(months*30+5)).then(r=>r.json());
+          priceByIsin[p.isin]={};
+          (cg.prices||[]).forEach(([ts,pr])=>{ priceByIsin[p.isin][new Date(ts).toISOString().slice(0,10)]=pr; });
+        }catch(e){}
+      }));
+
+      // ── Benchmark history ──
+      const BM_FMP={sp500:'SPY',nasdaq:'QQQ',dax:'DAX',btc:'BTCUSD'};
       const bmPrices={};
       await Promise.all(activeBM.map(async id=>{
         try{
-          const hist = await yahooHistory(BM_YAHOO[id], fromStr, toStr);
+          const data=await fmpGet('/historical-price-full/'+BM_FMP[id]+'?from='+fromStr+'&to='+toStr);
           bmPrices[id]={};
-          hist.forEach(h=>{ bmPrices[id][h.date]=h.close; });
-          console.log(BM_YAHOO[id], Object.keys(bmPrices[id]).length, 'days');
-        }catch(e){ console.warn('bm fail',id,e.message); }
+          (data?.historical||[]).forEach(h=>{ bmPrices[id][h.date]=h.close; });
+        }catch(e){}
       }));
 
-      // Build chart rows — merge invested from investedChartData
-      const step=Math.max(1,Math.floor(totalDays/180));
+      // ── Assemble rows ──
       const lastPrice={};
-      const bmDay0={};
-      activeBM.forEach(id=>{ const s=Object.keys(bmPrices[id]||{}).sort(); if(s.length) bmDay0[id]=bmPrices[id][s[0]]; });
-
-      // Find first row where we have both portfolio value AND benchmark data
-      // Use that as the normalization base so benchmarks start at same value as portfolio
+      let bmNormBase=null;
       const rows=[];
-      let bmNormBase = null; // {portVal, bmPrices} at first data point
 
       for(let i=0;i<=totalDays;i+=step){
         const d=new Date(from); d.setDate(d.getDate()+i);
@@ -1278,11 +1238,10 @@ export default function App() {
           portVal+=qty*(lastPrice[isin]||0);
         });
 
-        // Set normalization base at first point where portfolio has value
-        if(!bmNormBase && portVal>0) {
-          const bmBasePrices={};
-          activeBM.forEach(id=>{ if(bmPrices[id]?.[ds]) bmBasePrices[id]=bmPrices[id][ds]; });
-          if(Object.keys(bmBasePrices).length) bmNormBase={portVal, bmBasePrices};
+        if(!bmNormBase&&portVal>0){
+          const bp={};
+          activeBM.forEach(id=>{ if(bmPrices[id]?.[ds]) bp[id]=bmPrices[id][ds]; });
+          if(Object.keys(bp).length||!activeBM.length) bmNormBase={portVal,bp};
         }
 
         const row={
@@ -1290,18 +1249,15 @@ export default function App() {
           invested:baseRow.invested||0,
           ...(portVal>0?{portfolio:+portVal.toFixed(2)}:{}),
         };
-
-        // Normalize benchmarks: start at same value as portfolio on first data day
-        if(bmNormBase) {
+        if(bmNormBase){
           activeBM.forEach(id=>{
-            const p0=bmNormBase.bmBasePrices[id], p1=bmPrices[id]?.[ds];
+            const p0=bmNormBase.bp[id],p1=bmPrices[id]?.[ds];
             if(p0&&p1) row[id]=+(bmNormBase.portVal*(p1/p0)).toFixed(0);
           });
         }
         rows.push(row);
       }
 
-      console.log('Chart rows:', rows.length, 'portfolio rows:', rows.filter(r=>r.portfolio).length, 'bmNormBase:', bmNormBase?.portVal);
       setChartData(rows);
     }catch(e){ console.error('fetchChart:',e); setChartError(e.message); }
     finally{ setChartLoading(false); }
@@ -1434,7 +1390,7 @@ export default function App() {
                 {label:"PORTFOLIO VALUE", val: priceLoading?"Loading…":`€${fmt(totalVal,0)}`, sub:`${vis.length} positions`, bar:null},
                 {label:"TOTAL P&L",       val: priceLoading?"…":`${pnl>=0?"+":"-"}€${fmt(Math.abs(pnl),0)}`, sub:`${pnl>=0?"▲":"▼"} ${fmt(Math.abs(pnlPct))}%`, bar:pnl>=0?"g":"r"},
                 {label:"INVESTED",        val:`€${fmt(totalCost,0)}`, sub:"Cost basis", bar:"n"},
-                {label:"LIVE PRICES",     val: priceLoading?"Syncing…":"Active", sub:"CoinGecko + Yahoo Finance", bar:priceLoading?null:"g"},
+                {label:"LIVE PRICES",     val: priceLoading?"Syncing…":"Active", sub:"CoinGecko + FMP", bar:priceLoading?null:"g"},
               ].map((k,i)=>(
                 <div key={i} className="card" style={{padding:"16px 18px",position:"relative",overflow:"hidden"}}>
                   <div style={{position:"absolute",top:0,left:0,right:0,height:2,background:k.bar==="g"?"var(--green)":k.bar==="r"?"var(--red)":"var(--border2)"}}/>
@@ -1447,72 +1403,41 @@ export default function App() {
 
             {/* ═══ PERFORMANCE CHART ═══ */}
             <div className="fu3 card" style={{padding:"20px 20px 14px",marginBottom:16}}>
-              <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",flexWrap:"wrap",gap:14,marginBottom:18}}>
-                <div>
-                  <div className="mono" style={{fontSize:10,color:"var(--text2)",letterSpacing:"0.1em",marginBottom:10}}>PERFORMANCE</div>
-                  <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
-                    <div style={{display:"flex",alignItems:"center",gap:7,padding:"5px 11px",borderRadius:5,background:"var(--green-dim)",border:"1px solid rgba(0,229,160,0.22)"}}>
-                      <div style={{width:12,height:2,background:"var(--green)",borderRadius:2}}/>
-                      <span className="mono" style={{fontSize:10,color:"var(--green)"}}>Portfolio</span>
-                      {perfStats.portfolio!=null&&<span className="mono" style={{fontSize:10,color:perfStats.portfolio>=0?"var(--green)":"var(--red)",fontWeight:600}}>{perfStats.portfolio>=0?"+":""}{perfStats.portfolio}%</span>}
-                    </div>
-                    <div style={{display:"flex",alignItems:"center",gap:7,padding:"5px 11px",borderRadius:5,background:"var(--surface2)",border:"1px solid var(--border2)"}}>
-                      <div style={{width:12,borderTop:"2px dashed var(--text3)"}}/>
-                      <span className="mono" style={{fontSize:10,color:"var(--text2)"}}>Invested</span>
-                    </div>
-                    {activeBM.map(id=>{
-                      const b=BENCHMARKS.find(x=>x.id===id);
-                      return(
-                        <div key={id} style={{display:"flex",alignItems:"center",gap:7,padding:"5px 11px",borderRadius:5,background:`${b.color}18`,border:`1px solid ${b.color}35`}}>
-                          <div style={{width:12,height:2,background:b.color,borderRadius:2}}/>
-                          <span className="mono" style={{fontSize:10,color:b.color}}>{b.label}</span>
-                          {perfStats[id]!=null&&<span className="mono" style={{fontSize:10,color:perfStats[id]>=0?"var(--green)":"var(--red)",fontWeight:600}}>{perfStats[id]>=0?"+":""}{perfStats[id]}%</span>}
-                        </div>
-                      );
-                    })}
-                  </div>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8,marginBottom:12}}>
+                <div style={{display:"flex",alignItems:"center",gap:12}}>
+                  <div className="mono" style={{fontSize:10,color:"var(--text2)",letterSpacing:"0.1em"}}>PERFORMANCE</div>
+                  {perfStats.portfolio!=null&&<span className="mono" style={{fontSize:10,color:perfStats.portfolio>=0?"var(--green)":"var(--red)",fontWeight:600}}>{perfStats.portfolio>=0?"+":""}{perfStats.portfolio}%</span>}
                 </div>
-                <div style={{display:"flex",flexDirection:"column",gap:8,alignItems:"flex-end"}}>
-                  <div style={{display:"flex",gap:5,flexWrap:"wrap",justifyContent:"flex-end"}}>
-                    {BROKERS_LIST.map(b=>(
-                      <button key={b} className={`btog ${activeBrokers[b]?"on":"off"}`} onClick={()=>setActiveBrokers(p=>({...p,[b]:!p[b]}))}>
-                        <span className="ldot" style={{width:5,height:5,background:activeBrokers[b]?"var(--green)":"var(--text3)",animationPlayState:activeBrokers[b]?"running":"paused"}}/>
-                        <span style={{color:activeBrokers[b]?"var(--text)":"var(--text3)"}}>{b}</span>
-                      </button>
-                    ))}
-                  </div>
-                  <div style={{display:"flex",gap:4,flexWrap:"wrap",justifyContent:"flex-end"}}>
-                    {BENCHMARKS.map(b=>{
-                      const on=activeBM.includes(b.id);
-                      return <button key={b.id} className="pill" onClick={()=>toggleBM(b.id)} style={on?{color:b.color,background:`${b.color}18`,borderColor:`${b.color}40`}:{}}>{b.label}</button>;
-                    })}
-                  </div>
-                  <div style={{display:"flex",gap:3}}>
-                    {RANGES.map(r=>(
-                      <button key={r} className="pill" onClick={()=>setRange(r)} style={{padding:"3px 9px",fontSize:9,...(range===r?{color:"var(--green)",background:"var(--green-dim)",borderColor:"rgba(0,229,160,0.3)"}:{})}}>{r}</button>
-                    ))}
-                  </div>
+                <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                  {BENCHMARKS.map(b=>(
+                    <button key={b.id} onClick={()=>setActiveBM(a=>a.includes(b.id)?a.filter(x=>x!==b.id):[...a,b.id])}
+                      className="btn" style={{fontSize:10,padding:"3px 10px",borderColor:activeBM.includes(b.id)?b.color:"var(--border)",color:activeBM.includes(b.id)?b.color:"var(--text3)",background:activeBM.includes(b.id)?"rgba("+b.color.slice(1).match(/../g).map(x=>parseInt(x,16)).join(",")+",0.08)":"transparent"}}>
+                      {b.label}{perfStats[b.id]!=null&&<span style={{marginLeft:4,opacity:0.8}}>{perfStats[b.id]>=0?"+":""}{perfStats[b.id]}%</span>}
+                    </button>
+                  ))}
+                  <div style={{width:1,background:"var(--border)",margin:"0 2px"}}/>
+                  {["1M","3M","6M","YTD","1Y","ALL"].map(r=>(
+                    <button key={r} onClick={()=>setRange(r)} className="btn"
+                      style={{fontSize:10,padding:"3px 10px",borderColor:range===r?"var(--green)":"var(--border)",color:range===r?"var(--green)":"var(--text3)",background:range===r?"rgba(0,229,160,0.08)":"transparent"}}>
+                      {r}
+                    </button>
+                  ))}
                 </div>
               </div>
               {chartError && (
                 <div style={{padding:"8px 12px",marginBottom:8,background:"rgba(255,77,109,0.1)",border:"1px solid rgba(255,77,109,0.3)",borderRadius:6,fontSize:11,color:"var(--red)",fontFamily:"IBM Plex Mono"}}>
-                  ⚠ Chart error: {chartError}
+                  ⚠ {chartError}
                 </div>
               )}
-              <div style={{padding:"6px 10px",marginBottom:6,background:"var(--surface2)",border:"1px solid var(--border)",borderRadius:6,fontSize:10,color:"var(--text3)",fontFamily:"IBM Plex Mono",lineHeight:1.6}}>
-                <div>tx={transactions.length} rows={chartData.length} loading={String(chartLoading)}</div>
-                <div>row[0]={JSON.stringify(chartData[0])}</div>
-                <div>err={chartError||"none"}</div>
-              </div>
               {chartLoading && (
                 <div style={{height:250,display:"flex",alignItems:"center",justifyContent:"center"}}>
-                  <span className="mono shimmer" style={{fontSize:11,color:"var(--text3)"}}>⟳ Loading price history from FMP…</span>
+                  <span className="mono shimmer" style={{fontSize:11,color:"var(--text3)"}}>⟳ Loading price history…</span>
                 </div>
               )}
               {!chartLoading && !transactions.length && (
                 <div style={{height:250,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:10}}>
                   <div style={{fontSize:32}}>📊</div>
-                  <div className="mono" style={{fontSize:11,color:"var(--text3)"}}>Import your transaction history CSV to see real performance</div>
+                  <div className="mono" style={{fontSize:11,color:"var(--text3)"}}>Import your transaction history to see performance</div>
                   <button className="btn btn-ghost" style={{fontSize:11,padding:"5px 14px"}} onClick={()=>setShowImport(true)}>↑ Import CSV</button>
                 </div>
               )}
@@ -1542,12 +1467,11 @@ export default function App() {
                   </AreaChart>
                 </ResponsiveContainer>
               )}
-              <div style={{textAlign:"center",padding:"4px 0 2px",fontSize:9,fontFamily:"IBM Plex Mono",letterSpacing:"0.08em",color:chartData.length?"var(--green)":transactions.length?"var(--text2)":"var(--text3)"}}>
-                {chartData.length ? "✓ REAL DATA — "+transactions.length+" tx · FMP prices" : transactions.length ? (chartLoading?"loading FMP prices…":"⚠ invested line only — portfolio prices loading") : "Import transaction CSV to unlock real chart"}
+              <div className="mono" style={{fontSize:9,color:"var(--text3)",marginTop:6,textAlign:"right"}}>
+                {chartData.length ? "● REAL DATA — FMP" : transactions.length ? "● invested line only — prices loading" : ""}
               </div>
             </div>
-
-            {/* Allocation — full width */}
+                        {/* Allocation — full width */}
             <div style={{marginBottom:16}}>
               <div className="card" style={{padding:20}}>
                 <div className="mono" style={{fontSize:10,color:"var(--text2)",letterSpacing:"0.1em",marginBottom:14}}>ALLOCATION BY ASSET</div>
