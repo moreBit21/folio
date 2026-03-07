@@ -1228,6 +1228,7 @@ export default function App() {
         }catch(e){ console.warn('search fail', isin, e.message); }
       }));
       console.log('Total resolved:', Object.keys(isinToTicker).length, '/', allIsins.length);
+      console.log('Sample tickers:', Object.values(isinToTicker).slice(0,10));
 
       // ── Price history per ticker ──
       const priceByIsin={};
@@ -1238,7 +1239,7 @@ export default function App() {
           const data = await fmpGet('/historical-price-eod/full?symbol='+ticker+'&from='+fromStr+'&to='+toStr);
           // premium check now handled in fmpGet via throw
           const hist = data?.historical||[];
-          if(!hist.length){ skippedTickers.push(ticker); return; }
+          if(!hist.length){ console.warn('no history for', ticker, JSON.stringify(data)?.slice(0,80)); skippedTickers.push(ticker); return; }
           const isins = Object.entries(isinToTicker).filter(([,t])=>t===ticker).map(([i])=>i);
           const isUsd = !ticker.endsWith('.DE')&&!ticker.endsWith('.F')&&!ticker.endsWith('.AS')&&!ticker.endsWith('.PA')&&!ticker.endsWith('.L');
           isins.forEach(isin=>{
