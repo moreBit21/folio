@@ -1165,43 +1165,33 @@ export default function App() {
       // ── Reconstruct exact qty per ISIN per day ──
       const sorted = [...transactions].sort((a,b)=>a.date.localeCompare(b.date));
       const allIsins = [...new Set(sorted.map(t=>t.isin).filter(Boolean))];
-      const inWindow = sorted.filter(t=>t.date>=fromStr&&t.date<=toStr);
 
-      // qtyAtEnd: for held positions use current qty, for sold positions use 0
-      const heldQty = {};
-      positions.forEach(p=>{ if(p.isin) heldQty[p.isin]=p.qty||0; });
-
-      // Work out qty at START of window by going backwards from qty at END of window
-      const qtyAtStart = {};
-      allIsins.forEach(isin=>{ qtyAtStart[isin] = heldQty[isin]||0; });
-      // Reverse all in-window transactions to get qty at window start
-      [...inWindow].reverse().forEach(t=>{
-        if(!t.isin) return;
-        qtyAtStart[t.isin] -= t.type==='buy' ? t.qty : -t.qty;
-      });
-      // Also reverse post-window transactions (between window end and now)
-      const postWindow = sorted.filter(t=>t.date>toStr);
-      [...postWindow].reverse().forEach(t=>{
-        if(!t.isin) return;
-        qtyAtStart[t.isin] -= t.type==='buy' ? t.qty : -t.qty;
-      });
-      // Clamp negatives to 0 (data gaps / partial history)
-      allIsins.forEach(isin=>{ qtyAtStart[isin]=Math.max(0,qtyAtStart[isin]||0); });
-
+      // For each ISIN, build a running qty timeline from first transaction forward
+      // qty on day D = sum of all buys up to D minus sum of all sells up to D
       const qtyByDay = {};
       allIsins.forEach(isin=>{
-        const isinTx = inWindow.filter(t=>t.isin===isin);
-        let q=Math.max(0,qtyAtStart[isin]||0), ti=0;
-        qtyByDay[isin]=new Float64Array(totalDays+1);
+        const txs = sorted.filter(t=>t.isin===isin);
+        qtyByDay[isin] = new Float64Array(totalDays+1);
+        let runningQty = 0;
+        // Pre-load qty from transactions before window start
+        txs.filter(t=>t.date<fromStr).forEach(t=>{
+          runningQty += t.type==='buy' ? t.qty : -t.qty;
+        });
+        runningQty = Math.max(0, runningQty);
+        const inWindowTxs = txs.filter(t=>t.date>=fromStr&&t.date<=toStr);
+        let ti=0;
         for(let i=0;i<=totalDays;i++){
           const d=new Date(from); d.setDate(d.getDate()+i);
           const ds=d.toISOString().slice(0,10);
-          while(ti<isinTx.length&&isinTx[ti].date<=ds){
-            q=Math.max(0,q+(isinTx[ti].type==='buy'?isinTx[ti].qty:-isinTx[ti].qty)); ti++;
+          while(ti<inWindowTxs.length&&inWindowTxs[ti].date<=ds){
+            runningQty=Math.max(0,runningQty+(inWindowTxs[ti].type==='buy'?inWindowTxs[ti].qty:-inWindowTxs[ti].qty));
+            ti++;
           }
-          qtyByDay[isin][i]=q;
+          qtyByDay[isin][i]=runningQty;
         }
       });
+
+      // qtyByDay built above
 
       // ── EUR/USD ──
       let eurUsd=1.085;
