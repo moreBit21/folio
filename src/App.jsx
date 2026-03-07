@@ -586,10 +586,9 @@ const BROKER_FORMATS = {
 
         if (!isin || !qty) return acc;
 
-        // Use KÜRZEL as symbol if available and not an ISIN, else use ISIN
-        const symbol = (kuerzel && !isISIN(kuerzel))
-          ? kuerzel.toUpperCase()
-          : isin;
+        // Always use ISIN as the canonical symbol — KÜRZEL is a display name only
+        const symbol = isin;
+        const displaySymbol = (kuerzel && !isISIN(kuerzel)) ? kuerzel.toUpperCase() : null;
 
         const type = typeMap[klasse] || "stock";
 
@@ -600,6 +599,7 @@ const BROKER_FORMATS = {
         } else {
           acc.push({
             symbol,
+            displaySymbol,
             name,
             type,
             qty,
@@ -1040,12 +1040,40 @@ export default function App() {
       if(!stockPos.length){ setLastUpdated(new Date()); return; }
       const getT = p => {
         if(p.fmpTicker) return p.fmpTicker;
-        if(!p.isin) return p.symbol;
-        if(p.isin.startsWith('DE')||p.isin.startsWith('LU')) return p.symbol+'.DE';
-        if(p.isin.startsWith('IE')) return p.symbol+'.AS';
+        // Check ISIN_MAP first (pre-mapped known tickers)
+        if(p.isin && ISIN_MAP[p.isin]) return ISIN_MAP[p.isin];
+        // If symbol is an ISIN (not yet resolved), we can't use it as ticker
+        if(p.isin && isISIN(p.symbol)) {
+          // Guess ticker from ISIN country prefix
+          if(p.isin.startsWith('DE')||p.isin.startsWith('LU')) return null; // needs FMP search
+          if(p.isin.startsWith('IE')) return null;
+          return null;
+        }
+        // symbol is already a real ticker
+        if(p.isin?.startsWith('DE')||p.isin?.startsWith('LU')) return p.symbol+'.DE';
+        if(p.isin?.startsWith('IE')) return p.symbol+'.AS';
         return p.symbol;
       };
-      const tickerList=[...new Set(stockPos.map(getT))];
+      // Resolve any unresolved ISINs via FMP search
+      const needsResolution = stockPos.filter(p => !getT(p) && p.isin);
+      if(needsResolution.length) {
+        await Promise.all(needsResolution.slice(0,20).map(async p => {
+          try {
+            const res = await fmpGet('/search-isin?isin='+p.isin);
+            if(!Array.isArray(res)||!res.length) return;
+            const pick = res.find(r=>r.symbol?.endsWith('.DE'))
+              || res.find(r=>r.symbol?.endsWith('.F'))
+              || res.find(r=>r.symbol?.endsWith('.AS')||r.symbol?.endsWith('.PA'))
+              || res.find(r=>r.marketCap>0) || res[0];
+            if(pick?.symbol) {
+              setPositions(prev=>prev.map(q=>q.isin===p.isin?{...q,fmpTicker:pick.symbol}:q));
+              p.fmpTicker = pick.symbol; // also update local ref
+            }
+          } catch(e){}
+        }));
+      }
+      const tickerList=[...new Set(stockPos.map(getT).filter(Boolean))];
+      if(!tickerList.length){ setLastUpdated(new Date()); return; }
       const quotes = await fmpGet('/quotes?symbols='+tickerList.join(','));
       const pm={};
       (Array.isArray(quotes)?quotes:[]).forEach(q=>{ pm[q.symbol]=q.currency==='USD'?q.price/eurUsd:q.price; });
@@ -1269,7 +1297,7 @@ export default function App() {
     const data = chartData.length ? chartData : investedChartData;
     if(!data.length) return ['auto','auto'];
     let mn=Infinity,mx=-Infinity;
-    data.forEach(row=>{ ['portfolio','invested',...activeBM].forEach(k=>{ if(row[k]!=null&&row[k]>0){if(row[k]<mn)mn=row[k];if(row[k]>mx)mx=row[k];} }); });
+    data.forEach(row=>{ ['portfolio',...activeBM].forEach(k=>{ if(row[k]!=null&&row[k]>0){if(row[k]<mn)mn=row[k];if(row[k]>mx)mx=row[k];} }); });
     if(!isFinite(mn)) return ['auto','auto'];
     const pad=(mx-mn)*0.12;
     return [Math.floor(mn-pad),Math.ceil(mx+pad)];
@@ -1458,7 +1486,7 @@ export default function App() {
                     <XAxis dataKey="date" tick={{fontFamily:"IBM Plex Mono",fontSize:9,fill:"#3d4f5e"}} axisLine={false} tickLine={false} interval="preserveStartEnd"/>
                     <YAxis tick={{fontFamily:"IBM Plex Mono",fontSize:9,fill:"#3d4f5e"}} axisLine={false} tickLine={false} tickFormatter={v=>"€"+(v/1000).toFixed(0)+"k"} width={44} domain={chartDomain}/>
                     <Tooltip content={<ChartTip/>}/>
-                    <Area type="linear" dataKey="invested" name="Invested" stroke="#3d4f5e" strokeWidth={1.5} strokeDasharray="5 4" fill="none" dot={false}/>
+
                     {activeBM.map(id=>{
                       const b=BENCHMARKS.find(x=>x.id===id);
                       return <Area key={id} type="linear" dataKey={id} name={b.label} stroke={b.color} strokeWidth={1.5} fill={"url(#g_"+id+")"} dot={false}/>;
