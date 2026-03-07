@@ -1095,11 +1095,9 @@ export default function App() {
     const totalDays = Math.round((now-from)/86400000);
     const sorted = [...transactions].sort((a,b)=>a.date.localeCompare(b.date));
 
-    // Sum pre-window net cashflow as starting value
-    let running = 0;
-    sorted.filter(t=>t.date<fromStr).forEach(t=>{
-      running += t.type==='buy' ? t.amountEur : -t.amountEur;
-    });
+    // Cumulative buys = total capital ever deployed (always positive)
+    let cumBuys = 0;
+    sorted.filter(t=>t.date<fromStr&&t.type==='buy').forEach(t=>{ cumBuys+=t.amountEur; });
 
     const inWindow = sorted.filter(t=>t.date>=fromStr&&t.date<=toStr);
     const step = Math.max(1, Math.floor(totalDays/180));
@@ -1110,11 +1108,11 @@ export default function App() {
       const ds = d.toISOString().slice(0,10);
       while(ti<inWindow.length && inWindow[ti].date<=ds){
         const t=inWindow[ti++];
-        running += t.type==='buy' ? t.amountEur : -t.amountEur;
+        if(t.type==='buy') cumBuys+=t.amountEur;
       }
       rows.push({
         date: d.toLocaleDateString('de-DE',{day:'2-digit',month:'short'}),
-        invested: +running.toFixed(0),
+        invested: +cumBuys.toFixed(0),
       });
     }
     return rows;
@@ -1176,18 +1174,24 @@ export default function App() {
         return pos?.type!=='crypto'&&pos?.type!=='derivative';
       });
 
+      // Test proxy first
+      try {
+        const t = await fmpGet('/search?query=US67066G1040&limit=2');
+        console.log('FMP proxy OK, NVDA result:', JSON.stringify(t?.slice(0,1)));
+      } catch(e) { console.error('FMP proxy FAILED:', e.message); }
+
       // Batch ISIN searches
-      await Promise.all(stockIsins.slice(0,20).map(async isin=>{
+      await Promise.all(stockIsins.slice(0,30).map(async isin=>{
         try{
           const res=await fmpGet('/search?query='+isin+'&limit=5');
-          if(!res?.length) return;
+          if(!res?.length){ console.warn('no FMP result for',isin); return; }
           const pick=res.find(r=>r.exchangeShortName==='XETRA')
             ||res.find(r=>['EURONEXT','LSE','SIX'].includes(r.exchangeShortName))
             ||res[0];
-          if(pick?.symbol) isinToTicker[isin]=pick.symbol;
-        }catch(e){ console.warn('search fail',isin,e.message); }
+          if(pick?.symbol){ isinToTicker[isin]=pick.symbol; console.log(isin,'->', pick.symbol, pick.exchangeShortName); }
+        }catch(e){ console.error('search fail',isin,e.message); }
       }));
-      console.log('Resolved tickers sample:', Object.entries(isinToTicker).slice(0,5));
+      console.log('Resolved', Object.keys(isinToTicker).length, 'of', stockIsins.length, 'ISINs');
 
       // Fetch price history
       const priceByIsin={};
@@ -1460,9 +1464,9 @@ export default function App() {
                 </div>
               )}
               <div style={{padding:"6px 10px",marginBottom:6,background:"var(--surface2)",border:"1px solid var(--border)",borderRadius:6,fontSize:10,color:"var(--text3)",fontFamily:"IBM Plex Mono",lineHeight:1.6}}>
-                <div>tx={transactions.length} rows={chartData.length} domain={JSON.stringify(chartDomain)}</div>
+                <div>tx={transactions.length} rows={chartData.length} loading={String(chartLoading)}</div>
                 <div>row[0]={JSON.stringify(chartData[0])}</div>
-                <div>row[-1]={JSON.stringify(chartData[chartData.length-1])}</div>
+                <div>err={chartError||"none"}</div>
               </div>
               {chartLoading && (
                 <div style={{height:250,display:"flex",alignItems:"center",justifyContent:"center"}}>
