@@ -1291,14 +1291,19 @@ export default function App() {
         const ds=d.toISOString().slice(0,10);
         const baseRow=investedChartData[Math.round(i/step)]||{};
 
-        let portVal=0;
+        let portVal=0; let maxVal=0; let maxIsin='';
         allIsins.forEach(isin=>{
           const qty=qtyByDay[isin]?.[i]||0; if(qty<=0) return;
           if(!priceByIsin[isin]) return;
           const p=priceByIsin[isin][ds];
           if(p!=null) lastPrice[isin]=p;
-          if(lastPrice[isin]) portVal+=qty*lastPrice[isin];
+          if(lastPrice[isin]){
+            const v=qty*lastPrice[isin];
+            portVal+=v;
+            if(v>maxVal){maxVal=v;maxIsin=isin;}
+          }
         });
+        if(portVal>500000&&rows.length<3) console.warn('SPIKE',ds,'total:',portVal.toFixed(0),'biggest:',maxIsin,'val:',maxVal.toFixed(0),'qty:',qtyByDay[maxIsin]?.[i],'price:',lastPrice[maxIsin]);
 
         if(!bmNormBase&&portVal>0){
           const bp={};
