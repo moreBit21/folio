@@ -1303,12 +1303,35 @@ export default function App() {
         }catch(e){}
       }));
 
-      // ── Assemble rows ──
+      // ── Pre-scan every single day to find norm base (step may skip over it) ──
       const lastPrice={};
+      const lastBmPrice={};
       let bmNormBase=null;
-      const lastBmPrice={};  // carry-forward for weekends/gaps
-      const rows=[];
+      for(let i=0;i<=totalDays;i++){
+        const d=new Date(from); d.setDate(d.getDate()+i);
+        const ds=d.toISOString().slice(0,10);
+        // accumulate carry-forward prices
+        allIsins.forEach(isin=>{
+          const p=priceByIsin[isin]?.[ds];
+          if(p!=null) lastPrice[isin]=p;
+        });
+        activeBM.forEach(id=>{ if(bmPrices[id]?.[ds]) lastBmPrice[id]=bmPrices[id][ds]; });
+        if(!bmNormBase){
+          let portVal=0;
+          allIsins.forEach(isin=>{
+            const qty=qtyByDay[isin]?.[i]||0; if(qty<=0) return;
+            if(lastPrice[isin]) portVal+=qty*lastPrice[isin];
+          });
+          const allBmReady = activeBM.length===0 || activeBM.every(id=>lastBmPrice[id]);
+          if(portVal>0 && allBmReady) bmNormBase={portVal, bp:{...lastBmPrice}};
+        }
+      }
+      // Reset carry-forwards for main loop
+      Object.keys(lastPrice).forEach(k=>delete lastPrice[k]);
+      Object.keys(lastBmPrice).forEach(k=>delete lastBmPrice[k]);
 
+      // ── Assemble rows ──
+      const rows=[];
       for(let i=0;i<=totalDays;i+=step){
         const d=new Date(from); d.setDate(d.getDate()+i);
         const ds=d.toISOString().slice(0,10);
@@ -1322,15 +1345,7 @@ export default function App() {
           if(p!=null) lastPrice[isin]=p;
           if(lastPrice[isin]) portVal+=qty*lastPrice[isin];
         });
-
-        // Update carry-forward benchmark prices
         activeBM.forEach(id=>{ if(bmPrices[id]?.[ds]) lastBmPrice[id]=bmPrices[id][ds]; });
-
-        // Set norm base on first day we have BOTH portfolio value AND all benchmark prices
-        if(!bmNormBase&&portVal>0){
-          const allBmReady = activeBM.length===0 || activeBM.every(id=>lastBmPrice[id]);
-          if(allBmReady) bmNormBase={portVal, bp:{...lastBmPrice}};
-        }
 
         const row={
           date:baseRow.date||d.toLocaleDateString('de-DE',{day:'2-digit',month:'short'}),
