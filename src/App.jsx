@@ -1169,6 +1169,16 @@ export default function App() {
         }
       });
 
+      // Ticker resolver — same logic as fetchPrices
+      const getT = p => {
+        if(p.fmpTicker) return p.fmpTicker;
+        if(!p.isin) return p.symbol;
+        if(p.isin.startsWith('DE')||p.isin.startsWith('LU')) return p.symbol+'.DE';
+        if(p.isin.startsWith('IE')) return p.symbol+'.AS';
+        if(p.isin.startsWith('GB')) return p.symbol+'.L';
+        return p.symbol;
+      };
+
       // EUR/USD
       let eurUsd=1.085;
       try{ const fx=await fetch('https://api.frankfurter.app/latest?from=USD&to=EUR').then(r=>r.json()); eurUsd=1/(fx?.rates?.EUR||0.92); }catch(e){}
@@ -1176,7 +1186,12 @@ export default function App() {
       // FMP: search ISIN → ticker, then fetch price history
       // FMP supports CORS from browser on paid plans — test with one ticker first
       const isinToTicker={};
-      positions.forEach(p=>{ if(p.isin&&p.fmpTicker) isinToTicker[p.isin]=p.fmpTicker; });
+      // Pre-populate from positions using our ticker logic
+      positions.forEach(p=>{ 
+        if(p.isin&&p.type!=='crypto'&&p.type!=='derivative') {
+          isinToTicker[p.isin] = p.fmpTicker || getT(p);
+        }
+      });
 
       const stockIsins = allIsins.filter(isin=>{
         if(isinToTicker[isin]) return false;
@@ -1245,7 +1260,11 @@ export default function App() {
       const bmDay0={};
       activeBM.forEach(id=>{ const s=Object.keys(bmPrices[id]||{}).sort(); if(s.length) bmDay0[id]=bmPrices[id][s[0]]; });
 
+      // Find first row where we have both portfolio value AND benchmark data
+      // Use that as the normalization base so benchmarks start at same value as portfolio
       const rows=[];
+      let bmNormBase = null; // {portVal, bmPrices} at first data point
+
       for(let i=0;i<=totalDays;i+=step){
         const d=new Date(from); d.setDate(d.getDate()+i);
         const ds=d.toISOString().slice(0,10);
@@ -1259,20 +1278,30 @@ export default function App() {
           portVal+=qty*(lastPrice[isin]||0);
         });
 
+        // Set normalization base at first point where portfolio has value
+        if(!bmNormBase && portVal>0) {
+          const bmBasePrices={};
+          activeBM.forEach(id=>{ if(bmPrices[id]?.[ds]) bmBasePrices[id]=bmPrices[id][ds]; });
+          if(Object.keys(bmBasePrices).length) bmNormBase={portVal, bmBasePrices};
+        }
+
         const row={
           date:baseRow.date||d.toLocaleDateString('de-DE',{day:'2-digit',month:'short'}),
           invested:baseRow.invested||0,
           ...(portVal>0?{portfolio:+portVal.toFixed(2)}:{}),
         };
-        const base=investedChartData[0]?.invested||1;
-        activeBM.forEach(id=>{
-          const p0=bmDay0[id],p1=bmPrices[id]?.[ds];
-          if(p0&&p1) row[id]=+(base*(p1/p0)).toFixed(0);
-        });
+
+        // Normalize benchmarks: start at same value as portfolio on first data day
+        if(bmNormBase) {
+          activeBM.forEach(id=>{
+            const p0=bmNormBase.bmBasePrices[id], p1=bmPrices[id]?.[ds];
+            if(p0&&p1) row[id]=+(bmNormBase.portVal*(p1/p0)).toFixed(0);
+          });
+        }
         rows.push(row);
       }
 
-      console.log('Chart rows:', rows.length, 'with portfolio data:', rows.filter(r=>r.portfolio).length);
+      console.log('Chart rows:', rows.length, 'portfolio rows:', rows.filter(r=>r.portfolio).length, 'bmNormBase:', bmNormBase?.portVal);
       setChartData(rows);
     }catch(e){ console.error('fetchChart:',e); setChartError(e.message); }
     finally{ setChartLoading(false); }
