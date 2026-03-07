@@ -1,4 +1,3 @@
-// FMP stable API proxy — new endpoints (post Aug 2025)
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
@@ -11,14 +10,18 @@ export default async function handler(req, res) {
   if (!FMP_KEY) { res.status(500).json({ error: 'FMP_KEY not configured' }); return; }
 
   const sep = path.includes('?') ? '&' : '?';
-  // New stable API base
   const url = `https://financialmodelingprep.com/stable${path}${sep}apikey=${FMP_KEY}`;
 
   try {
     const r = await fetch(url);
     const text = await r.text();
+    // Normalize premium errors to JSON
+    if (text.startsWith('Premium') || text.includes('Premium Query')) {
+      res.status(200).json({ error: 'Premium', message: text.slice(0, 100) });
+      return;
+    }
     try { res.status(200).json(JSON.parse(text)); }
-    catch { res.status(200).send(text); }
+    catch { res.status(200).json({ error: 'parse', raw: text.slice(0, 200) }); }
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

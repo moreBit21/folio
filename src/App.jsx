@@ -1004,8 +1004,14 @@ export default function App() {
   const fmpGet = useCallback(async (path) => {
     const r = await fetch('/api/fmp?path=' + encodeURIComponent(path));
     if (!r.ok) throw new Error('fmp ' + r.status);
-    const data = await r.json();
-    if (data?.['Error Message'] || data?.error) throw new Error(data['Error Message'] || data.error);
+    const text = await r.text();
+    // Handle plain-text premium errors ("Premium Query : ...")
+    if (text.startsWith('Premium') || text.includes('Premium Query')) throw new Error('Premium');
+    let data;
+    try { data = JSON.parse(text); } catch(e) { throw new Error('parse: ' + text.slice(0,80)); }
+    if (data?.error === 'Premium' || data?.['Error Message']?.includes('Premium')) throw new Error('Premium');
+    if (data?.['Error Message']) throw new Error(data['Error Message']);
+    if (data?.error) throw new Error(data.error);
     return data;
   }, []);
 
@@ -1211,7 +1217,7 @@ export default function App() {
       await Promise.all(uniqueTickers.map(async ticker=>{
         try{
           const data = await fmpGet('/historical-price-eod/full?symbol='+ticker+'&from='+fromStr+'&to='+toStr);
-          if(data?.['Error Message']?.includes('Premium')){ skippedTickers.push(ticker); return; }
+          // premium check now handled in fmpGet via throw
           const hist = data?.historical||[];
           if(!hist.length){ skippedTickers.push(ticker); return; }
           const isins = Object.entries(isinToTicker).filter(([,t])=>t===ticker).map(([i])=>i);
@@ -1220,7 +1226,7 @@ export default function App() {
             priceByIsin[isin]={};
             hist.forEach(h=>{ priceByIsin[isin][h.date]=isUsd?h.close/eurUsd:h.close; });
           });
-        }catch(e){ skippedTickers.push(ticker); }
+        }catch(e){ if(e.message==='Premium') skippedTickers.push(ticker); else console.warn('hist fail:',ticker,e.message); }
       }));
 
       // ── Crypto via CoinGecko ──
@@ -1240,7 +1246,7 @@ export default function App() {
       await Promise.all(activeBM.map(async id=>{
         try{
           const data=await fmpGet('/historical-price-eod/full?symbol='+encodeURIComponent(BM_FMP[id])+'&from='+fromStr+'&to='+toStr);
-          if(data?.['Error Message']?.includes('Premium')){ skippedTickers.push(BM_FMP[id]); return; }
+          // premium check now handled in fmpGet via throw
           bmPrices[id]={};
           (data?.historical||[]).forEach(h=>{ bmPrices[id][h.date]=h.close; });
         }catch(e){}
