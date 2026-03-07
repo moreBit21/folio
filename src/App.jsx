@@ -988,6 +988,247 @@ function ImportModal({ onClose, onImport }) {
   );
 }
 
+
+// ── Fundamentals Drawer (3b + 3d) ────────────────────────────────────────────
+function FundamentalsDrawer({ pos, onClose }) {
+  const [data, setData]   = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  const ticker = pos.fmpTicker || ISIN_MAP[pos.isin] || pos.symbol;
+
+  useEffect(() => {
+    if (!ticker) return;
+    setLoading(true); setError(null); setData(null);
+    fetch('/api/fundamentals?symbol=' + ticker)
+      .then(r => r.json())
+      .then(d => { if (d.error) throw new Error(d.error); setData(d); })
+      .catch(e => setError(e.message))
+      .finally(() => setLoading(false));
+  }, [ticker]);
+
+  const fmtB = v => {
+    if (v == null) return '—';
+    const abs = Math.abs(v);
+    if (abs >= 1e9) return (v/1e9).toFixed(1) + 'B';
+    if (abs >= 1e6) return (v/1e6).toFixed(1) + 'M';
+    return v.toFixed(0);
+  };
+  const fmtPct = v => v == null ? '—' : (v*100).toFixed(1) + '%';
+  const fmtN   = v => v == null ? '—' : v.toFixed(1);
+
+  // ── Health scorecard ──────────────────────────────────────────────────────
+  function scorecard(d) {
+    if (!d?.byYear?.length) return null;
+    const yrs = d.byYear.slice(-3);
+    const last = yrs[yrs.length - 1] || {};
+    const prev = yrs[yrs.length - 2] || {};
+
+    const score = (val, good, ok) => val == null ? 'gray'
+      : val >= good ? 'green' : val >= ok ? 'gold' : 'red';
+    const trend = (cur, prv) => cur == null || prv == null ? 'gray'
+      : cur > prv * 1.02 ? 'green' : cur < prv * 0.98 ? 'red' : 'gold';
+
+    return [
+      {
+        label: 'Profitability',
+        color: score(last.netMargin, 0.15, 0.05),
+        detail: `Net margin: ${fmtPct(last.netMargin)}`,
+      },
+      {
+        label: 'Growth',
+        color: trend(last.revenue, prev.revenue),
+        detail: prev.revenue && last.revenue
+          ? `Rev YoY: ${((last.revenue/prev.revenue - 1)*100).toFixed(1)}%`
+          : 'Insufficient data',
+      },
+      {
+        label: 'Cash Generation',
+        color: last.freeCashFlow == null ? 'gray'
+          : last.freeCashFlow > 0 ? 'green' : 'red',
+        detail: `FCF: ${fmtB(last.freeCashFlow)}`,
+      },
+      {
+        label: 'Earnings Quality',
+        color: score(last.eps, 2, 0),
+        detail: `EPS: ${last.eps?.toFixed(2) ?? '—'}`,
+      },
+      {
+        label: 'Valuation',
+        color: d.peRatio == null ? 'gray'
+          : d.peRatio < 15 ? 'green' : d.peRatio < 30 ? 'gold' : 'red',
+        detail: `P/E: ${d.peRatio?.toFixed(1) ?? '—'}`,
+      },
+    ];
+  }
+
+  const SCORE_COLOR = { green: '#00e5a0', gold: '#f0b429', red: '#ff4d6d', gray: '#3d4f5e' };
+  const SCORE_LABEL = { green: 'STRONG', gold: 'OK', red: 'WEAK', gray: 'N/A' };
+
+  // ── Bar chart component ───────────────────────────────────────────────────
+  function MiniBar({ years, getValue, label, fmt: fmtFn, color = '#00e5a0' }) {
+    const vals = years.map(getValue);
+    const max  = Math.max(...vals.filter(v => v != null).map(Math.abs), 1);
+    return (
+      <div style={{ marginBottom: 20 }}>
+        <div className="mono" style={{ fontSize: 9, color: 'var(--text3)', letterSpacing: '0.1em', marginBottom: 8 }}>
+          {label}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6, height: 80 }}>
+          {years.map((yr, i) => {
+            const v = getValue(yr);
+            const h = v == null ? 0 : Math.abs(v) / max * 72;
+            const c = v == null ? '#1c2730' : v < 0 ? '#ff4d6d' : color;
+            return (
+              <div key={yr.year} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                <div className="mono" style={{ fontSize: 8, color: 'var(--text3)' }}>
+                  {v == null ? '—' : fmtFn(v)}
+                </div>
+                <div style={{
+                  width: '100%', height: h, background: c,
+                  borderRadius: '3px 3px 0 0', minHeight: 2,
+                  opacity: i === years.length - 1 ? 1 : 0.6
+                }}/>
+                <div className="mono" style={{ fontSize: 8, color: 'var(--text3)' }}>{yr.year}</div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  const card = (style={}) => ({
+    background: 'var(--surface)',
+    border: '1px solid var(--border)',
+    borderRadius: 10,
+    padding: 16,
+    ...style,
+  });
+
+  const sc = data ? scorecard(data) : null;
+  const yrs = data?.byYear?.slice(-5) || [];
+
+  return (
+    <div style={{
+      position: 'fixed', top: 0, right: 0, width: 420, height: '100vh',
+      background: 'var(--surface)', borderLeft: '1px solid var(--border)',
+      zIndex: 200, overflowY: 'auto', padding: 24,
+      boxShadow: '-8px 0 32px rgba(0,0,0,0.4)',
+      animation: 'slideIn .2s ease'
+    }}>
+      <style>{`@keyframes slideIn{from{transform:translateX(100%)}to{transform:translateX(0)}}`}</style>
+
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <AssetLogo pos={pos}/>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 600 }}>{pos.symbol}</div>
+            <div style={{ fontSize: 11, color: 'var(--text2)' }}>{pos.name}</div>
+          </div>
+        </div>
+        <button className="btn btn-ghost" style={{ padding: '4px 10px', fontSize: 16 }} onClick={onClose}>✕</button>
+      </div>
+
+      {/* Position summary */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 20 }}>
+        {[
+          { l: 'VALUE',    v: fmtE(pos.qty * pos.currentPrice) },
+          { l: 'P&L',      v: (pos.qty*(pos.currentPrice-pos.avgPrice) >= 0 ? '+' : '') + fmtE(pos.qty*(pos.currentPrice-pos.avgPrice)),
+                           c: pos.currentPrice >= pos.avgPrice ? 'var(--green)' : 'var(--red)' },
+          { l: 'RETURN',   v: pos.avgPrice > 0 ? ((pos.currentPrice-pos.avgPrice)/pos.avgPrice*100).toFixed(1)+'%' : '—',
+                           c: pos.currentPrice >= pos.avgPrice ? 'var(--green)' : 'var(--red)' },
+        ].map(({l,v,c}) => (
+          <div key={l} style={card()}>
+            <div className="mono" style={{ fontSize: 8, color: 'var(--text3)', letterSpacing:'0.1em', marginBottom: 4 }}>{l}</div>
+            <div className="mono" style={{ fontSize: 13, fontWeight: 600, color: c || 'var(--text)' }}>{v}</div>
+          </div>
+        ))}
+      </div>
+
+      {loading && (
+        <div style={{ textAlign: 'center', padding: 40 }}>
+          <span className="mono shimmer" style={{ fontSize: 11, color: 'var(--text3)' }}>⟳ Loading fundamentals…</span>
+        </div>
+      )}
+
+      {error && (
+        <div style={{ ...card(), color: 'var(--text2)', fontSize: 12 }}>
+          Could not load fundamentals for <b>{ticker}</b>: {error}
+        </div>
+      )}
+
+      {data && !loading && (<>
+
+        {/* ── Health Scorecard (3d) ── */}
+        <div style={{ marginBottom: 20 }}>
+          <div className="mono" style={{ fontSize: 9, color: 'var(--text3)', letterSpacing: '0.1em', marginBottom: 10 }}>
+            HEALTH SCORECARD
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {sc?.map(item => (
+              <div key={item.label} style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '8px 12px', borderRadius: 8,
+                background: SCORE_COLOR[item.color] + '11',
+                border: '1px solid ' + SCORE_COLOR[item.color] + '33',
+              }}>
+                <div style={{ fontSize: 12, fontWeight: 500 }}>{item.label}</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div className="mono" style={{ fontSize: 10, color: 'var(--text3)' }}>{item.detail}</div>
+                  <div className="mono" style={{
+                    fontSize: 9, fontWeight: 700, letterSpacing: '0.08em',
+                    color: SCORE_COLOR[item.color],
+                    background: SCORE_COLOR[item.color] + '22',
+                    padding: '2px 7px', borderRadius: 4
+                  }}>{SCORE_LABEL[item.color]}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* ── Key Ratios ── */}
+        {data.peRatio && (
+          <div style={{ ...card(), display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 20 }}>
+            {[
+              { l: 'P/E',    v: fmtN(data.peRatio) },
+              { l: 'BETA',   v: fmtN(data.beta) },
+              { l: 'MKT CAP',v: fmtB(data.marketCap) },
+            ].map(({l,v}) => (
+              <div key={l}>
+                <div className="mono" style={{ fontSize: 8, color: 'var(--text3)', letterSpacing:'0.1em', marginBottom: 4 }}>{l}</div>
+                <div className="mono" style={{ fontSize: 14, fontWeight: 600 }}>{v}</div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* ── Fundamentals Bar Charts (3b) ── */}
+        {yrs.length > 0 && (
+          <div style={card()}>
+            <div className="mono" style={{ fontSize: 9, color: 'var(--text3)', letterSpacing: '0.1em', marginBottom: 16 }}>
+              FINANCIALS (5Y)
+            </div>
+            <MiniBar years={yrs} getValue={y => y.revenue}      label="REVENUE"          fmt={fmtB}   color="#4d9fff"/>
+            <MiniBar years={yrs} getValue={y => y.eps}           label="EPS"              fmt={v=>v.toFixed(2)} color="#00e5a0"/>
+            <MiniBar years={yrs} getValue={y => y.freeCashFlow}  label="FREE CASH FLOW"   fmt={fmtB}   color="#f0b429"/>
+            <MiniBar years={yrs} getValue={y => y.netMargin}     label="NET MARGIN"       fmt={fmtPct} color="#a78bfa"/>
+          </div>
+        )}
+
+        {/* Sector / description */}
+        {data.sector && (
+          <div style={{ marginTop: 14, fontSize: 11, color: 'var(--text3)' }}>
+            {data.sector}{data.industry ? ` · ${data.industry}` : ''}
+          </div>
+        )}
+      </>)}
+    </div>
+  );
+}
+
 export default function App() {
   const [positions,   setPositions]   = useState([]);
   const positionsRef = React.useRef([]);
@@ -1007,6 +1248,7 @@ export default function App() {
   const [sortBy,      setSortBy]      = useState("value");
   const [sortDir,     setSortDir]     = useState("desc");
   const [newPos,      setNewPos]      = useState({symbol:"",name:"",type:"stock",qty:"",avgPrice:"",currentPrice:"",broker:"Smartbroker+"});
+  const [selectedPos,  setSelectedPos]  = useState(null);
 
   // ── Fetch live prices ──
   // ── Data fetching — powered by FMP (Financial Modeling Prep) ──
@@ -1656,7 +1898,7 @@ export default function App() {
                 const pp  = ((pos.currentPrice-pos.avgPrice)/pos.avgPrice*100);
                 const up  = p>=0;
                 return (
-                  <div key={pos.id} className="trow">
+                  <div key={pos.id} className="trow" style={{cursor:"pointer"}} onClick={()=>setSelectedPos(pos)}>
                     {/* Asset cell with logo */}
                     <div style={{display:"flex",alignItems:"center",gap:10}}>
                       <AssetLogo pos={pos}/>
@@ -1745,6 +1987,7 @@ export default function App() {
         </div>
       </div>
 
+      {selectedPos&&<FundamentalsDrawer pos={selectedPos} onClose={()=>setSelectedPos(null)}/>}
       {showImport&&<ImportModal onClose={()=>setShowImport(false)} onImport={(imported)=>{
     if(imported?.type==="transactions"){
       const txs = imported.data;
