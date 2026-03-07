@@ -1,4 +1,3 @@
-// FMP stable API — fundamentals proxy
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
@@ -11,9 +10,14 @@ export default async function handler(req, res) {
   if (!FMP_KEY) { res.status(500).json({ error: 'FMP_KEY not configured' }); return; }
 
   const fmp = async (path) => {
-    const sep = path.includes('?') ? '&' : '?';
-    const r = await fetch(`https://financialmodelingprep.com/stable${path}${sep}apikey=${FMP_KEY}`);
-    return r.json();
+    try {
+      const sep = path.includes('?') ? '&' : '?';
+      const r = await fetch(`https://financialmodelingprep.com/stable${path}${sep}apikey=${FMP_KEY}`);
+      const text = await r.text();
+      if (text.startsWith('Premium') || text.includes('Premium Query')) return [];
+      const data = JSON.parse(text);
+      return Array.isArray(data) ? data : (data?.data ?? data ?? []);
+    } catch { return []; }
   };
 
   try {
@@ -26,62 +30,53 @@ export default async function handler(req, res) {
       fmp(`/quotes?symbols=${symbol}`),
     ]);
 
-    const p = Array.isArray(profile) ? profile[0] : {};
-    const q = Array.isArray(quote)   ? quote[0]   : {};
+    const p = profile[0]  || {};
+    const q = quote[0]    || {};
 
     const years = [...new Set([
-      ...(Array.isArray(income)   ? income.map(r=>r.calendarYear||r.date?.slice(0,4))   : []),
-      ...(Array.isArray(cashflow) ? cashflow.map(r=>r.calendarYear||r.date?.slice(0,4)) : []),
+      ...income.map(r => r.calendarYear || r.date?.slice(0,4)).filter(Boolean),
+      ...cashflow.map(r => r.calendarYear || r.date?.slice(0,4)).filter(Boolean),
     ])].sort();
 
     const byYear = years.map(yr => {
-      const inc = (Array.isArray(income)   ? income   : []).find(r=>(r.calendarYear||r.date?.slice(0,4))===yr)||{};
-      const cf  = (Array.isArray(cashflow) ? cashflow : []).find(r=>(r.calendarYear||r.date?.slice(0,4))===yr)||{};
-      const bs  = (Array.isArray(balance)  ? balance  : []).find(r=>(r.calendarYear||r.date?.slice(0,4))===yr)||{};
-      const km  = (Array.isArray(ratios)   ? ratios   : []).find(r=>(r.calendarYear||r.date?.slice(0,4))===yr)||{};
+      const inc = income.find(r=>(r.calendarYear||r.date?.slice(0,4))===yr)   || {};
+      const cf  = cashflow.find(r=>(r.calendarYear||r.date?.slice(0,4))===yr) || {};
+      const bs  = balance.find(r=>(r.calendarYear||r.date?.slice(0,4))===yr)  || {};
+      const km  = ratios.find(r=>(r.calendarYear||r.date?.slice(0,4))===yr)   || {};
 
-      // ROIC = NOPAT / Invested Capital
-      const nopat = inc.operatingIncome ? inc.operatingIncome * (1 - 0.21) : null;
-      const investedCapital = (bs.totalStockholdersEquity && bs.totalDebt)
-        ? bs.totalStockholdersEquity + bs.totalDebt : null;
-      const roic = nopat && investedCapital ? nopat / investedCapital : null;
-
-      // Debt/Equity
-      const debtEquity = (bs.totalDebt && bs.totalStockholdersEquity && bs.totalStockholdersEquity !== 0)
-        ? bs.totalDebt / bs.totalStockholdersEquity : null;
+      const nopat = inc.operatingIncome != null ? inc.operatingIncome * 0.79 : null;
+      const ic    = (bs.totalStockholdersEquity != null && bs.totalDebt != null)
+                    ? bs.totalStockholdersEquity + bs.totalDebt : null;
+      const roic  = nopat != null && ic ? nopat / ic : null;
+      const debtEquity = bs.totalDebt != null && bs.totalStockholdersEquity
+                    ? bs.totalDebt / bs.totalStockholdersEquity : null;
 
       return {
-        year: yr,
-        // Income statement
-        revenue:         inc.revenue             ?? null,
-        grossProfit:     inc.grossProfit          ?? null,
-        operatingIncome: inc.operatingIncome      ?? null,
-        netIncome:       inc.netIncome            ?? null,
-        eps:             inc.eps                  ?? null,
-        ebitda:          inc.ebitda               ?? null,
-        // Cash flow
-        operatingCF:     cf.operatingCashFlow     ?? null,
-        capex:           cf.capitalExpenditure    ?? null,
-        freeCashFlow:    cf.freeCashFlow          ?? null,
-        // Balance sheet
-        totalAssets:     bs.totalAssets           ?? null,
-        totalDebt:       bs.totalDebt             ?? null,
+        year:            yr,
+        revenue:         inc.revenue              ?? null,
+        grossProfit:     inc.grossProfit           ?? null,
+        operatingIncome: inc.operatingIncome       ?? null,
+        netIncome:       inc.netIncome             ?? null,
+        eps:             inc.eps                   ?? null,
+        ebitda:          inc.ebitda                ?? null,
+        operatingCF:     cf.operatingCashFlow      ?? null,
+        capex:           cf.capitalExpenditure     ?? null,
+        freeCashFlow:    cf.freeCashFlow           ?? null,
+        totalAssets:     bs.totalAssets            ?? null,
+        totalDebt:       bs.totalDebt              ?? null,
         cashAndEquiv:    bs.cashAndCashEquivalents ?? null,
         equity:          bs.totalStockholdersEquity ?? null,
-        // Margins
-        grossMargin:     inc.grossProfitRatio      ?? null,
-        operatingMargin: inc.operatingIncomeRatio  ?? null,
-        netMargin:       inc.netIncomeRatio        ?? null,
-        // Derived
+        grossMargin:     inc.grossProfitRatio       ?? null,
+        operatingMargin: inc.operatingIncomeRatio   ?? null,
+        netMargin:       inc.netIncomeRatio         ?? null,
+        roe:             km.roe                    ?? null,
+        roa:             km.returnOnTangibleAssets ?? null,
+        peRatio:         km.peRatio                ?? null,
+        pbRatio:         km.pbRatio                ?? null,
+        evEbitda:        km.enterpriseValueOverEBITDA ?? null,
+        fcfYield:        km.fcfYield               ?? null,
         roic,
         debtEquity,
-        // Key metrics from FMP
-        peRatio:         km.peRatio               ?? null,
-        pbRatio:         km.pbRatio               ?? null,
-        evEbitda:        km.enterpriseValueOverEBITDA ?? null,
-        fcfYield:        km.fcfYield              ?? null,
-        roe:             km.roe                   ?? null,
-        roa:             km.returnOnTangibleAssets ?? null,
       };
     });
 
@@ -91,14 +86,13 @@ export default async function handler(req, res) {
       currency:      p.currency     || 'USD',
       sector:        p.sector       || null,
       industry:      p.industry     || null,
-      marketCap:     q.marketCap    ?? null,
+      marketCap:     q.marketCap    ?? p.mktCap    ?? null,
       peRatio:       q.pe           ?? null,
       pbRatio:       q.priceToBook  ?? null,
       evEbitda:      q.priceEbitda  ?? null,
       beta:          p.beta         ?? null,
       dividendYield: p.lastDiv      ?? null,
       description:   p.description  || null,
-      image:         p.image        || null,
       byYear,
     });
   } catch (e) {
