@@ -1146,9 +1146,15 @@ export default function App() {
     try {
       const months = RANGE_MONTHS[range] ?? 12;
       const now    = new Date(2026,2,7);
-      const from   = new Date(now); from.setMonth(from.getMonth()-months);
+      const toStr  = now.toISOString().slice(0,10);
+
+      // Clamp window start to first transaction date — no point showing before we have data
+      const requestedFrom = new Date(now); requestedFrom.setMonth(requestedFrom.getMonth()-months);
+      const firstTxDate = sorted[0]?.date;
+      const from = firstTxDate && new Date(firstTxDate) > requestedFrom
+        ? new Date(firstTxDate)
+        : requestedFrom;
       const fromStr = from.toISOString().slice(0,10);
-      const toStr   = now.toISOString().slice(0,10);
       const totalDays = Math.round((now-from)/86400000);
       const step = Math.max(1, Math.floor(totalDays/180));
 
@@ -1166,28 +1172,26 @@ export default function App() {
       const sorted = [...transactions].sort((a,b)=>a.date.localeCompare(b.date));
       const allIsins = [...new Set(sorted.map(t=>t.isin).filter(Boolean))];
 
-      // For each ISIN, build a running qty timeline from first transaction forward
-      // qty on day D = sum of all buys up to D minus sum of all sells up to D
+      // ── Qty reconstruction ──
+      // Strategy: use current depot qty as ground truth, work backwards using ALL transactions
+      // This correctly handles positions bought before transaction history starts
+      const depotQty = {};
+      positions.forEach(p=>{ if(p.isin) depotQty[p.isin] = p.qty||0; });
+
+      // For each ISIN: qty on day D = depotQty - sum(buys after D) + sum(sells after D)
       const qtyByDay = {};
       allIsins.forEach(isin=>{
         const txs = sorted.filter(t=>t.isin===isin);
         qtyByDay[isin] = new Float64Array(totalDays+1);
-        let runningQty = 0;
-        // Pre-load qty from transactions before window start
-        txs.filter(t=>t.date<fromStr).forEach(t=>{
-          runningQty += t.type==='buy' ? t.qty : -t.qty;
-        });
-        runningQty = Math.max(0, runningQty);
-        const inWindowTxs = txs.filter(t=>t.date>=fromStr&&t.date<=toStr);
-        let ti=0;
         for(let i=0;i<=totalDays;i++){
           const d=new Date(from); d.setDate(d.getDate()+i);
           const ds=d.toISOString().slice(0,10);
-          while(ti<inWindowTxs.length&&inWindowTxs[ti].date<=ds){
-            runningQty=Math.max(0,runningQty+(inWindowTxs[ti].type==='buy'?inWindowTxs[ti].qty:-inWindowTxs[ti].qty));
-            ti++;
-          }
-          qtyByDay[isin][i]=runningQty;
+          // qty at ds = current qty minus all buys after ds + all sells after ds
+          let qty = depotQty[isin]||0;
+          txs.filter(t=>t.date>ds).forEach(t=>{
+            qty -= t.type==='buy' ? t.qty : -t.qty;
+          });
+          qtyByDay[isin][i] = Math.max(0, qty);
         }
       });
 
@@ -1681,7 +1685,31 @@ export default function App() {
       </div>
 
       {showImport&&<ImportModal onClose={()=>setShowImport(false)} onImport={(imported)=>{
-    if(imported?.type==="transactions"){setTransactions(imported.data);}
+    if(imported?.type==="transactions"){
+      const txs = imported.data;
+      // Validate: check if transaction history is complete enough to trust qty reconstruction
+      if(positions.length > 0) {
+        // For each held position, compute final qty from transactions
+        const txQty = {};
+        txs.forEach(t=>{ if(!t.isin) return; txQty[t.isin]=(txQty[t.isin]||0)+(t.type==='buy'?t.qty:-t.qty); });
+        const mismatches = positions.filter(p=>{
+          if(!p.isin||p.qty<=0) return false;
+          const computed = Math.max(0, txQty[p.isin]||0);
+          const actual = p.qty;
+          // Flag if tx history gives 0 but depot shows qty > 0 (missing history)
+          // or if difference is >20% (incomplete history)
+          if(computed===0 && actual>0) return true;
+          if(actual>0 && Math.abs(computed-actual)/actual > 0.2) return true;
+          return false;
+        });
+        if(mismatches.length > positions.length * 0.3) {
+          const names = mismatches.slice(0,3).map(p=>p.name||p.symbol).join(', ');
+          const msg = "\u26a0 Incomplete transaction history\n\n" + mismatches.length + " of your " + positions.length + " positions have missing buy records\n(e.g. " + names + "...)\n\nSmartbroker+ only exported partial history. Please re-export going back to your first purchase.\n\nImport anyway?";
+          if(!window.confirm(msg)) return;
+        }
+      }
+      setTransactions(txs);
+    }
     else{setPositions(prev=>[...prev,...imported]);}
     setShowImport(false); setNav("dashboard");
   }}/>}
