@@ -1303,7 +1303,7 @@ export default function App() {
             if(v>maxVal){maxVal=v;maxIsin=isin;}
           }
         });
-        if(portVal>500000&&rows.length<3) console.warn('SPIKE',ds,'total:',portVal.toFixed(0),'biggest:',maxIsin,'val:',maxVal.toFixed(0),'qty:',qtyByDay[maxIsin]?.[i],'price:',lastPrice[maxIsin]);
+        if(portVal>500000) console.warn('SPIKE',ds,'total:',portVal.toFixed(0),'biggest:',maxIsin,'val:',maxVal.toFixed(0),'qty:',(qtyByDay[maxIsin]?.[i]||0).toFixed(2),'price:',(lastPrice[maxIsin]||0).toFixed(2));
 
         if(!bmNormBase&&portVal>0){
           const bp={};
