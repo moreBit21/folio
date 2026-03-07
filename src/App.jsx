@@ -1238,8 +1238,9 @@ export default function App() {
         try{
           const data = await fmpGet('/historical-price-eod/full?symbol='+ticker+'&from='+fromStr+'&to='+toStr);
           // premium check now handled in fmpGet via throw
-          const hist = data?.historical||[];
-          if(!hist.length){ console.warn('no history for', ticker, JSON.stringify(data)?.slice(0,80)); skippedTickers.push(ticker); return; }
+          // Stable API returns flat array, not {historical:[]}
+          const hist = Array.isArray(data) ? data : (data?.historical||[]);
+          if(!hist.length){ skippedTickers.push(ticker); return; }
           const isins = Object.entries(isinToTicker).filter(([,t])=>t===ticker).map(([i])=>i);
           const isUsd = !ticker.endsWith('.DE')&&!ticker.endsWith('.F')&&!ticker.endsWith('.AS')&&!ticker.endsWith('.PA')&&!ticker.endsWith('.L');
           isins.forEach(isin=>{
@@ -1268,7 +1269,8 @@ export default function App() {
           const data=await fmpGet('/historical-price-eod/full?symbol='+encodeURIComponent(BM_FMP[id])+'&from='+fromStr+'&to='+toStr);
           // premium check now handled in fmpGet via throw
           bmPrices[id]={};
-          (data?.historical||[]).forEach(h=>{ bmPrices[id][h.date]=h.close; });
+          const bmHist = Array.isArray(data) ? data : (data?.historical||[]);
+          bmHist.forEach(h=>{ bmPrices[id][h.date]=h.close; });
         }catch(e){}
       }));
 
