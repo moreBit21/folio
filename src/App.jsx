@@ -1459,8 +1459,10 @@ export default function App() {
                   ⚠ Chart error: {chartError}
                 </div>
               )}
-              <div style={{padding:"6px 10px",marginBottom:6,background:"var(--surface2)",border:"1px solid var(--border)",borderRadius:6,fontSize:10,color:"var(--text3)",fontFamily:"IBM Plex Mono"}}>
-                debug: tx={transactions.length} pos={positions.length} chartRows={chartData.length} loading={String(chartLoading)} err={chartError||"none"}
+              <div style={{padding:"6px 10px",marginBottom:6,background:"var(--surface2)",border:"1px solid var(--border)",borderRadius:6,fontSize:10,color:"var(--text3)",fontFamily:"IBM Plex Mono",lineHeight:1.6}}>
+                <div>tx={transactions.length} rows={chartData.length} domain={JSON.stringify(chartDomain)}</div>
+                <div>row[0]={JSON.stringify(chartData[0])}</div>
+                <div>row[-1]={JSON.stringify(chartData[chartData.length-1])}</div>
               </div>
               {chartLoading && (
                 <div style={{height:250,display:"flex",alignItems:"center",justifyContent:"center"}}>
