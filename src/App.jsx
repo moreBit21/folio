@@ -1285,15 +1285,18 @@ export default function App() {
         const baseRow=investedChartData[Math.round(i/step)]||{};
 
         let portVal=0;
+        const portBreakdown=[];
         allIsins.forEach(isin=>{
           const qty=qtyByDay[isin]?.[i]||0; if(qty<=0) return;
-          // Only include if we have price history for this ISIN at all
           if(!priceByIsin[isin]) return;
           const p=priceByIsin[isin][ds];
           if(p!=null) lastPrice[isin]=p;
-          // Only use lastPrice if it's from actual history (not carried from current price)
-          if(lastPrice[isin]) portVal+=qty*lastPrice[isin];
+          if(lastPrice[isin]){
+            portVal+=qty*lastPrice[isin];
+            portBreakdown.push({isin,qty,price:lastPrice[isin],val:qty*lastPrice[isin]});
+          }
         });
+        if(portVal>500000 && !rows.length) console.warn('HIGH portVal',ds,portVal,portBreakdown.sort((a,b)=>b.val-a.val).slice(0,5));
 
         if(!bmNormBase&&portVal>0){
           const bp={};
