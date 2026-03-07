@@ -989,16 +989,17 @@ function ImportModal({ onClose, onImport }) {
 }
 
 
-// ── Fundamentals Drawer (3b + 3d) ────────────────────────────────────────────
-function FundamentalsDrawer({ pos, onClose }) {
-  const [data, setData]   = useState(null);
+
+// ── StockDetail — full page (3a financials + 3b charts + 3d scorecard) ──────
+function StockDetail({ pos, onBack }) {
+  const [data, setData]     = useState(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [error, setError]   = useState(null);
+  const [tab, setTab]       = useState('overview');
 
   const ticker = pos.fmpTicker || ISIN_MAP[pos.isin] || pos.symbol;
 
   useEffect(() => {
-    if (!ticker) return;
     setLoading(true); setError(null); setData(null);
     fetch('/api/fundamentals?symbol=' + ticker)
       .then(r => r.json())
@@ -1010,224 +1011,332 @@ function FundamentalsDrawer({ pos, onClose }) {
   const fmtB = v => {
     if (v == null) return '—';
     const abs = Math.abs(v);
-    if (abs >= 1e9) return (v/1e9).toFixed(1) + 'B';
-    if (abs >= 1e6) return (v/1e6).toFixed(1) + 'M';
+    if (abs >= 1e12) return (v/1e12).toFixed(2) + 'T';
+    if (abs >= 1e9)  return (v/1e9).toFixed(2)  + 'B';
+    if (abs >= 1e6)  return (v/1e6).toFixed(1)  + 'M';
     return v.toFixed(0);
   };
-  const fmtPct = v => v == null ? '—' : (v*100).toFixed(1) + '%';
-  const fmtN   = v => v == null ? '—' : v.toFixed(1);
+  const fmtPct = v => v == null ? '—' : (v * 100).toFixed(1) + '%';
+  const fmtX   = v => v == null ? '—' : v.toFixed(1) + 'x';
+  const fmtN   = v => v == null ? '—' : v.toFixed(2);
 
-  // ── Health scorecard ──────────────────────────────────────────────────────
-  function scorecard(d) {
-    if (!d?.byYear?.length) return null;
-    const yrs = d.byYear.slice(-3);
-    const last = yrs[yrs.length - 1] || {};
-    const prev = yrs[yrs.length - 2] || {};
+  const yrs = data?.byYear?.slice(-5) || [];
+  const last = yrs[yrs.length - 1] || {};
+  const prev = yrs[yrs.length - 2] || {};
 
-    const score = (val, good, ok) => val == null ? 'gray'
-      : val >= good ? 'green' : val >= ok ? 'gold' : 'red';
-    const trend = (cur, prv) => cur == null || prv == null ? 'gray'
-      : cur > prv * 1.02 ? 'green' : cur < prv * 0.98 ? 'red' : 'gold';
+  // ── Scorecard ──
+  const SCORE_COLOR = { green:'#00e5a0', gold:'#f0b429', red:'#ff4d6d', gray:'#3d4f5e' };
+  const SCORE_BG    = { green:'rgba(0,229,160,0.08)', gold:'rgba(240,180,41,0.08)', red:'rgba(255,77,109,0.08)', gray:'rgba(61,79,94,0.08)' };
 
-    return [
-      {
-        label: 'Profitability',
-        color: score(last.netMargin, 0.15, 0.05),
-        detail: `Net margin: ${fmtPct(last.netMargin)}`,
-      },
-      {
-        label: 'Growth',
-        color: trend(last.revenue, prev.revenue),
-        detail: prev.revenue && last.revenue
-          ? `Rev YoY: ${((last.revenue/prev.revenue - 1)*100).toFixed(1)}%`
-          : 'Insufficient data',
-      },
-      {
-        label: 'Cash Generation',
-        color: last.freeCashFlow == null ? 'gray'
-          : last.freeCashFlow > 0 ? 'green' : 'red',
-        detail: `FCF: ${fmtB(last.freeCashFlow)}`,
-      },
-      {
-        label: 'Earnings Quality',
-        color: score(last.eps, 2, 0),
-        detail: `EPS: ${last.eps?.toFixed(2) ?? '—'}`,
-      },
-      {
-        label: 'Valuation',
-        color: d.peRatio == null ? 'gray'
-          : d.peRatio < 15 ? 'green' : d.peRatio < 30 ? 'gold' : 'red',
-        detail: `P/E: ${d.peRatio?.toFixed(1) ?? '—'}`,
-      },
-    ];
-  }
+  const grade = (val, good, ok) => val==null?'gray': val>=good?'green': val>=ok?'gold':'red';
+  const gradeInv = (val, good, ok) => val==null?'gray': val<=good?'green': val<=ok?'gold':'red';
+  const trendGrade = (cur, prv) => cur==null||prv==null?'gray': cur>prv*1.03?'green': cur<prv*0.97?'red':'gold';
 
-  const SCORE_COLOR = { green: '#00e5a0', gold: '#f0b429', red: '#ff4d6d', gray: '#3d4f5e' };
-  const SCORE_LABEL = { green: 'STRONG', gold: 'OK', red: 'WEAK', gray: 'N/A' };
+  const scorecard = [
+    { label:'Profitability',   icon:'💰',
+      color: grade(last.netMargin, 0.15, 0.05),
+      metrics: [
+        { l:'Gross Margin',    v: fmtPct(last.grossMargin) },
+        { l:'Operating Margin',v: fmtPct(last.operatingMargin) },
+        { l:'Net Margin',      v: fmtPct(last.netMargin) },
+        { l:'ROE',             v: fmtPct(last.roe) },
+        { l:'ROIC',            v: fmtPct(last.roic) },
+      ]
+    },
+    { label:'Revenue Growth',  icon:'📈',
+      color: trendGrade(last.revenue, prev.revenue),
+      metrics: [
+        { l:'Revenue',         v: fmtB(last.revenue) },
+        { l:'YoY Growth',      v: last.revenue&&prev.revenue ? ((last.revenue/prev.revenue-1)*100).toFixed(1)+'%' : '—' },
+        { l:'Gross Profit',    v: fmtB(last.grossProfit) },
+        { l:'EBITDA',          v: fmtB(last.ebitda) },
+        { l:'EPS',             v: fmtN(last.eps) },
+      ]
+    },
+    { label:'Cash Generation', icon:'🏦',
+      color: last.freeCashFlow==null?'gray': last.freeCashFlow>0?'green':'red',
+      metrics: [
+        { l:'Operating CF',    v: fmtB(last.operatingCF) },
+        { l:'CapEx',           v: fmtB(last.capex) },
+        { l:'Free Cash Flow',  v: fmtB(last.freeCashFlow) },
+        { l:'FCF Yield',       v: fmtPct(last.fcfYield) },
+        { l:'FCF / Revenue',   v: last.freeCashFlow&&last.revenue ? fmtPct(last.freeCashFlow/last.revenue) : '—' },
+      ]
+    },
+    { label:'Balance Sheet',   icon:'🏛',
+      color: last.debtEquity==null?'gray': last.debtEquity<0.5?'green': last.debtEquity<1.5?'gold':'red',
+      metrics: [
+        { l:'Total Assets',    v: fmtB(last.totalAssets) },
+        { l:'Total Debt',      v: fmtB(last.totalDebt) },
+        { l:'Cash',            v: fmtB(last.cashAndEquiv) },
+        { l:'Equity',          v: fmtB(last.equity) },
+        { l:'Debt / Equity',   v: last.debtEquity!=null ? last.debtEquity.toFixed(2)+'x' : '—' },
+      ]
+    },
+    { label:'Valuation',       icon:'🎯',
+      color: gradeInv(data?.peRatio, 15, 30),
+      metrics: [
+        { l:'P/E Ratio',       v: fmtX(data?.peRatio) },
+        { l:'P/B Ratio',       v: fmtX(data?.pbRatio ?? last.pbRatio) },
+        { l:'EV/EBITDA',       v: fmtX(data?.evEbitda ?? last.evEbitda) },
+        { l:'Beta',            v: fmtN(data?.beta) },
+        { l:'Mkt Cap',         v: fmtB(data?.marketCap) },
+      ]
+    },
+  ];
 
-  // ── Bar chart component ───────────────────────────────────────────────────
-  function MiniBar({ years, getValue, label, fmt: fmtFn, color = '#00e5a0' }) {
-    const vals = years.map(getValue);
-    const max  = Math.max(...vals.filter(v => v != null).map(Math.abs), 1);
+  // ── Mini bar chart ──
+  function BarChart({ data: bdata, getVal, color='#00e5a0', fmtFn=fmtB }) {
+    const vals = bdata.map(getVal);
+    const max  = Math.max(...vals.filter(v=>v!=null).map(Math.abs), 1);
     return (
-      <div style={{ marginBottom: 20 }}>
-        <div className="mono" style={{ fontSize: 9, color: 'var(--text3)', letterSpacing: '0.1em', marginBottom: 8 }}>
-          {label}
-        </div>
-        <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6, height: 80 }}>
-          {years.map((yr, i) => {
-            const v = getValue(yr);
-            const h = v == null ? 0 : Math.abs(v) / max * 72;
-            const c = v == null ? '#1c2730' : v < 0 ? '#ff4d6d' : color;
-            return (
-              <div key={yr.year} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-                <div className="mono" style={{ fontSize: 8, color: 'var(--text3)' }}>
-                  {v == null ? '—' : fmtFn(v)}
-                </div>
-                <div style={{
-                  width: '100%', height: h, background: c,
-                  borderRadius: '3px 3px 0 0', minHeight: 2,
-                  opacity: i === years.length - 1 ? 1 : 0.6
-                }}/>
-                <div className="mono" style={{ fontSize: 8, color: 'var(--text3)' }}>{yr.year}</div>
+      <div style={{display:'flex', alignItems:'flex-end', gap:5, height:90}}>
+        {bdata.map((yr, i) => {
+          const v = getVal(yr);
+          const h = v==null ? 2 : Math.abs(v)/max*78;
+          const c = v==null ? '#1c2730' : v<0 ? '#ff4d6d' : color;
+          return (
+            <div key={yr.year} style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',gap:3}}>
+              <div className="mono" style={{fontSize:7,color:'var(--text3)',textAlign:'center',lineHeight:1.2}}>
+                {v==null?'—':fmtFn(v)}
               </div>
-            );
-          })}
-        </div>
+              <div style={{width:'100%',height:h,background:c,borderRadius:'2px 2px 0 0',
+                opacity: i===bdata.length-1?1:0.55, minHeight:2}}/>
+              <div className="mono" style={{fontSize:7,color:'var(--text3)'}}>{yr.year?.slice(-2)}</div>
+            </div>
+          );
+        })}
       </div>
     );
   }
 
-  const card = (style={}) => ({
-    background: 'var(--surface)',
-    border: '1px solid var(--border)',
-    borderRadius: 10,
-    padding: 16,
-    ...style,
-  });
-
-  const sc = data ? scorecard(data) : null;
-  const yrs = data?.byYear?.slice(-5) || [];
+  const posVal    = pos.qty * pos.currentPrice;
+  const posGain   = pos.qty * (pos.currentPrice - pos.avgPrice);
+  const posGainPct = pos.avgPrice > 0 ? (pos.currentPrice/pos.avgPrice - 1)*100 : 0;
+  const isUp      = posGain >= 0;
 
   return (
-    <div style={{
-      position: 'fixed', top: 0, right: 0, width: 420, height: '100vh',
-      background: 'var(--surface)', borderLeft: '1px solid var(--border)',
-      zIndex: 200, overflowY: 'auto', padding: 24,
-      boxShadow: '-8px 0 32px rgba(0,0,0,0.4)',
-      animation: 'slideIn .2s ease'
-    }}>
-      <style>{`@keyframes slideIn{from{transform:translateX(100%)}to{transform:translateX(0)}}`}</style>
-
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <AssetLogo pos={pos}/>
-          <div>
-            <div style={{ fontSize: 16, fontWeight: 600 }}>{pos.symbol}</div>
-            <div style={{ fontSize: 11, color: 'var(--text2)' }}>{pos.name}</div>
+    <div className="fu" style={{paddingBottom:40}}>
+      {/* ── Back + header ── */}
+      <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:24}}>
+        <button className="btn btn-ghost" style={{fontSize:12,padding:'4px 12px'}} onClick={onBack}>
+          ← Back
+        </button>
+        <AssetLogo pos={pos}/>
+        <div style={{flex:1}}>
+          <div style={{display:'flex',alignItems:'baseline',gap:10}}>
+            <span className="serif" style={{fontSize:22}}>{pos.name}</span>
+            <span className="mono" style={{fontSize:13,color:'var(--text3)'}}>{ticker}</span>
+            {data?.sector && <span className="mono" style={{fontSize:10,color:'var(--text3)',background:'var(--surface2)',border:'1px solid var(--border)',padding:'2px 8px',borderRadius:4}}>{data.sector}</span>}
           </div>
+          {data?.industry && <div style={{fontSize:11,color:'var(--text3)',marginTop:2}}>{data.industry}</div>}
         </div>
-        <button className="btn btn-ghost" style={{ padding: '4px 10px', fontSize: 16 }} onClick={onClose}>✕</button>
       </div>
 
-      {/* Position summary */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 20 }}>
+      {/* ── Position KPIs ── */}
+      <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10,marginBottom:20}}>
         {[
-          { l: 'VALUE',    v: fmtE(pos.qty * pos.currentPrice) },
-          { l: 'P&L',      v: (pos.qty*(pos.currentPrice-pos.avgPrice) >= 0 ? '+' : '') + fmtE(pos.qty*(pos.currentPrice-pos.avgPrice)),
-                           c: pos.currentPrice >= pos.avgPrice ? 'var(--green)' : 'var(--red)' },
-          { l: 'RETURN',   v: pos.avgPrice > 0 ? ((pos.currentPrice-pos.avgPrice)/pos.avgPrice*100).toFixed(1)+'%' : '—',
-                           c: pos.currentPrice >= pos.avgPrice ? 'var(--green)' : 'var(--red)' },
+          { l:'POSITION VALUE', v: fmtE(posVal),                        c: 'var(--text)' },
+          { l:'AVG COST',       v: fmtE(pos.avgPrice),                  c: 'var(--text2)' },
+          { l:'LIVE PRICE',     v: fmtE(pos.currentPrice),              c: 'var(--text)' },
+          { l:'TOTAL P&L',      v: (isUp?'+':'')+fmtE(posGain)+' ('+posGainPct.toFixed(1)+'%)', c: isUp?'var(--green)':'var(--red)' },
         ].map(({l,v,c}) => (
-          <div key={l} style={card()}>
-            <div className="mono" style={{ fontSize: 8, color: 'var(--text3)', letterSpacing:'0.1em', marginBottom: 4 }}>{l}</div>
-            <div className="mono" style={{ fontSize: 13, fontWeight: 600, color: c || 'var(--text)' }}>{v}</div>
+          <div key={l} className="card" style={{padding:'14px 16px'}}>
+            <div className="mono" style={{fontSize:8,color:'var(--text3)',letterSpacing:'0.1em',marginBottom:5}}>{l}</div>
+            <div className="mono" style={{fontSize:14,fontWeight:600,color:c}}>{v}</div>
           </div>
         ))}
       </div>
 
-      {loading && (
-        <div style={{ textAlign: 'center', padding: 40 }}>
-          <span className="mono shimmer" style={{ fontSize: 11, color: 'var(--text3)' }}>⟳ Loading fundamentals…</span>
-        </div>
-      )}
+      {/* ── Tabs ── */}
+      <div style={{display:'flex',gap:6,marginBottom:20}}>
+        {[['overview','Overview'],['financials','Financials'],['ratios','Ratios']].map(([id,label])=>(
+          <button key={id} className="btn" onClick={()=>setTab(id)}
+            style={{fontSize:11,padding:'5px 14px',
+              ...(tab===id?{background:'var(--green-dim)',color:'var(--green)',borderColor:'rgba(0,229,160,0.3)'}:{})}}>
+            {label}
+          </button>
+        ))}
+      </div>
 
-      {error && (
-        <div style={{ ...card(), color: 'var(--text2)', fontSize: 12 }}>
-          Could not load fundamentals for <b>{ticker}</b>: {error}
-        </div>
-      )}
+      {loading && <div className="card" style={{padding:60,textAlign:'center'}}>
+        <span className="mono shimmer" style={{fontSize:12,color:'var(--text3)'}}>⟳ Loading fundamentals for {ticker}…</span>
+      </div>}
 
-      {data && !loading && (<>
+      {error && <div className="card" style={{padding:24,color:'var(--red)',fontSize:13}}>
+        ✕ Could not load fundamentals: {error}
+      </div>}
 
-        {/* ── Health Scorecard (3d) ── */}
-        <div style={{ marginBottom: 20 }}>
-          <div className="mono" style={{ fontSize: 9, color: 'var(--text3)', letterSpacing: '0.1em', marginBottom: 10 }}>
-            HEALTH SCORECARD
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {sc?.map(item => (
-              <div key={item.label} style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                padding: '8px 12px', borderRadius: 8,
-                background: SCORE_COLOR[item.color] + '11',
-                border: '1px solid ' + SCORE_COLOR[item.color] + '33',
-              }}>
-                <div style={{ fontSize: 12, fontWeight: 500 }}>{item.label}</div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <div className="mono" style={{ fontSize: 10, color: 'var(--text3)' }}>{item.detail}</div>
-                  <div className="mono" style={{
-                    fontSize: 9, fontWeight: 700, letterSpacing: '0.08em',
-                    color: SCORE_COLOR[item.color],
-                    background: SCORE_COLOR[item.color] + '22',
-                    padding: '2px 7px', borderRadius: 4
-                  }}>{SCORE_LABEL[item.color]}</div>
+      {!loading && data && (<>
+
+        {/* ══ OVERVIEW TAB ══ */}
+        {tab==='overview' && (<>
+          {/* Scorecard grid */}
+          <div style={{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:12,marginBottom:16}}>
+            {scorecard.slice(0,4).map(sc => (
+              <div key={sc.label} className="card" style={{padding:16,borderColor:SCORE_COLOR[sc.color]+'33',background:SCORE_BG[sc.color]}}>
+                <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12}}>
+                  <div style={{display:'flex',alignItems:'center',gap:8}}>
+                    <span style={{fontSize:16}}>{sc.icon}</span>
+                    <span style={{fontSize:13,fontWeight:500}}>{sc.label}</span>
+                  </div>
+                  <span className="mono" style={{fontSize:9,fontWeight:700,letterSpacing:'0.08em',
+                    color:SCORE_COLOR[sc.color],background:SCORE_COLOR[sc.color]+'22',padding:'2px 8px',borderRadius:4}}>
+                    {sc.color==='green'?'STRONG':sc.color==='gold'?'OK':sc.color==='red'?'WEAK':'N/A'}
+                  </span>
+                </div>
+                <div style={{display:'flex',flexDirection:'column',gap:5}}>
+                  {sc.metrics.map(m=>(
+                    <div key={m.l} style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                      <span style={{fontSize:11,color:'var(--text2)'}}>{m.l}</span>
+                      <span className="mono" style={{fontSize:11,fontWeight:500,color:'var(--text)'}}>{m.v}</span>
+                    </div>
+                  ))}
                 </div>
               </div>
             ))}
           </div>
-        </div>
+          {/* Valuation card full width */}
+          {(() => { const sc = scorecard[4]; return (
+            <div className="card" style={{padding:16,borderColor:SCORE_COLOR[sc.color]+'33',background:SCORE_BG[sc.color],marginBottom:16}}>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12}}>
+                <div style={{display:'flex',alignItems:'center',gap:8}}>
+                  <span style={{fontSize:16}}>{sc.icon}</span>
+                  <span style={{fontSize:13,fontWeight:500}}>{sc.label}</span>
+                </div>
+                <span className="mono" style={{fontSize:9,fontWeight:700,letterSpacing:'0.08em',
+                  color:SCORE_COLOR[sc.color],background:SCORE_COLOR[sc.color]+'22',padding:'2px 8px',borderRadius:4}}>
+                  {sc.color==='green'?'CHEAP':sc.color==='gold'?'FAIR':sc.color==='red'?'EXPENSIVE':'N/A'}
+                </span>
+              </div>
+              <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:12}}>
+                {sc.metrics.map(m=>(
+                  <div key={m.l} style={{textAlign:'center'}}>
+                    <div className="mono" style={{fontSize:16,fontWeight:600,marginBottom:3}}>{m.v}</div>
+                    <div className="mono" style={{fontSize:9,color:'var(--text3)'}}>{m.l}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );})()}
+          {/* Description */}
+          {data.description && (
+            <div className="card" style={{padding:16}}>
+              <div className="mono" style={{fontSize:9,color:'var(--text3)',letterSpacing:'0.1em',marginBottom:8}}>ABOUT</div>
+              <div style={{fontSize:12,color:'var(--text2)',lineHeight:1.7,
+                display:'-webkit-box',WebkitLineClamp:5,WebkitBoxOrient:'vertical',overflow:'hidden'}}>
+                {data.description}
+              </div>
+            </div>
+          )}
+        </>)}
 
-        {/* ── Key Ratios ── */}
-        {data.peRatio && (
-          <div style={{ ...card(), display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 20 }}>
+        {/* ══ FINANCIALS TAB ══ */}
+        {tab==='financials' && yrs.length>0 && (<>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
             {[
-              { l: 'P/E',    v: fmtN(data.peRatio) },
-              { l: 'BETA',   v: fmtN(data.beta) },
-              { l: 'MKT CAP',v: fmtB(data.marketCap) },
-            ].map(({l,v}) => (
-              <div key={l}>
-                <div className="mono" style={{ fontSize: 8, color: 'var(--text3)', letterSpacing:'0.1em', marginBottom: 4 }}>{l}</div>
-                <div className="mono" style={{ fontSize: 14, fontWeight: 600 }}>{v}</div>
+              {label:'REVENUE',         getVal:y=>y.revenue,        color:'#4d9fff'},
+              {label:'GROSS PROFIT',    getVal:y=>y.grossProfit,    color:'#00e5a0'},
+              {label:'OPERATING INCOME',getVal:y=>y.operatingIncome,color:'#a78bfa'},
+              {label:'NET INCOME',      getVal:y=>y.netIncome,      color:'#00e5a0'},
+              {label:'EPS',             getVal:y=>y.eps,            color:'#f0b429', fmtFn:v=>v.toFixed(2)},
+              {label:'EBITDA',          getVal:y=>y.ebitda,         color:'#4d9fff'},
+            ].map(({label,getVal,color,fmtFn})=>(
+              <div key={label} className="card" style={{padding:14}}>
+                <div className="mono" style={{fontSize:9,color:'var(--text3)',letterSpacing:'0.1em',marginBottom:10}}>{label}</div>
+                <BarChart data={yrs} getVal={getVal} color={color} fmtFn={fmtFn||fmtB}/>
               </div>
             ))}
           </div>
-        )}
-
-        {/* ── Fundamentals Bar Charts (3b) ── */}
-        {yrs.length > 0 && (
-          <div style={card()}>
-            <div className="mono" style={{ fontSize: 9, color: 'var(--text3)', letterSpacing: '0.1em', marginBottom: 16 }}>
-              FINANCIALS (5Y)
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
+            {[
+              {label:'OPERATING CASH FLOW', getVal:y=>y.operatingCF,    color:'#4d9fff'},
+              {label:'FREE CASH FLOW',      getVal:y=>y.freeCashFlow,   color:'#f0b429'},
+              {label:'CAPEX',               getVal:y=>y.capex,          color:'#ff4d6d'},
+              {label:'TOTAL DEBT',          getVal:y=>y.totalDebt,      color:'#ff4d6d'},
+            ].map(({label,getVal,color})=>(
+              <div key={label} className="card" style={{padding:14}}>
+                <div className="mono" style={{fontSize:9,color:'var(--text3)',letterSpacing:'0.1em',marginBottom:10}}>{label}</div>
+                <BarChart data={yrs} getVal={getVal} color={color}/>
+              </div>
+            ))}
+          </div>
+          {/* Margins */}
+          <div className="card" style={{padding:14}}>
+            <div className="mono" style={{fontSize:9,color:'var(--text3)',letterSpacing:'0.1em',marginBottom:12}}>MARGIN TRENDS</div>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:12}}>
+              {[
+                {label:'GROSS MARGIN',    getVal:y=>y.grossMargin,    color:'#4d9fff'},
+                {label:'OPERATING MARGIN',getVal:y=>y.operatingMargin,color:'#a78bfa'},
+                {label:'NET MARGIN',      getVal:y=>y.netMargin,      color:'#00e5a0'},
+              ].map(({label,getVal,color})=>(
+                <div key={label}>
+                  <div className="mono" style={{fontSize:8,color:'var(--text3)',letterSpacing:'0.1em',marginBottom:8}}>{label}</div>
+                  <BarChart data={yrs} getVal={getVal} color={color} fmtFn={fmtPct}/>
+                </div>
+              ))}
             </div>
-            <MiniBar years={yrs} getValue={y => y.revenue}      label="REVENUE"          fmt={fmtB}   color="#4d9fff"/>
-            <MiniBar years={yrs} getValue={y => y.eps}           label="EPS"              fmt={v=>v.toFixed(2)} color="#00e5a0"/>
-            <MiniBar years={yrs} getValue={y => y.freeCashFlow}  label="FREE CASH FLOW"   fmt={fmtB}   color="#f0b429"/>
-            <MiniBar years={yrs} getValue={y => y.netMargin}     label="NET MARGIN"       fmt={fmtPct} color="#a78bfa"/>
           </div>
-        )}
+        </>)}
 
-        {/* Sector / description */}
-        {data.sector && (
-          <div style={{ marginTop: 14, fontSize: 11, color: 'var(--text3)' }}>
-            {data.sector}{data.industry ? ` · ${data.industry}` : ''}
+        {/* ══ RATIOS TAB ══ */}
+        {tab==='ratios' && (<>
+          <div className="card" style={{padding:0,overflow:'hidden',marginBottom:12}}>
+            <div style={{padding:'12px 16px',background:'var(--surface2)',borderBottom:'1px solid var(--border)'}}>
+              <div className="mono" style={{fontSize:9,color:'var(--text3)',letterSpacing:'0.1em'}}>KEY RATIOS (5Y)</div>
+            </div>
+            {/* Header */}
+            <div style={{display:'grid',gridTemplateColumns:'160px repeat(5,1fr)',padding:'8px 16px',
+              borderBottom:'1px solid var(--border)',background:'var(--surface2)'}}>
+              <div className="mono" style={{fontSize:9,color:'var(--text3)'}}>METRIC</div>
+              {yrs.map(y=><div key={y.year} className="mono" style={{fontSize:9,color:'var(--text3)',textAlign:'right'}}>{y.year}</div>)}
+            </div>
+            {[
+              { l:'P/E Ratio',      get:y=>y.peRatio,      fmt:fmtX },
+              { l:'P/B Ratio',      get:y=>y.pbRatio,      fmt:fmtX },
+              { l:'EV/EBITDA',      get:y=>y.evEbitda,     fmt:fmtX },
+              { l:'FCF Yield',      get:y=>y.fcfYield,     fmt:fmtPct },
+              { l:'ROIC',           get:y=>y.roic,         fmt:fmtPct },
+              { l:'ROE',            get:y=>y.roe,          fmt:fmtPct },
+              { l:'Net Margin',     get:y=>y.netMargin,    fmt:fmtPct },
+              { l:'Gross Margin',   get:y=>y.grossMargin,  fmt:fmtPct },
+              { l:'Debt / Equity',  get:y=>y.debtEquity,   fmt:v=>v.toFixed(2)+'x' },
+              { l:'EPS',            get:y=>y.eps,          fmt:v=>'$'+v.toFixed(2) },
+            ].map(({l,get,fmt},ri)=>(
+              <div key={l} style={{display:'grid',gridTemplateColumns:'160px repeat(5,1fr)',
+                padding:'9px 16px',borderBottom:'1px solid var(--border)',
+                background:ri%2===0?'transparent':'var(--surface2)'}}>
+                <div style={{fontSize:12,color:'var(--text2)'}}>{l}</div>
+                {yrs.map(y=>{
+                  const v=get(y);
+                  return <div key={y.year} className="mono" style={{fontSize:12,textAlign:'right',
+                    color:v==null?'var(--text3)':'var(--text)'}}>{v==null?'—':fmt(v)}</div>;
+                })}
+              </div>
+            ))}
           </div>
-        )}
+
+          {/* Balance sheet snapshot */}
+          <div className="card" style={{padding:16}}>
+            <div className="mono" style={{fontSize:9,color:'var(--text3)',letterSpacing:'0.1em',marginBottom:14}}>BALANCE SHEET TREND</div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+              {[
+                {label:'TOTAL ASSETS', getVal:y=>y.totalAssets, color:'#4d9fff'},
+                {label:'EQUITY',       getVal:y=>y.equity,      color:'#00e5a0'},
+              ].map(({label,getVal,color})=>(
+                <div key={label}>
+                  <div className="mono" style={{fontSize:8,color:'var(--text3)',letterSpacing:'0.1em',marginBottom:8}}>{label}</div>
+                  <BarChart data={yrs} getVal={getVal} color={color}/>
+                </div>
+              ))}
+            </div>
+          </div>
+        </>)}
       </>)}
     </div>
   );
 }
+
 
 export default function App() {
   const [positions,   setPositions]   = useState([]);
@@ -1727,7 +1836,7 @@ export default function App() {
           <div className="fu" style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:22}}>
             <div>
               <div className="serif" style={{fontSize:24,letterSpacing:"-0.02em"}}>
-                {nav==="dashboard"?"Overview":nav==="portfolio"?"Portfolio":nav==="screener"?"Screener":nav==="news"?"News Feed":"Settings"}
+                {nav==="dashboard"?"Overview":nav==="portfolio"?"Portfolio":nav==="stock"&&selectedPos?selectedPos.symbol:nav==="screener"?"Screener":nav==="news"?"News Feed":"Settings"}
               </div>
               <div style={{display:"flex",alignItems:"center",gap:8,marginTop:3}}>
                 <span className="ldot"/>
@@ -1898,7 +2007,7 @@ export default function App() {
                 const pp  = ((pos.currentPrice-pos.avgPrice)/pos.avgPrice*100);
                 const up  = p>=0;
                 return (
-                  <div key={pos.id} className="trow" style={{cursor:"pointer"}} onClick={()=>setSelectedPos(pos)}>
+                  <div key={pos.id} className="trow" style={{cursor:"pointer"}} onClick={()=>{setSelectedPos(pos);setNav("stock")}}>
                     {/* Asset cell with logo */}
                     <div style={{display:"flex",alignItems:"center",gap:10}}>
                       <AssetLogo pos={pos}/>
@@ -1942,6 +2051,7 @@ export default function App() {
             </div>
           </>)}
 
+          {nav==="stock"&&selectedPos&&<StockDetail pos={selectedPos} onBack={()=>{setNav("dashboard");setSelectedPos(null)}}/> }
           {nav==="screener"&&<div className="fu card" style={{padding:40,textAlign:"center"}}><div className="serif" style={{fontSize:22,color:"var(--text2)",marginBottom:8}}>Stock Screener</div><div style={{fontSize:13,color:"var(--text3)"}}>Coming in Phase 3 — filter by P/E, dividend yield, sector, region & more</div></div>}
           {nav==="news"&&<NewsFeed positions={positions}/>}
           {nav==="settings"&&(
@@ -1987,7 +2097,7 @@ export default function App() {
         </div>
       </div>
 
-      {selectedPos&&<FundamentalsDrawer pos={selectedPos} onClose={()=>setSelectedPos(null)}/>}
+      
       {showImport&&<ImportModal onClose={()=>setShowImport(false)} onImport={(imported)=>{
     if(imported?.type==="transactions"){
       const txs = imported.data;

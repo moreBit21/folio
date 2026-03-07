@@ -17,16 +17,17 @@ export default async function handler(req, res) {
   };
 
   try {
-    const [income, cashflow, ratios, profile, quote] = await Promise.all([
+    const [income, cashflow, balance, ratios, profile, quote] = await Promise.all([
       fmp(`/income-statement?symbol=${symbol}&limit=5`),
       fmp(`/cash-flow-statement?symbol=${symbol}&limit=5`),
+      fmp(`/balance-sheet-statement?symbol=${symbol}&limit=5`),
       fmp(`/key-metrics?symbol=${symbol}&limit=5`),
       fmp(`/profile?symbol=${symbol}`),
       fmp(`/quotes?symbols=${symbol}`),
     ]);
 
-    const p = Array.isArray(profile)  ? profile[0]  : {};
-    const q = Array.isArray(quote)    ? quote[0]    : {};
+    const p = Array.isArray(profile) ? profile[0] : {};
+    const q = Array.isArray(quote)   ? quote[0]   : {};
 
     const years = [...new Set([
       ...(Array.isArray(income)   ? income.map(r=>r.calendarYear||r.date?.slice(0,4))   : []),
@@ -36,37 +37,68 @@ export default async function handler(req, res) {
     const byYear = years.map(yr => {
       const inc = (Array.isArray(income)   ? income   : []).find(r=>(r.calendarYear||r.date?.slice(0,4))===yr)||{};
       const cf  = (Array.isArray(cashflow) ? cashflow : []).find(r=>(r.calendarYear||r.date?.slice(0,4))===yr)||{};
+      const bs  = (Array.isArray(balance)  ? balance  : []).find(r=>(r.calendarYear||r.date?.slice(0,4))===yr)||{};
       const km  = (Array.isArray(ratios)   ? ratios   : []).find(r=>(r.calendarYear||r.date?.slice(0,4))===yr)||{};
+
+      // ROIC = NOPAT / Invested Capital
+      const nopat = inc.operatingIncome ? inc.operatingIncome * (1 - 0.21) : null;
+      const investedCapital = (bs.totalStockholdersEquity && bs.totalDebt)
+        ? bs.totalStockholdersEquity + bs.totalDebt : null;
+      const roic = nopat && investedCapital ? nopat / investedCapital : null;
+
+      // Debt/Equity
+      const debtEquity = (bs.totalDebt && bs.totalStockholdersEquity && bs.totalStockholdersEquity !== 0)
+        ? bs.totalDebt / bs.totalStockholdersEquity : null;
+
       return {
         year: yr,
+        // Income statement
         revenue:         inc.revenue             ?? null,
         grossProfit:     inc.grossProfit          ?? null,
         operatingIncome: inc.operatingIncome      ?? null,
         netIncome:       inc.netIncome            ?? null,
         eps:             inc.eps                  ?? null,
+        ebitda:          inc.ebitda               ?? null,
+        // Cash flow
         operatingCF:     cf.operatingCashFlow     ?? null,
         capex:           cf.capitalExpenditure    ?? null,
         freeCashFlow:    cf.freeCashFlow          ?? null,
+        // Balance sheet
+        totalAssets:     bs.totalAssets           ?? null,
+        totalDebt:       bs.totalDebt             ?? null,
+        cashAndEquiv:    bs.cashAndCashEquivalents ?? null,
+        equity:          bs.totalStockholdersEquity ?? null,
+        // Margins
         grossMargin:     inc.grossProfitRatio      ?? null,
         operatingMargin: inc.operatingIncomeRatio  ?? null,
         netMargin:       inc.netIncomeRatio        ?? null,
-        roe:             km.roe                   ?? null,
+        // Derived
+        roic,
+        debtEquity,
+        // Key metrics from FMP
         peRatio:         km.peRatio               ?? null,
+        pbRatio:         km.pbRatio               ?? null,
+        evEbitda:        km.enterpriseValueOverEBITDA ?? null,
+        fcfYield:        km.fcfYield              ?? null,
+        roe:             km.roe                   ?? null,
+        roa:             km.returnOnTangibleAssets ?? null,
       };
     });
 
     res.status(200).json({
       symbol,
-      name:          p.companyName || symbol,
-      currency:      p.currency    || 'USD',
-      sector:        p.sector      || null,
-      industry:      p.industry    || null,
-      marketCap:     q.marketCap   ?? null,
-      peRatio:       q.pe          ?? null,
-      dividendYield: p.lastDiv     ?? null,
-      beta:          p.beta        ?? null,
-      description:   p.description || null,
-      image:         p.image       || null,
+      name:          p.companyName  || symbol,
+      currency:      p.currency     || 'USD',
+      sector:        p.sector       || null,
+      industry:      p.industry     || null,
+      marketCap:     q.marketCap    ?? null,
+      peRatio:       q.pe           ?? null,
+      pbRatio:       q.priceToBook  ?? null,
+      evEbitda:      q.priceEbitda  ?? null,
+      beta:          p.beta         ?? null,
+      dividendYield: p.lastDiv      ?? null,
+      description:   p.description  || null,
+      image:         p.image        || null,
       byYear,
     });
   } catch (e) {
