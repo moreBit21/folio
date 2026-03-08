@@ -1326,7 +1326,7 @@ function CompareView() {
     setInput('');
     setStocks(prev => [...prev, { ticker: tk, data: null, loading: true, error: null }]);
     try {
-      const res = await fetch('/api/fundamentals?symbol=' + tk);
+      const res = await fetch('/api/fundamentals?symbol=' + tk.split('.')[0]);
       const d   = await res.json();
       if (d.error) throw new Error(d.error);
       setStocks(prev => prev.map(s => s.ticker === tk ? { ...s, data: d, loading: false } : s));
@@ -1749,7 +1749,7 @@ function StockDetail({ pos, onBack, transactions }) {
   useEffect(() => {
     if (pos.type === 'etf') { setData({}); setLoading(false); return; }
     setLoading(true); setError(null); setData(null);
-    fetch('/api/fundamentals?symbol=' + ticker)
+    fetch('/api/fundamentals?symbol=' + ticker.split('.')[0])
       .then(r => r.json())
       .then(d => { if (d.error) throw new Error(d.error); setData(d); })
       .catch(e => setError(e.message))
@@ -2197,7 +2197,7 @@ function StockDetail({ pos, onBack, transactions }) {
           return (
             <div>
               {/* ── Price chart with buy/sell markers ── */}
-              {ticker && <TxPriceChart ticker={ticker} txs={txs} currentPrice={pos.currentPrice}/>}
+              {ticker && <TxPriceChart ticker={ticker.split('.')[0]} txs={txs} currentPrice={pos.currentPrice}/>}
 
               {/* Summary bar */}
               <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:10,marginBottom:16}}>
@@ -2762,7 +2762,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v46 · Fix logos: skip Clearbit, proper domain map coverage</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v47 · Strip .DE suffix for fundamentals + price chart API calls</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
