@@ -2269,8 +2269,6 @@ export default function App() {
     else{setPositions(prev=>[...prev,...imported]);}
     setShowImport(false); setNav("dashboard");
   }}/>}
-      </div>{/* ── end main-scroll ── */}
-
       {showModal && (
         <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&setShowModal(false)}>
           <div className="modal">
@@ -2320,7 +2318,7 @@ export default function App() {
             </button>
           ))}
         </nav>
-      </div>{/* end outer flex */}
+      </div>
     </>
   );
 }
