@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback } from "react"; // v23-peg-url-fix
+import React, { useState, useMemo, useEffect, useCallback } from "react"; // v24-compare
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, AreaChart, ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid } from "recharts";
 
 const FONTS = `@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=IBM+Plex+Mono:wght@300;400;500;600&family=DM+Sans:wght@300;400;500&display=swap');`;
@@ -169,6 +169,7 @@ const NAV_ITEMS     = [
   {id:"dashboard",label:"Dashboard",icon:"⬡"},
   {id:"portfolio",label:"Portfolio", icon:"◈"},
   {id:"screener", label:"Screener",  icon:"⊞"},
+  {id:"compare",  label:"Compare",   icon:"⇌"},
   {id:"news",     label:"News Feed", icon:"◎"},
   {id:"settings", label:"Settings",  icon:"⚙"},
 ];
@@ -1220,6 +1221,319 @@ function TxPriceChart({ ticker, txs, currentPrice }) {
   );
 }
 
+// ── CompareView — 3c Stock Comparison ─────────────────────────────────────────
+const COMPARE_COLORS = ['#00e5a0','#4d9fff','#f0b429','#a78bfa'];
+
+function CompareBar({ label, stocks, valueKey, format='pct', good, bad, invert=false }) {
+  const vals = stocks.map(s => s?.data?.[valueKey] ?? null);
+  const defined = vals.filter(v => v != null);
+  if (!defined.length) return null;
+  const maxAbs = Math.max(...defined.map(Math.abs), 0.001);
+
+  const fmt = v => {
+    if (v == null) return '—';
+    if (format === 'pct')   return (v * 100).toFixed(1) + '%';
+    if (format === 'x')     return v.toFixed(1) + 'x';
+    if (format === 'raw')   return v.toFixed(2);
+    if (format === 'B') {
+      const a = Math.abs(v);
+      if (a >= 1e12) return (v/1e12).toFixed(1)+'T';
+      if (a >= 1e9)  return (v/1e9).toFixed(1)+'B';
+      if (a >= 1e6)  return (v/1e6).toFixed(0)+'M';
+      return v.toFixed(0);
+    }
+    return v.toFixed(2);
+  };
+
+  const barColor = (v, i) => {
+    if (v == null) return 'var(--border2)';
+    if (good != null && bad != null) {
+      const good_ = invert ? v <= good : v >= good;
+      const bad_  = invert ? v >= bad  : v <= bad;
+      if (good_) return '#00e5a0';
+      if (bad_)  return '#ff4d6d';
+      return '#f0b429';
+    }
+    return COMPARE_COLORS[i];
+  };
+
+  return (
+    <div style={{marginBottom:14}}>
+      <div className="mono" style={{fontSize:9,color:'var(--text3)',letterSpacing:'0.1em',marginBottom:6}}>{label}</div>
+      {stocks.map((s, i) => {
+        const v = vals[i];
+        const pct = v == null ? 0 : Math.min(Math.abs(v) / maxAbs * 100, 100);
+        const neg = v != null && v < 0;
+        return (
+          <div key={i} style={{display:'flex',alignItems:'center',gap:8,marginBottom:5}}>
+            <div style={{width:36,flexShrink:0}}>
+              <span className="mono" style={{fontSize:9,color:COMPARE_COLORS[i],fontWeight:600}}>{s.ticker}</span>
+            </div>
+            <div style={{flex:1,height:18,background:'var(--surface2)',borderRadius:3,overflow:'hidden',position:'relative'}}>
+              <div style={{
+                position:'absolute', top:0, bottom:0, left:0,
+                width: pct+'%',
+                background: neg ? '#ff4d6d44' : barColor(v, i)+'55',
+                borderRight: `2px solid ${neg ? '#ff4d6d' : barColor(v, i)}`,
+                borderRadius:3,
+                transition:'width 0.6s ease',
+              }}/>
+            </div>
+            <div className="mono" style={{width:52,textAlign:'right',fontSize:11,fontWeight:600,color: barColor(v,i),flexShrink:0}}>
+              {fmt(v)}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function CompareSection({ title, icon, children }) {
+  return (
+    <div className="card" style={{padding:'20px 22px',marginBottom:14}}>
+      <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:18}}>
+        <span style={{fontSize:14}}>{icon}</span>
+        <div className="mono" style={{fontSize:10,letterSpacing:'0.12em',color:'var(--text2)'}}>{title}</div>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function CompareView() {
+  const [tickers, setTickers] = useState([]);
+  const [input, setInput]     = useState('');
+  const [stocks, setStocks]   = useState([]); // [{ticker, data, loading, error}]
+
+  const addTicker = async (raw) => {
+    const tk = raw.trim().toUpperCase();
+    if (!tk || tickers.includes(tk) || tickers.length >= 4) return;
+    setTickers(prev => [...prev, tk]);
+    setInput('');
+    setStocks(prev => [...prev, { ticker: tk, data: null, loading: true, error: null }]);
+    try {
+      const res = await fetch('/api/fundamentals?symbol=' + tk);
+      const d   = await res.json();
+      if (d.error) throw new Error(d.error);
+      setStocks(prev => prev.map(s => s.ticker === tk ? { ...s, data: d, loading: false } : s));
+    } catch(e) {
+      setStocks(prev => prev.map(s => s.ticker === tk ? { ...s, loading: false, error: e.message } : s));
+    }
+  };
+
+  const removeTicker = (tk) => {
+    setTickers(prev => prev.filter(t => t !== tk));
+    setStocks(prev => prev.filter(s => s.ticker !== tk));
+  };
+
+  // Extract last-year metrics from fundamentals response
+  const stocksWithMetrics = stocks.map(s => {
+    if (!s.data) return s;
+    const yrs  = s.data.byYear?.slice(-5) || [];
+    const last = yrs[yrs.length - 1] || {};
+    const prev = yrs[yrs.length - 2] || {};
+    const revGrowth = (last.revenue && prev.revenue) ? (last.revenue / prev.revenue - 1) : null;
+    const epsGrowth = (last.eps     && prev.eps)     ? (last.eps     / prev.eps     - 1) : null;
+    return {
+      ...s,
+      data: {
+        ...s.data,
+        // valuation (direct from top-level)
+        peRatio:    s.data.peRatio,
+        pbRatio:    s.data.pbRatio ?? last.pbRatio,
+        pegRatio:   s.data.pegRatio,
+        evEbitda:   s.data.evEbitda ?? last.evEbitda,
+        // profitability
+        netMargin:  last.netMargin,
+        grossMargin:last.grossMargin,
+        opMargin:   last.operatingMargin,
+        roe:        last.roe,
+        roic:       last.roic,
+        // growth
+        revGrowth,
+        epsGrowth,
+        eps:        last.eps,
+        revenue:    last.revenue,
+        // balance sheet
+        debtEquity: last.debtEquity,
+        fcfYield:   last.fcfYield,
+      }
+    };
+  });
+
+  const hasData = stocksWithMetrics.some(s => s.data && !s.loading);
+
+  return (
+    <div className="fu">
+      {/* Header */}
+      <div style={{marginBottom:22}}>
+        <div className="serif" style={{fontSize:22,letterSpacing:'-0.02em'}}>Compare</div>
+        <div className="mono" style={{fontSize:10,color:'var(--text3)',marginTop:3}}>
+          Side-by-side fundamental analysis · up to 4 stocks
+        </div>
+      </div>
+
+      {/* Ticker input */}
+      <div className="card" style={{padding:'16px 18px',marginBottom:16}}>
+        <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+          {/* Added tickers */}
+          {stocksWithMetrics.map((s, i) => (
+            <div key={s.ticker} style={{
+              display:'flex',alignItems:'center',gap:6,
+              padding:'5px 10px',borderRadius:6,
+              background:`${COMPARE_COLORS[i]}15`,
+              border:`1px solid ${COMPARE_COLORS[i]}40`,
+            }}>
+              {s.loading ? (
+                <span className="mono" style={{fontSize:11,color:COMPARE_COLORS[i]}}>
+                  {s.ticker} <span className="shimmer" style={{opacity:0.6}}>···</span>
+                </span>
+              ) : s.error ? (
+                <span className="mono" style={{fontSize:11,color:'var(--red)'}}>{s.ticker} ✗</span>
+              ) : (
+                <span className="mono" style={{fontSize:11,color:COMPARE_COLORS[i],fontWeight:600}}>
+                  {s.ticker}
+                  {s.data?.profile?.companyName && (
+                    <span style={{fontWeight:400,color:'var(--text2)',marginLeft:4,fontSize:10}}>
+                      {s.data.profile.companyName.split(' ').slice(0,2).join(' ')}
+                    </span>
+                  )}
+                </span>
+              )}
+              <button onClick={() => removeTicker(s.ticker)} style={{
+                background:'none',border:'none',cursor:'pointer',
+                color:'var(--text3)',fontSize:12,lineHeight:1,padding:'0 2px',
+              }}>×</button>
+            </div>
+          ))}
+
+          {/* Input */}
+          {tickers.length < 4 && (
+            <div style={{display:'flex',alignItems:'center',gap:6}}>
+              <input
+                className="inp"
+                placeholder="Add ticker… AAPL, MSFT"
+                value={input}
+                onChange={e => setInput(e.target.value.toUpperCase())}
+                onKeyDown={e => { if (e.key === 'Enter') addTicker(input); }}
+                style={{width:180,padding:'6px 10px',fontSize:12}}
+              />
+              <button className="btn btn-primary" onClick={() => addTicker(input)}
+                style={{padding:'6px 12px',fontSize:10}}>+ ADD</button>
+            </div>
+          )}
+        </div>
+
+        {/* Quick suggestions */}
+        {tickers.length === 0 && (
+          <div style={{marginTop:12,display:'flex',gap:6,flexWrap:'wrap'}}>
+            <span className="mono" style={{fontSize:9,color:'var(--text3)',letterSpacing:'0.1em',alignSelf:'center'}}>TRY:</span>
+            {['AAPL','MSFT','GOOGL','NVDA','TSLA','AMZN','META'].map(t => (
+              <button key={t} className="pill" onClick={() => addTicker(t)}
+                style={{fontSize:9,padding:'3px 8px'}}>{t}</button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Empty state */}
+      {tickers.length === 0 && (
+        <div className="card fu" style={{padding:'48px 20px',textAlign:'center'}}>
+          <div style={{fontSize:36,marginBottom:16}}>⇌</div>
+          <div className="serif" style={{fontSize:18,color:'var(--text2)',marginBottom:8}}>
+            Compare up to 4 stocks
+          </div>
+          <div style={{fontSize:12,color:'var(--text3)',maxWidth:320,margin:'0 auto',lineHeight:1.6}}>
+            Add tickers above to compare valuation, profitability, and growth side-by-side
+          </div>
+        </div>
+      )}
+
+      {/* Charts */}
+      {hasData && (<>
+
+        {/* Legend */}
+        <div style={{display:'flex',gap:12,flexWrap:'wrap',marginBottom:16}}>
+          {stocksWithMetrics.filter(s=>s.data).map((s,i) => (
+            <div key={s.ticker} style={{display:'flex',alignItems:'center',gap:5}}>
+              <div style={{width:10,height:10,borderRadius:2,background:COMPARE_COLORS[i]}}/>
+              <span className="mono" style={{fontSize:10,color:'var(--text2)'}}>
+                {s.ticker}
+                {s.data?.profile?.companyName &&
+                  <span style={{color:'var(--text3)',marginLeft:4}}>{s.data.profile.companyName.split(' ').slice(0,2).join(' ')}</span>}
+              </span>
+            </div>
+          ))}
+        </div>
+
+        {/* Valuation */}
+        <CompareSection title="VALUATION" icon="🎯">
+          <CompareBar label="P/E RATIO"      stocks={stocksWithMetrics} valueKey="peRatio"   format="x"   good={17}  bad={30}  invert={true}/>
+          <CompareBar label="P/B RATIO"      stocks={stocksWithMetrics} valueKey="pbRatio"   format="x"   good={2}   bad={5}   invert={true}/>
+          <CompareBar label="PEG RATIO"      stocks={stocksWithMetrics} valueKey="pegRatio"  format="raw" good={1}   bad={2.5} invert={true}/>
+          <CompareBar label="EV / EBITDA"    stocks={stocksWithMetrics} valueKey="evEbitda"  format="x"   good={10}  bad={20}  invert={true}/>
+        </CompareSection>
+
+        {/* Profitability */}
+        <CompareSection title="PROFITABILITY" icon="💰">
+          <CompareBar label="GROSS MARGIN"     stocks={stocksWithMetrics} valueKey="grossMargin" format="pct" good={0.40} bad={0.15}/>
+          <CompareBar label="OPERATING MARGIN" stocks={stocksWithMetrics} valueKey="opMargin"    format="pct" good={0.15} bad={0.03}/>
+          <CompareBar label="NET MARGIN"       stocks={stocksWithMetrics} valueKey="netMargin"   format="pct" good={0.10} bad={0.03}/>
+          <CompareBar label="ROE"              stocks={stocksWithMetrics} valueKey="roe"         format="pct" good={0.15} bad={0.08}/>
+          <CompareBar label="ROIC"             stocks={stocksWithMetrics} valueKey="roic"        format="pct" good={0.10} bad={0.05}/>
+        </CompareSection>
+
+        {/* Growth */}
+        <CompareSection title="GROWTH (YoY)" icon="📈">
+          <CompareBar label="REVENUE GROWTH"   stocks={stocksWithMetrics} valueKey="revGrowth"  format="pct" good={0.10} bad={-0.05}/>
+          <CompareBar label="EPS GROWTH"       stocks={stocksWithMetrics} valueKey="epsGrowth"  format="pct" good={0.10} bad={-0.05}/>
+          <CompareBar label="EPS (LATEST)"     stocks={stocksWithMetrics} valueKey="eps"        format="raw"/>
+        </CompareSection>
+
+        {/* Summary table */}
+        <div className="card" style={{padding:'18px 20px',marginBottom:14,overflowX:'auto'}}>
+          <div className="mono" style={{fontSize:10,letterSpacing:'0.12em',color:'var(--text2)',marginBottom:14}}>⊞  SUMMARY TABLE</div>
+          <table style={{width:'100%',borderCollapse:'collapse',fontSize:11}}>
+            <thead>
+              <tr>
+                <td className="mono" style={{fontSize:9,color:'var(--text3)',paddingBottom:8,paddingRight:16,letterSpacing:'0.08em'}}>METRIC</td>
+                {stocksWithMetrics.filter(s=>s.data).map((s,i) => (
+                  <td key={s.ticker} className="mono" style={{fontSize:9,color:COMPARE_COLORS[i],paddingBottom:8,paddingRight:12,textAlign:'right',letterSpacing:'0.06em',fontWeight:600}}>
+                    {s.ticker}
+                  </td>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {[
+                {label:'P/E',       key:'peRatio',    fmt:v=>v!=null?v.toFixed(1)+'x':'—'},
+                {label:'P/B',       key:'pbRatio',    fmt:v=>v!=null?v.toFixed(1)+'x':'—'},
+                {label:'PEG',       key:'pegRatio',   fmt:v=>v!=null?v.toFixed(2):'—'},
+                {label:'EV/EBITDA', key:'evEbitda',   fmt:v=>v!=null?v.toFixed(1)+'x':'—'},
+                {label:'Net Margin',key:'netMargin',  fmt:v=>v!=null?(v*100).toFixed(1)+'%':'—'},
+                {label:'ROE',       key:'roe',        fmt:v=>v!=null?(v*100).toFixed(1)+'%':'—'},
+                {label:'ROIC',      key:'roic',       fmt:v=>v!=null?(v*100).toFixed(1)+'%':'—'},
+                {label:'Rev Growth',key:'revGrowth',  fmt:v=>v!=null?(v*100).toFixed(1)+'%':'—'},
+                {label:'D/E',       key:'debtEquity', fmt:v=>v!=null?v.toFixed(2)+'x':'—'},
+              ].map(row => (
+                <tr key={row.label} style={{borderTop:'1px solid var(--border)'}}>
+                  <td className="mono" style={{fontSize:10,color:'var(--text3)',padding:'7px 16px 7px 0',letterSpacing:'0.04em'}}>{row.label}</td>
+                  {stocksWithMetrics.filter(s=>s.data).map((s,i) => (
+                    <td key={s.ticker} className="mono" style={{fontSize:11,color:'var(--text)',padding:'7px 12px 7px 0',textAlign:'right',fontWeight:500}}>
+                      {row.fmt(s.data[row.key])}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </>)}
+    </div>
+  );
+}
+
 function StockDetail({ pos, onBack, transactions }) {
   const [data, setData]     = useState(null);
   const [loading, setLoading] = useState(true);
@@ -2219,7 +2533,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v23 · PEG url fix</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v24 · Compare tool</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
@@ -2506,7 +2820,8 @@ export default function App() {
 
           {nav==="stock"&&selectedPos&&<StockDetail pos={selectedPos} onBack={()=>{setNav("dashboard");setSelectedPos(null)}} transactions={transactions}/> }
           {nav==="screener"&&<div className="fu card" style={{padding:40,textAlign:"center"}}><div className="serif" style={{fontSize:22,color:"var(--text2)",marginBottom:8}}>Stock Screener</div><div style={{fontSize:13,color:"var(--text3)"}}>Coming in Phase 3 — filter by P/E, dividend yield, sector, region & more</div></div>}
-          {nav==="news"&&<NewsFeed positions={positions}/>}
+          {nav==="compare"&&<CompareView/>}
+          {nav==="news"&&<NewsFeed positions={positions}/> }
           {nav==="settings"&&(
             <div className="fu" style={{display:"flex",flexDirection:"column",gap:14}}>
               {/* Import Card */}
