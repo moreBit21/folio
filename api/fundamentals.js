@@ -42,7 +42,7 @@ export default async function handler(req, res) {
       fmp(`/balance-sheet-statement?symbol=${symbol}&limit=5`),
       fmp(`/key-metrics?symbol=${symbol}&limit=5`),
       fmp(`/profile?symbol=${symbol}`),
-      fmpV3(`/analyst-estimates?symbol=${symbol}&limit=6&period=annual`),
+      fmp(`/analyst-estimates?symbol=${symbol}&limit=6&period=annual`),
     ]);
 
     const p = profile[0] || {};
