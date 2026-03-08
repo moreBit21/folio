@@ -307,6 +307,7 @@ function AssetLogoInner({baseSymbol, pos, size, r}) {
     // Map ticker to company domain for logo lookup
     const domainGuess = (() => {
       const knownDomains = {
+        // US mega-caps
         AAPL:'apple.com',MSFT:'microsoft.com',GOOGL:'google.com',GOOG:'google.com',
         AMZN:'amazon.com',META:'meta.com',NVDA:'nvidia.com',TSLA:'tesla.com',
         AMD:'amd.com',INTC:'intel.com',QCOM:'qualcomm.com',AVGO:'broadcom.com',
@@ -324,10 +325,18 @@ function AssetLogoInner({baseSymbol, pos, size, r}) {
         SMCI:'supermicro.com',NTRA:'natera.com',ILMN:'illumina.com',
         CELH:'celsius.com',ELF:'elfcosmetics.com',CPRX:'catalystpharma.com',
         KRYS:'krystalbio.com',ACHR:'archer.com',PINS:'pinterest.com',
-        TEM:'tempus.com',XYZ:'block.xyz',SQ:'block.xyz',
+        TEM:'tempus.com',XYZ:'block.xyz',SQ:'block.xyz',BLOCK:'block.xyz',
         TTD:'thetradedesk.com',SNAP:'snap.com',
+        CRISPR:'crisprtx.com',
+        // ETFs
         SPY:'ssga.com',QQQ:'invesco.com',GLD:'spdrgoldshares.com',
         IVV:'ishares.com',VTI:'vanguard.com',
+        IWDA:'ishares.com',CSPX:'ishares.com',EIMI:'ishares.com',
+        VWCE:'vanguard.com',VWRL:'vanguard.com',
+        XNAS:'xtrackers.com',XDWH:'xtrackers.com',
+        ARKX:'ark-funds.com',
+        // EU stocks
+        SAP:'sap.com',ASML:'asml.com',
       };
       if (knownDomains[baseSymbol]) return knownDomains[baseSymbol];
       // For .DE tickers, strip suffix and try base symbol
@@ -335,16 +344,19 @@ function AssetLogoInner({baseSymbol, pos, size, r}) {
       if (knownDomains[base]) return knownDomains[base];
       return null;
     })();
-    const logoUrl = domainGuess
-      ? `https://www.google.com/s2/favicons?domain=${domainGuess}&sz=64`
-      : `https://logo.clearbit.com/${baseSymbol.toLowerCase().replace(/\.(de|f|as|pa)$/,'')}.com`;
-    return (
-      <div style={{width:size,height:size,borderRadius:r,overflow:'hidden',flexShrink:0,
-        background:'#fff',border:'1px solid rgba(255,255,255,0.08)'}}>
-        <img src={logoUrl} width={size} height={size} style={{objectFit:'contain',padding:3}}
-          onError={()=>setFallback(true)}/>
-      </div>
-    );
+    if (!domainGuess) {
+      // No domain known yet — skip to ticker badge (avoids firing onError on a doomed URL)
+      // Will re-render with correct logo once fmpTicker resolves
+    } else {
+      const logoUrl = `https://www.google.com/s2/favicons?domain=${domainGuess}&sz=64`;
+      return (
+        <div style={{width:size,height:size,borderRadius:r,overflow:'hidden',flexShrink:0,
+          background:'#fff',border:'1px solid rgba(255,255,255,0.08)'}}>
+          <img src={logoUrl} width={size} height={size} style={{objectFit:'contain',padding:3}}
+            onError={()=>setFallback(true)}/>
+        </div>
+      );
+    }
   }
 
   // Final fallback: colored ticker badge
@@ -2750,7 +2762,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v45 · Fix logos: Google favicons + Clearbit, .DE tickers preserved</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v46 · Fix logos: skip Clearbit, proper domain map coverage</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
