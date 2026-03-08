@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback } from "react"; // v6-fix-logo-ticker
+import React, { useState, useMemo, useEffect, useCallback } from "react"; // v7-fix-isin-lookup
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, AreaChart, ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid } from "recharts";
 
 const FONTS = `@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=IBM+Plex+Mono:wght@300;400;500;600&family=DM+Sans:wght@300;400;500&display=swap');`;
@@ -299,13 +299,15 @@ const CRYPTO_LOGOS = {
 function AssetLogo({pos, size=36}) {
   const [imgErr, setImgErr] = React.useState(false);
   const r = Math.round(size * 0.25);
+  const resolvedTicker = pos.fmpTicker?.split('.')[0] || ISIN_MAP[pos.isin] || pos.symbol?.split('.')[0];
+  const baseSymbol = resolvedTicker?.toUpperCase();
 
   // Crypto: use CoinGecko asset logos
-  if (pos.type === 'crypto' && CRYPTO_LOGOS[pos.symbol] && !imgErr) {
+  if (pos.type === 'crypto' && CRYPTO_LOGOS[baseSymbol] && !imgErr) {
     const url = `https://assets.coingecko.com/coins/images/1/small/bitcoin.png`
       .replace('1/small/bitcoin', (() => {
         const m = {BTC:'1/small/bitcoin',ETH:'279/small/ethereum',SOL:'4128/small/solana',BNB:'825/small/binance-coin',XRP:'44/small/xrp-symbol-white-128',ADA:'975/small/cardano',DOT:'12171/small/polkadot',MATIC:'4713/small/matic-token',AVAX:'12559/small/avalanche-2',LINK:'877/small/chainlink-new-logo',UNI:'12504/small/uni',AAVE:'7279/small/aave-v3-logo'};
-        return m[pos.symbol] || '1/small/bitcoin';
+        return m[baseSymbol] || '1/small/bitcoin';
       })());
     return (
       <div style={{width:size,height:size,borderRadius:r,overflow:'hidden',flexShrink:0,background:'#1a1a2e'}}>
@@ -316,9 +318,7 @@ function AssetLogo({pos, size=36}) {
   }
 
   // Stocks/ETFs: use Clearbit logo API
-  const baseSymbol = pos.symbol?.split('.')[0].split('-')[0].toUpperCase();
-  const baseFmp = pos.fmpTicker?.split('.')[0].toUpperCase();
-  const domain = LOGO_DOMAINS[baseSymbol] || LOGO_DOMAINS[baseFmp] || LOGO_DOMAINS[pos.symbol];
+  const domain = LOGO_DOMAINS[baseSymbol];
   if (domain && !imgErr) {
     return (
       <div style={{width:size,height:size,borderRadius:r,overflow:'hidden',flexShrink:0,background:'#fff',border:'1px solid rgba(255,255,255,0.08)'}}>
@@ -1528,7 +1528,7 @@ function StockDetail({ pos, onBack, transactions }) {
           const totalRealized = txs.filter(t=>t.type==='sell').reduce((s,t)=>s+t.amountEur,0);
 
           // Build chart: fetch 1Y historical prices + overlay buy/sell markers
-          const ticker = (pos.fmpTicker || pos.symbol)?.split('.')[0];
+          const ticker = pos.fmpTicker?.split('.')[0] || ISIN_MAP[pos.isin] || pos.symbol?.split('.')[0];
 
           return (
             <div>
@@ -2096,7 +2096,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v6 · logos · txchart</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v7 · logos · txchart</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
