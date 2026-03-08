@@ -302,13 +302,46 @@ function AssetLogoInner({baseSymbol, pos, size, r}) {
     );
   }
 
-  // Stocks/ETFs: logo.dev resolves any ticker automatically — no hardcoded map needed
+  // Stocks/ETFs: use Clearbit logo API (free, no key, works for most tickers)
   if (baseSymbol && !fallback) {
-    const logoUrl = `https://img.logo.dev/ticker/${baseSymbol.toLowerCase()}?token=pk_Lx7aTUY7RRKgCRCRgSCqEA&size=64&format=png`;
+    // Map ticker to company domain for logo lookup
+    const domainGuess = (() => {
+      const knownDomains = {
+        AAPL:'apple.com',MSFT:'microsoft.com',GOOGL:'google.com',GOOG:'google.com',
+        AMZN:'amazon.com',META:'meta.com',NVDA:'nvidia.com',TSLA:'tesla.com',
+        AMD:'amd.com',INTC:'intel.com',QCOM:'qualcomm.com',AVGO:'broadcom.com',
+        JPM:'jpmorganchase.com',GS:'goldmansachs.com',V:'visa.com',MA:'mastercard.com',
+        PYPL:'paypal.com',COIN:'coinbase.com',SOFI:'sofi.com',
+        ADBE:'adobe.com',CRM:'salesforce.com',NOW:'servicenow.com',ORCL:'oracle.com',
+        SAP:'sap.com',HUBS:'hubspot.com',SNOW:'snowflake.com',
+        NFLX:'netflix.com',DIS:'disney.com',SPOT:'spotify.com',
+        UBER:'uber.com',LYFT:'lyft.com',ABNB:'airbnb.com',
+        SHOP:'shopify.com',ETSY:'etsy.com',EBAY:'ebay.com',
+        NKE:'nike.com',MCD:'mcdonalds.com',SBUX:'starbucks.com',
+        KO:'coca-cola.com',PEP:'pepsico.com',WMT:'walmart.com',
+        PFE:'pfizer.com',MRNA:'modernatx.com',JNJ:'jnj.com',
+        PANW:'paloaltonetworks.com',CRWD:'crowdstrike.com',FTNT:'fortinet.com',
+        SMCI:'supermicro.com',NTRA:'natera.com',ILMN:'illumina.com',
+        CELH:'celsius.com',ELF:'elfcosmetics.com',CPRX:'catalystpharma.com',
+        KRYS:'krystalbio.com',ACHR:'archer.com',PINS:'pinterest.com',
+        TEM:'tempus.com',XYZ:'block.xyz',SQ:'block.xyz',
+        TTD:'thetradedesk.com',SNAP:'snap.com',
+        SPY:'ssga.com',QQQ:'invesco.com',GLD:'spdrgoldshares.com',
+        IVV:'ishares.com',VTI:'vanguard.com',
+      };
+      if (knownDomains[baseSymbol]) return knownDomains[baseSymbol];
+      // For .DE tickers, strip suffix and try base symbol
+      const base = baseSymbol.replace(/\.(DE|F|AS|PA|MI|L)$/, '');
+      if (knownDomains[base]) return knownDomains[base];
+      return null;
+    })();
+    const logoUrl = domainGuess
+      ? `https://www.google.com/s2/favicons?domain=${domainGuess}&sz=64`
+      : `https://logo.clearbit.com/${baseSymbol.toLowerCase().replace(/\.(de|f|as|pa)$/,'')}.com`;
     return (
       <div style={{width:size,height:size,borderRadius:r,overflow:'hidden',flexShrink:0,
         background:'#fff',border:'1px solid rgba(255,255,255,0.08)'}}>
-        <img src={logoUrl} width={size} height={size} style={{objectFit:'contain',padding:2}}
+        <img src={logoUrl} width={size} height={size} style={{objectFit:'contain',padding:3}}
           onError={()=>setFallback(true)}/>
       </div>
     );
@@ -852,13 +885,12 @@ async function resolveISINs(positions) {
         if (!r.ok) return;
         const data = await r.json();
         if (!Array.isArray(data) || !data.length) return;
-        // Prefer clean US ticker (no exchange suffix) with highest market cap
-        const noDot = data.filter(d => d.symbol && !d.symbol.includes('.'));
-        const withDot = data.filter(d => d.symbol?.includes('.'));
-        const best = noDot.sort((a,b) => (b.marketCap||0)-(a.marketCap||0))[0]
-          || withDot.sort((a,b) => (b.marketCap||0)-(a.marketCap||0))[0]
+        // Prefer .DE listing (German exchange), fall back to any exchange, then US ticker
+        const pick = data.find(d => d.symbol?.endsWith('.DE'))
+          || data.find(d => d.symbol?.endsWith('.F'))
+          || data.find(d => d.symbol?.endsWith('.AS') || d.symbol?.endsWith('.PA'))
+          || data.sort((a,b) => (b.marketCap||0)-(a.marketCap||0))[0]
           || data[0];
-        const pick = best;
         if (!pick?.symbol) return;
         const idx = resolved.findIndex(q => q.symbol === p.symbol);
         if (idx >= 0) {
@@ -2718,7 +2750,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v44 · Auto ISIN resolution + logo.dev for all tickers</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v45 · Fix logos: Google favicons + Clearbit, .DE tickers preserved</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
