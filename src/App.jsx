@@ -273,25 +273,7 @@ function buildChart(months, positions, activeBrokers, activeBenchmarks, transact
 }
 
 // ── Logo component — inline SVG, no external requests ──
-// Logo domain map for clearbit
-const LOGO_DOMAINS = {
-  AAPL:'apple.com', MSFT:'microsoft.com', GOOGL:'google.com', GOOG:'google.com',
-  AMZN:'amazon.com', META:'meta.com', NVDA:'nvidia.com', TSLA:'tesla.com',
-  JPM:'jpmorganchase.com', GS:'goldmansachs.com', SHOP:'shopify.com',
-  COIN:'coinbase.com', AVGO:'broadcom.com', QCOM:'qualcomm.com',
-  HUBS:'hubspot.com', TTD:'thetradedesk.com', NFLX:'netflix.com',
-  ORCL:'oracle.com', ADBE:'adobe.com', CRM:'salesforce.com', AMD:'amd.com',
-  INTC:'intel.com', PYPL:'paypal.com', DIS:'disney.com', V:'visa.com',
-  MA:'mastercard.com', WMT:'walmart.com', PG:'pg.com', JNJ:'jnj.com',
-  XOM:'exxonmobil.com', CVX:'chevron.com', BAC:'bankofamerica.com',
-  WFC:'wellsfargo.com', MRNA:'modernatx.com', PFE:'pfizer.com',
-  KO:'coca-cola.com', PEP:'pepsico.com', MCD:'mcdonalds.com',
-  SBUX:'starbucks.com', NKE:'nike.com', ABNB:'airbnb.com',
-  UBER:'uber.com', LYFT:'lyft.com', SNAP:'snap.com', TWTR:'twitter.com',
-  BILI:'bilibili.com', BABA:'alibaba.com', TCEHY:'tencent.com',
-  SPY:'ssga.com', QQQ:'invesco.com', GLD:'spdrgoldshares.com',
-  IVV:'ishares.com', VTI:'vanguard.com',
-};
+// Logos resolved automatically via logo.dev (no hardcoded map needed)
 const CRYPTO_LOGOS = {
   BTC:'bitcoin', ETH:'ethereum', SOL:'solana', BNB:'binance-coin',
   XRP:'xrp', ADA:'cardano', DOT:'polkadot', MATIC:'polygon',
@@ -306,43 +288,46 @@ function AssetLogo({pos, size=36}) {
 }
 function AssetLogoInner({baseSymbol, pos, size, r}) {
   const [imgErr, setImgErr] = React.useState(false);
-  const domain = LOGO_DOMAINS[baseSymbol];
+  const [fallback, setFallback] = React.useState(false);
 
-  // Crypto: use CoinGecko asset logos
-  if (pos.type === 'crypto' && CRYPTO_LOGOS[baseSymbol] && !imgErr) {
-    const url = `https://assets.coingecko.com/coins/images/1/small/bitcoin.png`
-      .replace('1/small/bitcoin', (() => {
-        const m = {BTC:'1/small/bitcoin',ETH:'279/small/ethereum',SOL:'4128/small/solana',BNB:'825/small/binance-coin',XRP:'44/small/xrp-symbol-white-128',ADA:'975/small/cardano',DOT:'12171/small/polkadot',MATIC:'4713/small/matic-token',AVAX:'12559/small/avalanche-2',LINK:'877/small/chainlink-new-logo',UNI:'12504/small/uni',AAVE:'7279/small/aave-v3-logo'};
-        return m[baseSymbol] || '1/small/bitcoin';
-      })());
-    return (
+  // Crypto: CoinGecko
+  if (pos.type === 'crypto' && !imgErr) {
+    const m = {BTC:'1/small/bitcoin',ETH:'279/small/ethereum',SOL:'4128/small/solana',BNB:'825/small/binance-coin',XRP:'44/small/xrp-symbol-white-128',ADA:'975/small/cardano',DOT:'12171/small/polkadot',MATIC:'4713/small/matic-token',AVAX:'12559/small/avalanche-2',LINK:'877/small/chainlink-new-logo',UNI:'12504/small/uni',AAVE:'7279/small/aave-v3-logo'};
+    const path = m[baseSymbol];
+    if (path) return (
       <div style={{width:size,height:size,borderRadius:r,overflow:'hidden',flexShrink:0,background:'#1a1a2e'}}>
-        <img src={url} width={size} height={size} style={{objectFit:'cover'}}
-          onError={()=>setImgErr(true)}/>
-      </div>
-    );
-  }
-
-  // Stocks/ETFs: use logo.dev
-  if (domain && !imgErr) {
-    return (
-      <div style={{width:size,height:size,borderRadius:r,overflow:'hidden',flexShrink:0,background:'#fff',border:'1px solid rgba(255,255,255,0.08)'}}>
-        <img src={`https://www.google.com/s2/favicons?domain=${domain}&sz=64`} width={size} height={size}
+        <img src={`https://assets.coingecko.com/coins/images/${path}.png`} width={size} height={size}
           style={{objectFit:'cover'}} onError={()=>setImgErr(true)}/>
       </div>
     );
   }
 
-  // Fallback: colored ticker badge
+  // Stocks/ETFs: logo.dev resolves any ticker automatically — no hardcoded map needed
+  if (baseSymbol && !fallback) {
+    const logoUrl = `https://img.logo.dev/ticker/${baseSymbol.toLowerCase()}?token=pk_Lx7aTUY7RRKgCRCRgSCqEA&size=64&format=png`;
+    return (
+      <div style={{width:size,height:size,borderRadius:r,overflow:'hidden',flexShrink:0,
+        background:'#fff',border:'1px solid rgba(255,255,255,0.08)'}}>
+        <img src={logoUrl} width={size} height={size} style={{objectFit:'contain',padding:2}}
+          onError={()=>setFallback(true)}/>
+      </div>
+    );
+  }
+
+  // Final fallback: colored ticker badge
   const svg = getLogoSVG(pos.symbol);
   if (svg) return (
-    <div style={{width:size,height:size,borderRadius:r,flexShrink:0,background:`${pos.color}15`,border:`1px solid ${pos.color}33`,display:'flex',alignItems:'center',justifyContent:'center',overflow:'hidden'}}>
+    <div style={{width:size,height:size,borderRadius:r,flexShrink:0,background:`${pos.color}15`,
+      border:`1px solid ${pos.color}33`,display:'flex',alignItems:'center',justifyContent:'center',overflow:'hidden'}}>
       {svg}
     </div>
   );
   return (
-    <div style={{width:size,height:size,borderRadius:r,background:`${pos.color}22`,border:`1px solid ${pos.color}44`,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
-      <span className="mono" style={{fontSize:size*0.25,color:pos.color,fontWeight:700}}>{pos.symbol.slice(0,4)}</span>
+    <div style={{width:size,height:size,borderRadius:r,background:`${pos.color}22`,
+      border:`1px solid ${pos.color}44`,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+      <span className="mono" style={{fontSize:size*0.25,color:pos.color,fontWeight:700}}>
+        {(baseSymbol||pos.symbol||'?').slice(0,4)}
+      </span>
     </div>
   );
 }
@@ -749,46 +734,17 @@ const isISIN = s => /^[A-Z]{2}[A-Z0-9]{9}[0-9]$/.test(s);
 
 // Known ISINs for instant resolution without API call
 const ISIN_MAP = {
+  // Fast-path cache for common US mega-caps (avoids API round-trip)
   "US0378331005":"AAPL","US5949181045":"MSFT","US02079K3059":"GOOGL",
   "US0231351067":"AMZN","US30303M1027":"META","US88160R1014":"TSLA",
-  "US67066G1040":"NVDA","US4592001014":"IBM","US4581401001":"INTC",
-  "US9311421039":"WMT","US0970231058":"BA","US1667641005":"CHTR",
-  "US46625H1005":"JPM","US38141G1040":"GS","US0605051046":"BAC",
-  "US9042141039":"WFC","US46080Q1031":"JNJ","US7427181091":"PFE",
-  "US58933Y1055":"MRK","US4781601046":"JNJ","US2546871060":"DIS",
-  "US1912161007":"AMZN","US7132711086":"PEP","US8923561067":"MCD",
-  "US9197941076":"V","US69343P1057":"MA","US0258161092":"AXP",
-  "US02209S1033":"AMD","US00724F1012":"ABNB","US09175A2069":"BKNG",
-  "US83406F1021":"SNOW","US8522341036":"SHOP","US86800U3023":"SQ",
-  "US88023B1035":"TTD","US6974351057":"PTON","US6323071042":"NFLX",
-  "US6541061031":"NDAQ","US15118V2079":"COIN",
-  "US88339J1051":"TTD",
-  "US44922N1037":"HUBS",
-  "US7960508882":"QCOM",
-  "US9229085538":"VTI",
-  "US4642875987":"IVV",
-  "US81369Y8030":"GLD",
-  "US78462F1030":"SPY",
-  "US46090E1038":"QQQ",
-  "US1255231003":"AVGO",
-  "US19260Q1076":"COIN","US5011471027":"LLY",
-  "US4523271090":"IRM","US26856L1035":"EA","US14888U1016":"C",
-  "US11135F1012":"BRKA","US03945R1023":"ARBK","US72352L1061":"PINS",
-  "US79466L3024":"SHOP","US30231G1022":"XOM","US1247531029":"CB",
-  // EU stocks
-  "DE0007164600":"SAP","DE0005140008":"DBK","DE0005552004":"DTE",
-  "DE0007236101":"SIE","DE0008404005":"ALV","DE0005190003":"BMW",
-  "DE0007100000":"DAI","DE0006231004":"INF","DE0008232125":"LHA",
-  "DE000BASF111":"BAS","DE0005493105":"FRE","DE0007031040":"VOW3",
-  "NL0010273215":"ASML","GB0007188757":"BP","GB0009252882":"GSK",
-  "GB00B10RZP78":"ULVR","FR0000131104":"BNP","FR0000120578":"SAN",
-  "CH0012221716":"ABB","CH0012138605":"CSGN","CH0244767585":"UBS",
-  // Common ETFs
+  "US67066G1040":"NVDA","US46625H1005":"JPM","US38141G1040":"GS",
+  "US02209S1033":"AMD","US9197941076":"V","US69343P1057":"MA",
+  // Common ETFs (EU — FMP often misses these)
   "IE00B4L5Y983":"IWDA","IE00B5BMR087":"CSPX","IE00BKM4GZ66":"EIMI",
-  "IE00B4JNQZ49":"VEUR","IE00B4KBBD01":"VNRT","IE00BYXYX521":"VWCE",
-  "IE00B3RBWM25":"VWRL","DE000A0S9GB0":"EXS1","DE000ETFL037":"EL4A",
-  "IE000AON7ET1":"XDWH","IE000YDOORK7":"XDWS","IE00BMFKG444":"XMAW",
-  "JE00BQRFDY49":"XDWD","CH0334081137":"CSIF","CA74767K1030":"QEC",
+  "IE00B4JNQZ49":"IUFS","IE00B4KBBD01":"IUUS","IE00BYXYX521":"VWCE",
+  "IE00B3RBWM25":"VWRL","DE000A0S9GB0":"4GLD","DE000ETFL037":"EL4A",
+  "IE000AON7ET1":"ARKX","IE000YDOORK7":"XDWH","IE00BMFKG444":"XNAS",
+  "JE00BQRFDY49":"WZRD",
 };
 
 // Known ETF tickers — used to correct type after ISIN resolution
@@ -896,10 +852,13 @@ async function resolveISINs(positions) {
         if (!r.ok) return;
         const data = await r.json();
         if (!Array.isArray(data) || !data.length) return;
-        const pick = data.find(d => d.symbol?.endsWith('.DE'))
-          || data.find(d => d.symbol?.endsWith('.F'))
-          || data.find(d => d.symbol?.endsWith('.AS') || d.symbol?.endsWith('.PA'))
-          || data.find(d => d.marketCap > 0) || data[0];
+        // Prefer clean US ticker (no exchange suffix) with highest market cap
+        const noDot = data.filter(d => d.symbol && !d.symbol.includes('.'));
+        const withDot = data.filter(d => d.symbol?.includes('.'));
+        const best = noDot.sort((a,b) => (b.marketCap||0)-(a.marketCap||0))[0]
+          || withDot.sort((a,b) => (b.marketCap||0)-(a.marketCap||0))[0]
+          || data[0];
+        const pick = best;
         if (!pick?.symbol) return;
         const idx = resolved.findIndex(q => q.symbol === p.symbol);
         if (idx >= 0) {
@@ -2759,7 +2718,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v42 · Fix CSV import: preserve name+type from Smartbroker CSV</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v44 · Auto ISIN resolution + logo.dev for all tickers</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
