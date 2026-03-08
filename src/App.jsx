@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback } from "react"; // v13-google-favicons
+import React, { useState, useMemo, useEffect, useCallback } from "react"; // v15-etf-types-fix
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, AreaChart, ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid } from "recharts";
 
 const FONTS = `@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=IBM+Plex+Mono:wght@300;400;500;600&family=DM+Sans:wght@300;400;500&display=swap');`;
@@ -671,7 +671,9 @@ const BROKER_FORMATS = {
         const symbol = isin;
         const displaySymbol = (kuerzel && !isISIN(kuerzel)) ? kuerzel.toUpperCase() : null;
 
-        const type = typeMap[klasse] || "stock";
+        const rawType = typeMap[klasse] || "stock";
+        const knownTicker = ISIN_MAP[isin];
+        const type = inferType(knownTicker, isin, name, rawType);
 
         const ex = acc.find(p => p.isin === isin || p.symbol === symbol);
         if (ex) {
@@ -725,7 +727,8 @@ const BROKER_FORMATS = {
         const qty=parseFloat((r[iQty]||"").replace(",","."))||0;
         const price=parseFloat((r[iPrice]||"").replace(",","."))||0;
         if(!qty||!price) return acc;
-        const type=/crypto|btc|eth|sol/i.test(r[iType]||symbol)?"crypto":(/etf/i.test(r[iType]||r[iName]||"")?"etf":"stock");
+        const rawT=/crypto|btc|eth|sol/i.test(r[iType]||symbol)?'crypto':'stock';
+        const type=inferType(symbol,'',r[iName]||'',rawT);
         const ex=acc.find(p=>p.symbol===symbol);
         if(ex){ex.avgPrice=(ex.avgPrice*ex.qty+price*qty)/(ex.qty+qty);ex.qty+=qty;}
         else acc.push({symbol,name:r[iName]||symbol,type,qty,avgPrice:price,currentPrice:price,broker:"Generic",color:"#7a8a98"});
@@ -784,7 +787,29 @@ const ISIN_MAP = {
   "JE00BQRFDY49":"XDWD","CH0334081137":"CSIF","CA74767K1030":"QEC",
 };
 
-const ISIN_NAMES = {
+// Known ETF tickers — used to correct type after ISIN resolution
+const ETF_TICKERS = new Set([
+  'SPY','QQQ','IVV','VTI','VOO','GLD','SLV','VEA','VWO','EFA','AGG','BND',
+  'LQD','TLT','IEF','XLF','XLK','XLE','XLV','XLI','XLU','XLP','XLB','XLRE',
+  'GDX','GDXJ','HYG','JNK','EEM','EWJ','EWG','EWU','EWC','EWA','EWH','EWZ',
+  'ARKK','ARKG','ARKW','ARKF','ARKQ','ARKX',
+  'VWCE','IWDA','CSPX','EIMI','VEUR','VWRL','EXS1','XDWD','XMAW','XDWH','XDWS',
+  'VNQ','VNQI','BIL','SHY','MUB','VTIP','SCHD','JEPI','QYLD','XYLD','RYLD',
+  'SQQQ','TQQQ','UVXY','VXX','SVXY','SPXS','SPXL','UPRO','TMF','TNA','TZA',
+  'HACK','CIBR','KWEB','CQQQ','MCHI','ASHR','FXI',
+  'IVV','IWM','IWF','IWD','IWB','IJH','IJR','IEV','IAU','IEFA','IEMG',
+]);
+// Known stocks — always override ETF_TICKERS classification
+const STOCK_TICKERS = new Set([
+  'AAPL','MSFT','GOOGL','GOOG','AMZN','META','NVDA','TSLA','NFLX',
+  'BABA','BIDU','JD','PDD','TCEHY','SHOP','COIN','HUBS','IRM',
+  'JPM','GS','BAC','WFC','V','MA','PYPL','SQ','TTD','NDAQ',
+  'KO','PEP','MCD','SBUX','NKE','DIS','AMGN','PFE','MRNA','JNJ',
+  'XOM','CVX','WMT','PG','HD','INTC','AMD','QCOM','AVGO','ORCL',
+  'CRM','ADBE','NOW','SNOW','UBER','LYFT','ABNB','DASH','SNAP','PINS',
+]);
+
+const TICKER_NAMES = {
   "AAPL":"Apple","MSFT":"Microsoft","GOOGL":"Alphabet","AMZN":"Amazon",
   "META":"Meta","TSLA":"Tesla","NVDA":"NVIDIA","ABNB":"Airbnb",
   "BKNG":"Booking Holdings","SNOW":"Snowflake","SHOP":"Shopify",
@@ -805,12 +830,35 @@ const ISIN_TYPES = {
   "DE000EL4":"etf","LU":"etf","FR0010":"etf",
 };
 
-function guessTypeFromISIN(isin, ticker) {
-  if(/^(IE|LU)/.test(isin)) return "etf";
-  if(/^DE000(ETF|EXS|EL4|A0S|A1J)/.test(isin)) return "etf";
-  if(/^(BTC|ETH|SOL|XRP|BNB|ADA)$/.test(ticker)) return "crypto";
-  return "stock";
+function inferType(ticker, isin, name, rawType) {
+  const t = (ticker || '').toUpperCase();
+  const n = (name   || '').toLowerCase();
+  const i = (isin   || '').toUpperCase();
+
+  if (rawType === 'crypto') return 'crypto';
+  if (rawType === 'derivative') return 'derivative';
+  if (/derivat|warrant|zertifikat|knock.out|turbo|faktor/i.test(n)) return 'derivative';
+  if (STOCK_TICKERS.has(t)) return 'stock';
+
+  // ISIN prefix — most reliable for EU instruments
+  if (i.startsWith('IE') || i.startsWith('LU')) return 'etf';
+  if (/^DE000(ETF|EXS|EL4|A0S|A1J)/.test(i)) return 'etf';
+  if (i.startsWith('US')) {
+    if (ETF_TICKERS.has(t)) return 'etf';
+    return 'stock';
+  }
+  if (i.startsWith('DE') || i.startsWith('FR') || i.startsWith('NL') || i.startsWith('CH')) {
+    if (ETF_TICKERS.has(t)) return 'etf';
+    return 'stock';
+  }
+
+  if (ETF_TICKERS.has(t)) return 'etf';
+  if (/\betf\b|index fund|ishares|vanguard|xtrackers|amundi|lyxor|invesco|spdr|wisdomtree/i.test(n)) return 'etf';
+
+  return rawType || 'stock';
 }
+// legacy alias
+function guessTypeFromISIN(isin, ticker) { return inferType(ticker, isin, '', 'stock'); }
 
 async function resolveISINs(positions) {
   const toResolve = positions.filter(p => isISIN(p.symbol));
@@ -1726,7 +1774,9 @@ export default function App() {
               || res.find(r=>r.symbol?.endsWith('.AS')||r.symbol?.endsWith('.PA'))
               || res.find(r=>r.marketCap>0) || res[0];
             if(pick?.symbol) {
-              setPositions(prev=>prev.map(q=>q.isin===p.isin?{...q,fmpTicker:pick.symbol}:q));
+              const resolvedTk = pick.symbol.split('.')[0].toUpperCase();
+              const correctedType = inferType(resolvedTk, p.isin, p.name, p.type);
+              setPositions(prev=>prev.map(q=>q.isin===p.isin?{...q,fmpTicker:pick.symbol,type:correctedType}:q));
               p.fmpTicker = pick.symbol; // also update local ref
             }
           } catch(e){}
@@ -2100,7 +2150,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v13 · logos · txchart</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v15 · etf types · logos</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
