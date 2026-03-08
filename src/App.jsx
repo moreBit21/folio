@@ -1585,7 +1585,7 @@ function StockDetail({ pos, onBack, transactions }) {
                             background: isBuy?'rgba(0,229,160,0.12)':'rgba(255,77,109,0.12)',
                             color: isBuy?'var(--green)':'var(--red)',
                           }}>
-                            {isBuy ? 'KAUF' : 'VERKAUF'}
+                            {isBuy ? 'BUY' : 'SELL'}
                           </span>
                         </div>
                         <div className="mono" style={{fontSize:10,color:'var(--text3)'}}>{tx.date}</div>
