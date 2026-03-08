@@ -21,17 +21,15 @@ export default async function handler(req, res) {
   };
 
   try {
-    const [income, cashflow, balance, ratios, profile, quote] = await Promise.all([
+    const [income, cashflow, balance, ratios, profile] = await Promise.all([
       fmp(`/income-statement?symbol=${symbol}&limit=5`),
       fmp(`/cash-flow-statement?symbol=${symbol}&limit=5`),
       fmp(`/balance-sheet-statement?symbol=${symbol}&limit=5`),
       fmp(`/key-metrics?symbol=${symbol}&limit=5`),
       fmp(`/profile?symbol=${symbol}`),
-      fmp(`/quotes?symbols=${symbol}`),
     ]);
 
-    const p = profile[0]  || {};
-    const q = quote[0]    || {};
+    const p = profile[0] || {};
 
     const years = [...new Set([
       ...income.map(r => r.calendarYear || r.date?.slice(0,4)).filter(Boolean),
@@ -44,12 +42,20 @@ export default async function handler(req, res) {
       const bs  = balance.find(r=>(r.calendarYear||r.date?.slice(0,4))===yr)  || {};
       const km  = ratios.find(r=>(r.calendarYear||r.date?.slice(0,4))===yr)   || {};
 
-      const nopat = inc.operatingIncome != null ? inc.operatingIncome * 0.79 : null;
-      const ic    = (bs.totalStockholdersEquity != null && bs.totalDebt != null)
-                    ? bs.totalStockholdersEquity + bs.totalDebt : null;
-      const roic  = nopat != null && ic ? nopat / ic : null;
+      // D/E and ROIC — use direct FMP fields where available, fallback to manual calc
+      const roic = km.returnOnInvestedCapital ?? (() => {
+        const nopat = inc.operatingIncome != null ? inc.operatingIncome * 0.79 : null;
+        const ic    = (bs.totalStockholdersEquity != null && bs.totalDebt != null)
+                      ? bs.totalStockholdersEquity + bs.totalDebt : null;
+        return nopat != null && ic ? nopat / ic : null;
+      })();
       const debtEquity = bs.totalDebt != null && bs.totalStockholdersEquity
                     ? bs.totalDebt / bs.totalStockholdersEquity : null;
+      // P/E: FMP stable /key-metrics exposes earningsYield (E/P); invert to get P/E
+      const peRatio = km.priceToEarningsRatio
+        ?? (km.earningsYield && km.earningsYield > 0 ? 1 / km.earningsYield : null);
+      // P/B from key-metrics
+      const pbRatio = km.priceToBookRatio ?? km.pbRatio ?? null;
 
       return {
         year:            yr,
@@ -69,16 +75,24 @@ export default async function handler(req, res) {
         grossMargin:     inc.grossProfitRatio       ?? null,
         operatingMargin: inc.operatingIncomeRatio   ?? null,
         netMargin:       inc.netIncomeRatio         ?? null,
-        roe:             km.roe                    ?? null,
-        roa:             km.returnOnTangibleAssets ?? null,
-        peRatio:         km.peRatio                ?? null,
-        pbRatio:         km.pbRatio                ?? null,
-        evEbitda:        km.enterpriseValueOverEBITDA ?? null,
-        fcfYield:        km.fcfYield               ?? null,
+        roe:             km.returnOnEquity          ?? null,   // was km.roe — wrong field
+        roa:             km.returnOnAssets          ?? km.returnOnTangibleAssets ?? null,
         roic,
         debtEquity,
+        peRatio,
+        pbRatio,
+        evEbitda:        km.evToEBITDA             ?? null,   // was km.enterpriseValueOverEBITDA
+        fcfYield:        km.freeCashFlowYield       ?? null,  // was km.fcfYield
+        grahamNumber:    km.grahamNumber            ?? null,
+        currentRatio:    km.currentRatio            ?? null,
+        netDebtEbitda:   km.netDebtToEBITDA         ?? null,
       };
     });
+
+    // Derive top-level P/E: use most recent year's value from key-metrics
+    const latestKm = ratios[0] || {};
+    const topPE = latestKm.priceToEarningsRatio
+      ?? (latestKm.earningsYield && latestKm.earningsYield > 0 ? 1 / latestKm.earningsYield : null);
 
     res.status(200).json({
       symbol,
@@ -86,12 +100,12 @@ export default async function handler(req, res) {
       currency:      p.currency     || 'USD',
       sector:        p.sector       || null,
       industry:      p.industry     || null,
-      marketCap:     q.marketCap    ?? p.mktCap    ?? null,
-      peRatio:       q.pe           ?? null,
-      pbRatio:       q.priceToBook  ?? null,
-      evEbitda:      q.priceEbitda  ?? null,
+      marketCap:     p.marketCap    ?? null,   // was q.marketCap ?? p.mktCap (wrong fields)
+      peRatio:       topPE,
+      pbRatio:       latestKm.priceToBookRatio ?? null,
+      evEbitda:      latestKm.evToEBITDA       ?? null,
       beta:          p.beta         ?? null,
-      dividendYield: p.lastDiv      ?? null,
+      dividendYield: p.lastDividend ?? null,   // was p.lastDiv (wrong field)
       description:   p.description  || null,
       byYear,
     });
