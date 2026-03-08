@@ -889,50 +889,52 @@ async function resolveISINs(positions) {
   });
 
   // Second pass: try FMP search-isin for any still unresolved
+  // Use sequential batches of 3 with 300ms delay to avoid FMP rate limits
   const stillISIN = resolved.filter(p => isISIN(p.symbol));
   if (stillISIN.length > 0) {
-    await Promise.all(stillISIN.slice(0, 20).map(async p => {
-      try {
-        const r = await fetch('/api/fmp?path=' + encodeURIComponent('/search-isin?isin=' + p.symbol));
-        if (!r.ok) return;
-        const data = await r.json();
-        if (!Array.isArray(data) || !data.length) return;
-        // For US ISINs: US ticker (no suffix) has best fundamentals data on FMP free tier.
-        // For non-US ISINs: prefer .DE (German exchange) for accurate EUR pricing.
-        // In both cases, highest marketCap within that preference = most liquid listing.
-        const isUSIsin = p.symbol?.startsWith('US');
-        let pick;
-        if (isUSIsin) {
-          // Prefer plain US ticker (no exchange suffix) — highest marketCap first
-          pick = data.filter(d => !d.symbol?.includes('.')).sort((a,b)=>(b.marketCap||0)-(a.marketCap||0))[0]
-            || data.sort((a,b)=>(b.marketCap||0)-(a.marketCap||0))[0]
-            || data[0];
-        } else {
-          // Non-US: prefer .DE → .F → .AS/.PA → highest marketCap
-          pick = data.find(d => d.symbol?.endsWith('.DE'))
-            || data.find(d => d.symbol?.endsWith('.F'))
-            || data.find(d => d.symbol?.endsWith('.AS') || d.symbol?.endsWith('.PA'))
-            || data.sort((a,b) => (b.marketCap||0)-(a.marketCap||0))[0]
-            || data[0];
-        }
-        if (!pick?.symbol) return;
-        const idx = resolved.findIndex(q => q.symbol === p.symbol);
-        if (idx >= 0) {
-          const orig = resolved[idx];
-          resolved[idx] = {
-            ...orig,
-            fmpTicker: pick.symbol,
-            // Only update symbol for price lookups; preserve CSV name & type
-            symbol: pick.symbol,
-            // Keep name from CSV if we have it; fallback to FMP
-            name: (orig.name && orig.name !== orig.symbol) ? orig.name : (pick.name || orig.name),
-            // Preserve type from CSV parser (assetklasse); only guess if unknown
-            type: (orig.type && orig.type !== 'stock') ? orig.type : guessTypeFromISIN(p.symbol, pick.symbol),
-            isin: p.symbol,
-          };
-        }
-      } catch(e) {}
-    }));
+    const pickTicker = (data, isin) => {
+      if (!Array.isArray(data) || !data.length) return null;
+      const isUSIsin = isin?.startsWith('US');
+      if (isUSIsin) {
+        return data.filter(d => !d.symbol?.includes('.')).sort((a,b)=>(b.marketCap||0)-(a.marketCap||0))[0]
+          || data.sort((a,b)=>(b.marketCap||0)-(a.marketCap||0))[0]
+          || data[0];
+      } else {
+        return data.find(d => d.symbol?.endsWith('.DE'))
+          || data.find(d => d.symbol?.endsWith('.F'))
+          || data.find(d => d.symbol?.endsWith('.AS') || d.symbol?.endsWith('.PA'))
+          || data.sort((a,b) => (b.marketCap||0)-(a.marketCap||0))[0]
+          || data[0];
+      }
+    };
+
+    const BATCH = 3;
+    const delay = ms => new Promise(r => setTimeout(r, ms));
+    for (let i = 0; i < stillISIN.length; i += BATCH) {
+      const batch = stillISIN.slice(i, i + BATCH);
+      await Promise.all(batch.map(async p => {
+        try {
+          const r = await fetch('/api/fmp?path=' + encodeURIComponent('/search-isin?isin=' + p.symbol));
+          if (!r.ok) return;
+          const data = await r.json();
+          const pick = pickTicker(data, p.symbol);
+          if (!pick?.symbol) return;
+          const idx = resolved.findIndex(q => q.symbol === p.symbol);
+          if (idx >= 0) {
+            const orig = resolved[idx];
+            resolved[idx] = {
+              ...orig,
+              fmpTicker: pick.symbol,
+              symbol: pick.symbol,
+              name: (orig.name && orig.name !== orig.symbol) ? orig.name : (pick.name || orig.name),
+              type: (orig.type && orig.type !== 'stock') ? orig.type : guessTypeFromISIN(p.symbol, pick.symbol),
+              isin: p.symbol,
+            };
+          }
+        } catch(e) {}
+      }));
+      if (i + BATCH < stillISIN.length) await delay(300);
+    }
   }
 
   return resolved;
@@ -2679,32 +2681,34 @@ export default function App() {
       // Resolve any unresolved ISINs via FMP search
       const needsResolution = stockPos.filter(p => !getT(p) && p.isin);
       if(needsResolution.length) {
-        await Promise.all(needsResolution.slice(0,20).map(async p => {
-          try {
-            const res = await fmpGet('/search-isin?isin='+p.isin);
-            if(!Array.isArray(res)||!res.length) return;
-            const isUSIsin2 = p.isin?.startsWith('US');
-            let pick;
-            if (isUSIsin2) {
-              // US ISINs: prefer plain ticker (no exchange suffix) with highest marketCap
-              // This gives us CRM instead of FOO.DE for Salesforce, etc.
-              pick = res.filter(r=>!r.symbol?.includes('.')).sort((a,b)=>(b.marketCap||0)-(a.marketCap||0))[0]
-                || res.sort((a,b)=>(b.marketCap||0)-(a.marketCap||0))[0] || res[0];
-            } else {
-              // Non-US ISINs: prefer .DE for correct EUR pricing on German exchanges
-              pick = res.find(r=>r.symbol?.endsWith('.DE'))
-                || res.find(r=>r.symbol?.endsWith('.F'))
-                || res.find(r=>r.symbol?.endsWith('.AS')||r.symbol?.endsWith('.PA'))
-                || res.find(r=>r.marketCap>0) || res[0];
-            }
-            if(pick?.symbol) {
-              const resolvedTk = pick.symbol.split('.')[0].toUpperCase();
-              const correctedType = inferType(resolvedTk, p.isin, p.name, p.type);
-              setPositions(prev=>prev.map(q=>q.isin===p.isin?{...q,fmpTicker:pick.symbol,type:correctedType}:q));
-              p.fmpTicker = pick.symbol; // also update local ref
-            }
-          } catch(e){}
-        }));
+        const pickFromResults = (res, isin) => {
+          if(!Array.isArray(res)||!res.length) return null;
+          if(isin?.startsWith('US'))
+            return res.filter(r=>!r.symbol?.includes('.')).sort((a,b)=>(b.marketCap||0)-(a.marketCap||0))[0]
+              || res.sort((a,b)=>(b.marketCap||0)-(a.marketCap||0))[0] || res[0];
+          return res.find(r=>r.symbol?.endsWith('.DE'))
+            || res.find(r=>r.symbol?.endsWith('.F'))
+            || res.find(r=>r.symbol?.endsWith('.AS')||r.symbol?.endsWith('.PA'))
+            || res.find(r=>r.marketCap>0) || res[0];
+        };
+        const BATCH2 = 3;
+        const delay2 = ms => new Promise(r => setTimeout(r, ms));
+        for(let i=0; i<needsResolution.length; i+=BATCH2) {
+          const batch = needsResolution.slice(i, i+BATCH2);
+          await Promise.all(batch.map(async p => {
+            try {
+              const res = await fmpGet('/search-isin?isin='+p.isin);
+              const pick = pickFromResults(res, p.isin);
+              if(pick?.symbol) {
+                const resolvedTk = pick.symbol.split('.')[0].toUpperCase();
+                const correctedType = inferType(resolvedTk, p.isin, p.name, p.type);
+                setPositions(prev=>prev.map(q=>q.isin===p.isin?{...q,fmpTicker:pick.symbol,type:correctedType}:q));
+                p.fmpTicker = pick.symbol;
+              }
+            } catch(e){}
+          }));
+          if(i+BATCH2 < needsResolution.length) await delay2(300);
+        }
       }
       const tickerList=[...new Set(stockPos.map(getT).filter(Boolean))];
       if(!tickerList.length){ setLastUpdated(new Date()); return; }
@@ -3074,7 +3078,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v49 · ISIN picker fix (US ISINs use US ticker) + Phase 3e TradingView charts</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v50 · Fix ISIN resolution: batched API calls (3 at a time) to avoid FMP rate limits</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
