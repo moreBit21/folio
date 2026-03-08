@@ -897,12 +897,24 @@ async function resolveISINs(positions) {
         if (!r.ok) return;
         const data = await r.json();
         if (!Array.isArray(data) || !data.length) return;
-        // Prefer .DE listing (German exchange), fall back to any exchange, then US ticker
-        const pick = data.find(d => d.symbol?.endsWith('.DE'))
-          || data.find(d => d.symbol?.endsWith('.F'))
-          || data.find(d => d.symbol?.endsWith('.AS') || d.symbol?.endsWith('.PA'))
-          || data.sort((a,b) => (b.marketCap||0)-(a.marketCap||0))[0]
-          || data[0];
+        // For US ISINs: US ticker (no suffix) has best fundamentals data on FMP free tier.
+        // For non-US ISINs: prefer .DE (German exchange) for accurate EUR pricing.
+        // In both cases, highest marketCap within that preference = most liquid listing.
+        const isUSIsin = p.symbol?.startsWith('US');
+        let pick;
+        if (isUSIsin) {
+          // Prefer plain US ticker (no exchange suffix) — highest marketCap first
+          pick = data.filter(d => !d.symbol?.includes('.')).sort((a,b)=>(b.marketCap||0)-(a.marketCap||0))[0]
+            || data.sort((a,b)=>(b.marketCap||0)-(a.marketCap||0))[0]
+            || data[0];
+        } else {
+          // Non-US: prefer .DE → .F → .AS/.PA → highest marketCap
+          pick = data.find(d => d.symbol?.endsWith('.DE'))
+            || data.find(d => d.symbol?.endsWith('.F'))
+            || data.find(d => d.symbol?.endsWith('.AS') || d.symbol?.endsWith('.PA'))
+            || data.sort((a,b) => (b.marketCap||0)-(a.marketCap||0))[0]
+            || data[0];
+        }
         if (!pick?.symbol) return;
         const idx = resolved.findIndex(q => q.symbol === p.symbol);
         if (idx >= 0) {
@@ -1138,100 +1150,213 @@ const fmtE = (n)=>`€${fmt(Math.abs(n),0)}`;
 
 // ── StockDetail — full page (3a financials + 3b charts + 3d scorecard) ──────
 
-// ── TxPriceChart: price history with buy/sell markers ──
-function TxPriceChart({ ticker, txs, currentPrice }) {
-  const [prices, setPrices] = React.useState([]);
-  const [loading, setLoading] = React.useState(true);
+// ── TradingView Lightweight Charts loader ───────────────────────────────────
+let _tvLibPromise = null;
+function loadTVLib() {
+  if (_tvLibPromise) return _tvLibPromise;
+  _tvLibPromise = new Promise((resolve, reject) => {
+    if (window.LightweightCharts) { resolve(window.LightweightCharts); return; }
+    const s = document.createElement('script');
+    s.src = 'https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js';
+    s.onload = () => resolve(window.LightweightCharts);
+    s.onerror = reject;
+    document.head.appendChild(s);
+  });
+  return _tvLibPromise;
+}
 
+// ── TVChart: full TradingView Lightweight Chart with range + mode controls ──
+function TVChart({ ticker, txs = [], currentPrice, compact = false }) {
+  const containerRef = React.useRef(null);
+  const chartRef     = React.useRef(null);
+  const seriesRef    = React.useRef(null);
+  const [allData, setAllData]   = React.useState(null); // full price history
+  const [loading, setLoading]   = React.useState(true);
+  const [error, setError]       = React.useState(null);
+  const [range, setRange]       = React.useState('1Y');
+  const [mode, setMode]         = React.useState('area'); // area | candle | line
+
+  const RANGES = compact
+    ? [['3M',90],['6M',180],['1Y',365],['ALL',3650]]
+    : [['1M',30],['3M',90],['6M',180],['1Y',365],['2Y',730],['ALL',3650]];
+
+  // ── Fetch full history once ──
   React.useEffect(() => {
     if (!ticker) return;
-    setLoading(true);
+    setLoading(true); setError(null); setAllData(null);
     const to   = new Date().toISOString().slice(0,10);
-    const from = new Date(Date.now() - 365*2*86400000).toISOString().slice(0,10);
+    const from = new Date(Date.now() - 365*3*86400000).toISOString().slice(0,10);
     fetch(`/api/fmp?path=/historical-price-eod/full?symbol=${ticker}&from=${from}&to=${to}`)
-      .then(r=>r.json())
-      .then(data=>{
-        const arr = Array.isArray(data) ? data : (data?.historical||[]);
-        const sorted = [...arr].sort((a,b)=>a.date.localeCompare(b.date));
-        setPrices(sorted);
+      .then(r => r.json())
+      .then(data => {
+        const arr = Array.isArray(data) ? data : (data?.historical || []);
+        if (!arr.length) throw new Error('No price data');
+        const sorted = [...arr]
+          .filter(p => p.date && p.close != null)
+          .sort((a,b) => a.date.localeCompare(b.date));
+        setAllData(sorted);
       })
-      .catch(()=>{})
-      .finally(()=>setLoading(false));
+      .catch(e => setError(e.message))
+      .finally(() => setLoading(false));
   }, [ticker]);
 
-  if (loading) return (
-    <div className="card shimmer" style={{height:160,marginBottom:16,borderRadius:10}}/>
-  );
-  if (!prices.length) return null;
+  // ── Build + destroy chart ──
+  React.useEffect(() => {
+    if (!allData || !containerRef.current) return;
 
-  const firstTx = txs.length ? txs.reduce((a,b)=>a.date<b.date?a:b).date : null;
-  const visible = firstTx ? prices.filter(p=>p.date>=firstTx) : prices;
-  if (!visible.length) return null;
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - (RANGES.find(r=>r[0]===range)?.[1] ?? 365));
+    const cutStr = cutoff.toISOString().slice(0,10);
+    const filtered = allData.filter(p => p.date >= cutStr);
+    if (!filtered.length) return;
 
-  const vals = visible.map(p=>p.close);
-  const minV = Math.min(...vals)*0.97;
-  const maxV = Math.max(...vals)*1.03;
-  const W = 700, H = 140, PAD = {t:10,r:12,b:24,l:44};
-  const cw = W - PAD.l - PAD.r;
-  const ch = H - PAD.t - PAD.b;
-  const xf = i => PAD.l + (i/(visible.length-1||1))*cw;
-  const yf = v => PAD.t + ch - ((v-minV)/(maxV-minV||1))*ch;
+    const isUp = filtered[filtered.length-1].close >= filtered[0].close;
+    const GREEN = '#00e5a0', RED = '#ff4d6d';
+    const upColor = isUp ? GREEN : RED;
 
-  const pathD = visible.map((p,i)=>`${i===0?'M':'L'}${xf(i).toFixed(1)},${yf(p.close).toFixed(1)}`).join(' ');
-  const areaD = pathD + ` L${xf(visible.length-1)},${H-PAD.b} L${PAD.l},${H-PAD.b} Z`;
+    loadTVLib().then(LW => {
+      // Destroy previous chart
+      if (chartRef.current) { try { chartRef.current.remove(); } catch(e){} chartRef.current = null; }
 
-  const markers = txs.map(tx => {
-    const idx = visible.findIndex(p=>p.date>=tx.date);
-    if (idx < 0) return null;
-    return { ...tx, cx: xf(idx), cy: yf(visible[idx].close), isBuy: tx.type==='buy' };
-  }).filter(Boolean);
+      const h = compact ? 200 : 340;
+      const chart = LW.createChart(containerRef.current, {
+        width:  containerRef.current.clientWidth,
+        height: h,
+        layout:  { background: { color: 'transparent' }, textColor: '#7a8a98' },
+        grid:    { vertLines: { color: '#1c2730' }, horzLines: { color: '#1c2730' } },
+        crosshair: { mode: LW.CrosshairMode.Normal },
+        rightPriceScale: { borderColor: '#1c2730', textColor: '#7a8a98' },
+        timeScale: { borderColor: '#1c2730', timeVisible: true, secondsVisible: false },
+        handleScroll: true,
+        handleScale:  true,
+      });
+      chartRef.current = chart;
 
-  const yLabels = [0,0.5,1].map(t=>({ v: minV+t*(maxV-minV), y: PAD.t+ch*(1-t) }));
-  const xLabels = [0,0.33,0.66,1].map(t=>({ i:Math.round(t*(visible.length-1)) }))
-    .map(l=>({ ...l, date: visible[l.i]?.date?.slice(0,7) }));
-  const isUp = currentPrice >= (visible[0]?.close||0);
+      let series;
+      if (mode === 'candle') {
+        series = chart.addCandlestickSeries({
+          upColor: GREEN, downColor: RED,
+          borderUpColor: GREEN, borderDownColor: RED,
+          wickUpColor: GREEN, wickDownColor: RED,
+        });
+        series.setData(filtered.map(p => ({
+          time: p.date,
+          open:  p.open  ?? p.close,
+          high:  p.high  ?? p.close,
+          low:   p.low   ?? p.close,
+          close: p.close,
+        })));
+      } else if (mode === 'line') {
+        series = chart.addLineSeries({ color: upColor, lineWidth: 2, priceLineVisible: false });
+        series.setData(filtered.map(p => ({ time: p.date, value: p.close })));
+      } else {
+        // area (default)
+        series = chart.addAreaSeries({
+          lineColor: upColor,
+          topColor:   upColor + '28',
+          bottomColor: upColor + '00',
+          lineWidth: 2,
+          priceLineVisible: false,
+        });
+        series.setData(filtered.map(p => ({ time: p.date, value: p.close })));
+      }
+      seriesRef.current = series;
+
+      // ── Buy/sell markers ──
+      if (txs.length && mode !== 'candle') {
+        const firstDate = filtered[0].date;
+        const lastDate  = filtered[filtered.length-1].date;
+        const mks = txs
+          .filter(tx => tx.date >= firstDate && tx.date <= lastDate)
+          .map(tx => ({
+            time:     tx.date,
+            position: tx.type === 'buy' ? 'belowBar' : 'aboveBar',
+            color:    tx.type === 'buy' ? GREEN : RED,
+            shape:    tx.type === 'buy' ? 'arrowUp' : 'arrowDown',
+            text:     tx.type === 'buy' ? `B ${tx.qty}` : `S ${tx.qty}`,
+            size: 1,
+          }));
+        if (mks.length) series.setMarkers(mks);
+      }
+
+      chart.timeScale().fitContent();
+
+      // Resize observer
+      const ro = new ResizeObserver(() => {
+        if (containerRef.current && chartRef.current) {
+          chartRef.current.applyOptions({ width: containerRef.current.clientWidth });
+        }
+      });
+      ro.observe(containerRef.current);
+      return () => { ro.disconnect(); };
+    }).catch(() => {});
+
+    return () => {
+      if (chartRef.current) { try { chartRef.current.remove(); } catch(e){} chartRef.current = null; }
+    };
+  }, [allData, range, mode]);
+
+  if (loading) return <div className="card shimmer" style={{height: compact?200:340, marginBottom:16, borderRadius:10}}/>;
+  if (error)   return null; // silently skip if no data
 
   return (
-    <div className="card" style={{padding:'16px 16px 10px',marginBottom:16,overflow:'hidden'}}>
-      <div className="mono" style={{fontSize:9,color:'var(--text3)',letterSpacing:'0.1em',marginBottom:10}}>PRICE HISTORY</div>
-      <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:'auto',display:'block'}}>
-        <defs>
-          <linearGradient id="txgrad" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={isUp?'#00e5a0':'#ff4d6d'} stopOpacity="0.18"/>
-            <stop offset="100%" stopColor={isUp?'#00e5a0':'#ff4d6d'} stopOpacity="0"/>
-          </linearGradient>
-        </defs>
-        {yLabels.map((l,i)=>(
-          <g key={i}>
-            <line x1={PAD.l} x2={W-PAD.r} y1={l.y} y2={l.y} stroke="#1c2730" strokeWidth="1"/>
-            <text x={PAD.l-4} y={l.y+4} textAnchor="end" fill="#3d4f5e" fontSize="8" fontFamily="IBM Plex Mono">
-              {l.v>=1000?`${(l.v/1000).toFixed(1)}k`:l.v.toFixed(1)}
-            </text>
-          </g>
-        ))}
-        <path d={areaD} fill="url(#txgrad)"/>
-        <path d={pathD} fill="none" stroke={isUp?'#00e5a0':'#ff4d6d'} strokeWidth="1.5"/>
-        {xLabels.map((l,i)=>(
-          <text key={i} x={xf(l.i)} y={H-4} textAnchor="middle" fill="#3d4f5e" fontSize="8" fontFamily="IBM Plex Mono">{l.date}</text>
-        ))}
-        {markers.map((m,i)=>(
-          <g key={i}>
-            <line x1={m.cx} x2={m.cx} y1={PAD.t} y2={H-PAD.b} stroke={m.isBuy?'rgba(0,229,160,0.4)':'rgba(255,77,109,0.4)'} strokeWidth="1" strokeDasharray="3,2"/>
-            <circle cx={m.cx} cy={m.cy} r="5" fill={m.isBuy?'#00e5a0':'#ff4d6d'} stroke="#080c10" strokeWidth="1.5"/>
-            <text x={m.cx} y={m.cy+(m.isBuy?14:-8)} textAnchor="middle" fill={m.isBuy?'#00e5a0':'#ff4d6d'} fontSize="7" fontFamily="IBM Plex Mono" fontWeight="700">{m.isBuy?'B':'S'}</text>
-          </g>
-        ))}
-      </svg>
-      <div style={{display:'flex',gap:16,marginTop:4}}>
-        {[['#00e5a0','BUY'],['#ff4d6d','SELL']].map(([c,l])=>(
-          <div key={l} style={{display:'flex',alignItems:'center',gap:5}}>
-            <div style={{width:8,height:8,borderRadius:'50%',background:c}}/>
-            <span className="mono" style={{fontSize:9,color:'var(--text3)'}}>{l}</span>
+    <div className="card" style={{padding:'14px 16px 12px', marginBottom:16, overflow:'hidden'}}>
+      {/* Controls row */}
+      <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:10, flexWrap:'wrap', gap:6}}>
+        {/* Range pills */}
+        <div style={{display:'flex', gap:4}}>
+          {RANGES.map(([label]) => (
+            <button key={label} onClick={() => setRange(label)}
+              className="mono"
+              style={{fontSize:9, padding:'3px 8px', borderRadius:4, cursor:'pointer', border:'1px solid',
+                borderColor: range===label ? 'rgba(0,229,160,0.4)' : 'var(--border)',
+                background:  range===label ? 'rgba(0,229,160,0.1)' : 'transparent',
+                color:       range===label ? 'var(--green)' : 'var(--text3)',
+                letterSpacing: '0.06em', fontWeight: range===label ? 700 : 400,
+                transition: 'all 0.15s',
+              }}>
+              {label}
+            </button>
+          ))}
+        </div>
+        {/* Mode toggle */}
+        {!compact && (
+          <div style={{display:'flex', gap:4}}>
+            {[['area','▲ Area'],['line','― Line'],['candle','┤ Candle']].map(([m,label]) => (
+              <button key={m} onClick={() => setMode(m)}
+                className="mono"
+                style={{fontSize:9, padding:'3px 8px', borderRadius:4, cursor:'pointer', border:'1px solid',
+                  borderColor: mode===m ? 'rgba(77,159,255,0.4)' : 'var(--border)',
+                  background:  mode===m ? 'rgba(77,159,255,0.1)' : 'transparent',
+                  color:       mode===m ? 'var(--blue)' : 'var(--text3)',
+                  letterSpacing: '0.05em', transition: 'all 0.15s',
+                }}>
+                {label}
+              </button>
+            ))}
           </div>
-        ))}
+        )}
       </div>
+      {/* Chart container */}
+      <div ref={containerRef} style={{width:'100%'}}/>
+      {/* Legend */}
+      {txs.length > 0 && mode !== 'candle' && (
+        <div style={{display:'flex', gap:16, marginTop:8}}>
+          {[['#00e5a0','BUY'],['#ff4d6d','SELL']].map(([col,lbl]) => (
+            <div key={lbl} style={{display:'flex', alignItems:'center', gap:5}}>
+              <div style={{width:7, height:7, borderRadius:'50%', background:col}}/>
+              <span className="mono" style={{fontSize:9, color:'var(--text3)'}}>{lbl}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
+}
+
+// ── TxPriceChart: alias to TVChart for backwards compat ──────────────────────
+function TxPriceChart({ ticker, txs, currentPrice }) {
+  return <TVChart ticker={ticker} txs={txs} currentPrice={currentPrice} compact={true}/>;
 }
 
 // ── CompareView — 3c Stock Comparison ─────────────────────────────────────────
@@ -1749,9 +1874,37 @@ function StockDetail({ pos, onBack, transactions }) {
   useEffect(() => {
     if (pos.type === 'etf') { setData({}); setLoading(false); return; }
     setLoading(true); setError(null); setData(null);
-    fetch('/api/fundamentals?symbol=' + ticker.split('.')[0])
-      .then(r => r.json())
-      .then(d => { if (d.error) throw new Error(d.error); setData(d); })
+
+    // If ticker is still a raw ISIN, resolve it first via FMP search-isin
+    const resolveAndFetch = async () => {
+      let baseTicker = ticker.split('.')[0];
+      if (isISIN(baseTicker)) {
+        try {
+          const res = await fetch('/api/fmp?path=' + encodeURIComponent('/search-isin?isin=' + baseTicker));
+          const results = await res.json();
+          if (Array.isArray(results) && results.length) {
+            const isUSIsin = baseTicker.startsWith('US');
+            let pick;
+            if (isUSIsin) {
+              pick = results.filter(r=>!r.symbol?.includes('.')).sort((a,b)=>(b.marketCap||0)-(a.marketCap||0))[0]
+                || results.sort((a,b)=>(b.marketCap||0)-(a.marketCap||0))[0] || results[0];
+            } else {
+              pick = results.find(r=>r.symbol?.endsWith('.DE'))
+                || results.find(r=>r.symbol?.endsWith('.F'))
+                || results.sort((a,b)=>(b.marketCap||0)-(a.marketCap||0))[0] || results[0];
+            }
+            if (pick?.symbol) baseTicker = pick.symbol.split('.')[0];
+          }
+        } catch(e) { /* fallback to raw ticker */ }
+      }
+      const resp = await fetch('/api/fundamentals?symbol=' + baseTicker);
+      const d = await resp.json();
+      if (d.error) throw new Error(d.error);
+      return d;
+    };
+
+    resolveAndFetch()
+      .then(d => setData(d))
       .catch(e => setError(e.message))
       .finally(() => setLoading(false));
   }, [ticker]);
@@ -2029,7 +2182,7 @@ function StockDetail({ pos, onBack, transactions }) {
 
       {/* ── Tabs ── */}
       <div style={{display:'flex',gap:6,marginBottom:20}}>
-        {[['overview','Overview'],['financials','Financials'],['ratios','Ratios'],['transactions','Transactions']].map(([id,label])=>(
+        {[['overview','Overview'],['charts','Charts'],['financials','Financials'],['ratios','Ratios'],['transactions','Transactions']].map(([id,label])=>(
           <button key={id} className="btn" onClick={()=>setTab(id)}
             style={{fontSize:11,padding:'5px 14px',
               ...(tab===id?{background:'var(--green-dim)',color:'var(--green)',borderColor:'rgba(0,229,160,0.3)'}:{})}}>
@@ -2165,6 +2318,43 @@ function StockDetail({ pos, onBack, transactions }) {
           )}
           </>)}  {/* end non-ETF scorecard */}
         </>)}
+
+        {/* ══ CHARTS TAB ══ */}
+        {tab==='charts' && (() => {
+          const chartTicker = (pos.fmpTicker?.split('.')[0]) || ISIN_MAP[pos.isin] || pos.symbol?.split('.')[0];
+          const txs = (transactions||[])
+            .filter(t => t.isin === pos.isin)
+            .sort((a,b) => a.date.localeCompare(b.date));
+          return (
+            <div className="fu2">
+              {/* Full TradingView chart with candlestick + range controls */}
+              {chartTicker && !isISIN(chartTicker) && (
+                <TVChart ticker={chartTicker} txs={txs} currentPrice={pos.currentPrice} compact={false}/>
+              )}
+              {(!chartTicker || isISIN(chartTicker)) && (
+                <div className="card" style={{padding:40,textAlign:'center',color:'var(--text3)',fontSize:13}}>
+                  Chart unavailable — ticker not yet resolved.
+                </div>
+              )}
+              {/* Mini key stats below chart */}
+              {data && yrs.length > 0 && (
+                <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10}}>
+                  {[
+                    {l:'52W HIGH',  v: (() => { const v=data?.yearHigh; return v?`$${v.toFixed(2)}`:'—'; })()},
+                    {l:'52W LOW',   v: (() => { const v=data?.yearLow;  return v?`$${v.toFixed(2)}`:'—'; })()},
+                    {l:'BETA',      v: data?.beta!=null?data.beta.toFixed(2)+'x':'—'},
+                    {l:'MKT CAP',   v: (() => { const v=data?.marketCap; if(!v)return'—'; return v>=1e12?(v/1e12).toFixed(1)+'T':v>=1e9?(v/1e9).toFixed(1)+'B':(v/1e6).toFixed(0)+'M'; })()},
+                  ].map(({l,v})=>(
+                    <div key={l} className="card" style={{padding:'12px 14px'}}>
+                      <div className="mono" style={{fontSize:8,color:'var(--text3)',letterSpacing:'0.1em',marginBottom:4}}>{l}</div>
+                      <div className="mono" style={{fontSize:13,fontWeight:600}}>{v}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* ══ FINANCIALS TAB ══ */}
         {tab==='financials' && yrs.length>0 && (()=>{
@@ -2493,10 +2683,20 @@ export default function App() {
           try {
             const res = await fmpGet('/search-isin?isin='+p.isin);
             if(!Array.isArray(res)||!res.length) return;
-            const pick = res.find(r=>r.symbol?.endsWith('.DE'))
-              || res.find(r=>r.symbol?.endsWith('.F'))
-              || res.find(r=>r.symbol?.endsWith('.AS')||r.symbol?.endsWith('.PA'))
-              || res.find(r=>r.marketCap>0) || res[0];
+            const isUSIsin2 = p.isin?.startsWith('US');
+            let pick;
+            if (isUSIsin2) {
+              // US ISINs: prefer plain ticker (no exchange suffix) with highest marketCap
+              // This gives us CRM instead of FOO.DE for Salesforce, etc.
+              pick = res.filter(r=>!r.symbol?.includes('.')).sort((a,b)=>(b.marketCap||0)-(a.marketCap||0))[0]
+                || res.sort((a,b)=>(b.marketCap||0)-(a.marketCap||0))[0] || res[0];
+            } else {
+              // Non-US ISINs: prefer .DE for correct EUR pricing on German exchanges
+              pick = res.find(r=>r.symbol?.endsWith('.DE'))
+                || res.find(r=>r.symbol?.endsWith('.F'))
+                || res.find(r=>r.symbol?.endsWith('.AS')||r.symbol?.endsWith('.PA'))
+                || res.find(r=>r.marketCap>0) || res[0];
+            }
             if(pick?.symbol) {
               const resolvedTk = pick.symbol.split('.')[0].toUpperCase();
               const correctedType = inferType(resolvedTk, p.isin, p.name, p.type);
@@ -2874,7 +3074,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v48 · Phase 3d: health scorecard — moat, sector-adjusted, overall score</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v49 · ISIN picker fix (US ISINs use US ticker) + Phase 3e TradingView charts</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
