@@ -108,29 +108,32 @@ async function fetchStockAnalysis(ticker) {
   let ter = null, inceptionDate = null, holdingsCount = null, fundSize = null;
   let sectors = [];
 
-  // Expense ratio from text
+  // Search both pages — expense/inception/sectors are on overview, holdings count on holdings page
+  const both = overviewStripped + ' ' + stripped;
+
+  // Expense ratio
   if (!ter) {
-    const em = stripped.match(/[Ee]xpense [Rr]atio\s+([0-9.]+%)/);
+    const em = both.match(/[Ee]xpense [Rr]atio\s+([0-9.]+%)/);
     if (em) ter = em[1];
   }
 
-  // Holdings count: "Total Holdings 104"
+  // Holdings count
   if (!holdingsCount) {
-    const hcm = stripped.match(/Total Holdings\s+(\d+)/i) ||
-                stripped.match(/Number of Holdings\s+(\d+)/i);
+    const hcm = both.match(/Total Holdings\s+(\d+)/i) ||
+                both.match(/Number of Holdings\s+(\d+)/i);
     if (hcm) holdingsCount = hcm[1];
   }
 
-  // Inception date from text
+  // Inception date
   if (!inceptionDate) {
-    const im = stripped.match(/Inception\s+(?:Date\s+)?([A-Z][a-z]{2}\s+\d{1,2},?\s+\d{4})/i);
+    const im = both.match(/Inception\s+(?:Date\s+)?([A-Z][a-z]{2}\s+\d{1,2},?\s+\d{4})/i);
     if (im) inceptionDate = im[1];
   }
 
-  // Sectors: "Technology: 53.60%" pattern in stripped body text
-  const sectIdx = stripped.search(/[Ss]ector [Aa]llocation/);
+  // Sectors on overview page
+  const sectIdx = overviewStripped.search(/[Ss]ector [Aa]llocation/);
   if (sectIdx >= 0) {
-    const sectSlice = stripped.slice(sectIdx, sectIdx + 600);
+    const sectSlice = overviewStripped.slice(sectIdx, sectIdx + 600);
     const sectRe = /([A-Za-z][A-Za-z\s&]{2,35}?):\s*([\d\.]+)%/g;
     let sm;
     while ((sm = sectRe.exec(sectSlice)) !== null && sectors.length < 5) {
