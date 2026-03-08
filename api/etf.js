@@ -64,106 +64,100 @@ export default async function handler(req, res) {
   }
 }
 
-// ── stockanalysis.com — US ETFs ───────────────────────────────────────────────
-// Server-side renders a SvelteKit app — data lives in <meta> tags and JSON blobs
+// ── stockanalysis.com — US ETFs (uses __data.json SvelteKit endpoint) ──────────
 async function fetchStockAnalysis(ticker) {
   const ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
-  const baseUrl = `https://stockanalysis.com/etf/${ticker.toLowerCase()}`;
+  const base = `https://stockanalysis.com/etf/${ticker.toLowerCase()}`;
 
-  const [overviewHtml, holdingsHtml] = await Promise.all([
-    fetch(`${baseUrl}/`, { headers: { 'User-Agent': ua } }).then(r => r.text()).catch(() => ''),
-    fetch(`${baseUrl}/holdings/`, { headers: { 'User-Agent': ua } }).then(r => r.text()).catch(() => ''),
+  // Fetch __data.json (SvelteKit data endpoint) + overview HTML in parallel
+  const [skData, overviewHtml] = await Promise.all([
+    fetch(`${base}/holdings/__data.json`, { headers: { 'User-Agent': ua } }).then(r => r.json()).catch(() => null),
+    fetch(`${base}/`, { headers: { 'User-Agent': ua } }).then(r => r.text()).catch(() => ''),
   ]);
 
-  // ── Strip HTML first ──
-  const stripped = (holdingsHtml || overviewHtml)
-    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&amp;/g, '&').replace(/&nbsp;/g, ' ')
-    .replace(/\s+/g, ' ').trim();
+  // ── Parse SvelteKit node-reference data format ──
+  // Data is stored as a flat array where objects reference indices: {"n":4,"w":5} means nodes[4], nodes[5]
+  const flatData = skData?.nodes?.[0]?.data ?? [];
 
-  const overviewStripped = overviewHtml
-    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&amp;/g, '&').replace(/&nbsp;/g, ' ')
-    .replace(/\s+/g, ' ').trim();
-
-  // ── Holdings: parse table from holdings page ──
-  // Table format in stripped text: "1 NVDA NVIDIA Corporation 8.66% 185319834 2 AAPL Apple..."
-  // Also has prose fallback: "top holdings are NVIDIA stock at 8.66%..."
-  const holdings = [];
-
-  // Primary: parse table rows — "\d+ [A-Z]+ Name Weight% Shares"
-  const tableRe = /\d+\s+[A-Z]{1,6}\s+([A-Za-z][A-Za-z0-9\s\.\,\-&\']+?)\s+([\d]+\.[\d]+)%\s+[\d,]+/g;
-  let hm;
-  while ((hm = tableRe.exec(stripped)) !== null && holdings.length < 10) {
-    const name = hm[1].trim();
-    const weight = parseFloat(hm[2]);
-    if (name.length > 1 && name.length < 60 && weight > 0 && weight < 25)
-      holdings.push({ name, weight });
+  // Helper: flatten the node array into readable values
+  function resolveNode(idx) {
+    const v = flatData[idx];
+    if (v === null || v === undefined) return null;
+    if (typeof v !== 'object') return v;
+    // It's a reference object like {n:4, w:5} or {code:196, weight:197, country:198}
+    const out = {};
+    for (const [k, refIdx] of Object.entries(v)) {
+      out[k] = flatData[refIdx];
+    }
+    return out;
   }
 
-  // Fallback: prose "top holdings are NVIDIA stock at 8.66%, Apple at 7.48%"
+  // Find key indices by looking for known string markers
+  const str = JSON.stringify(flatData);
+
+  // ── Holdings: pattern "No, Name, $SYMBOL, weight%, shares" ──
+  const holdings = [];
+  const holdRe = /(\d+),"([^"]{3,60})","\$[A-Z]{1,6}","([\d]+\.[\d]+)%","([\d,]+)"/g;
+  let hm;
+  while ((hm = holdRe.exec(str)) !== null && holdings.length < 10) {
+    const weight = parseFloat(hm[3]);
+    if (weight > 0) holdings.push({ name: hm[2], weight });
+  }
+
+  // ── Sectors: "SectorName",weight pattern after "sectors" key ──
+  const sectors = [];
+  const sectStart = str.indexOf('"sectors"');
+  if (sectStart > 0) {
+    const sectSlice = str.slice(sectStart, sectStart + 800);
+    const sectRe = /"([A-Za-z][A-Za-z &]{2,35})",([\d]+\.[\d]+)/g;
+    let sm;
+    while ((sm = sectRe.exec(sectSlice)) !== null && sectors.length < 5) {
+      const n = sm[1];
+      const w = parseFloat(sm[2]);
+      if (w > 0 && w <= 100 && !n.match(/^(sectors|countries|news|info|date)/i))
+        sectors.push({ name: n, weight: w });
+    }
+  }
+
+  // ── Countries: "CC",weight,"Country Name" pattern after "countries" key ──
+  const countries = [];
+  const countryStart = str.indexOf('"countries"');
+  if (countryStart > 0) {
+    const countrySlice = str.slice(countryStart, countryStart + 600);
+    const countryRe = /"([A-Z]{2})",([\d]+\.[\d]+),"([^"]{2,40})"/g;
+    let cm;
+    while ((cm = countryRe.exec(countrySlice)) !== null && countries.length < 5) {
+      const w = parseFloat(cm[2]);
+      if (w > 0) countries.push({ name: cm[3], weight: w });
+    }
+  }
+
+  // ── Fallback for holdings if __data.json parse failed ──
   if (!holdings.length) {
+    const hoHtml = await fetch(`${base}/holdings/`, { headers: { 'User-Agent': ua } }).then(r => r.text()).catch(() => '');
+    const stripped = hoHtml.replace(/<script[\s\S]*?<\/script>/gi,' ').replace(/<[^>]+>/g,' ').replace(/\s+/g,' ');
     const proseIdx = stripped.search(/top holdings are/i);
-    const prose = proseIdx >= 0 ? stripped.slice(proseIdx, proseIdx + 600) : '';
+    const prose = proseIdx >= 0 ? stripped.slice(proseIdx, proseIdx+600) : '';
     const proseRe = /([A-Za-z][A-Za-z0-9\s\.\,\-&]+?)\s+(?:stock\s+)?at\s+([\d\.]+)%/g;
     while ((hm = proseRe.exec(prose)) !== null && holdings.length < 10) {
-      const name = hm[1].trim()
-        .replace(/^(?:the\s+)?top\s+holdings?\s+(?:are\s+)?/i, '')
-        .replace(/^and\s+/i, '').trim();
+      const name = hm[1].trim().replace(/^(?:the\s+)?top\s+holdings?\s+(?:are\s+)?/i,'').replace(/^and\s+/i,'').trim();
       const weight = parseFloat(hm[2]);
       if (name.length > 1 && name.length < 50 && weight > 0) holdings.push({ name, weight });
     }
   }
 
-  let ter = null, inceptionDate = null, holdingsCount = null, fundSize = null;
-  let sectors = [];
-
-  // Search both pages — expense/inception/sectors are on overview, holdings count on holdings page
-  const both = overviewStripped + ' ' + stripped;
-
-  // Expense ratio
-  if (!ter) {
-    const em = both.match(/[Ee]xpense [Rr]atio\s+([0-9.]+%)/);
-    if (em) ter = em[1];
-  }
-
-  // Holdings count
-  if (!holdingsCount) {
-    const hcm = both.match(/Total Holdings\s+(\d+)/i) ||
-                both.match(/Number of Holdings\s+(\d+)/i);
-    if (hcm) holdingsCount = hcm[1];
-  }
-
-  // Inception date
-  if (!inceptionDate) {
-    const im = both.match(/Inception\s+(?:Date\s+)?([A-Z][a-z]{2}\s+\d{1,2},?\s+\d{4})/i);
-    if (im) inceptionDate = im[1];
-  }
-
-  // Sectors on overview page
-  const sectIdx = overviewStripped.search(/[Ss]ector [Aa]llocation/);
-  if (sectIdx >= 0) {
-    const sectSlice = overviewStripped.slice(sectIdx, sectIdx + 600);
-    const sectRe = /([A-Za-z][A-Za-z\s&]{2,35}?):\s*([\d\.]+)%/g;
-    let sm;
-    while ((sm = sectRe.exec(sectSlice)) !== null && sectors.length < 5) {
-      const n = sm[1].trim();
-      const w = parseFloat(sm[2]);
-      if (n.length > 2 && w > 0 && !n.match(/^(Other|End|Total|Asset)/i))
-        sectors.push({ name: n, weight: w });
-    }
-  }
+  // ── Key facts from overview HTML ──
+  const ovStripped = overviewHtml.replace(/<script[\s\S]*?<\/script>/gi,' ').replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim();
+  const ter          = ovStripped.match(/Expense Ratio\s+([\d\.]+%)/i)?.[1] || null;
+  const inceptionDate= ovStripped.match(/Inception\s+(?:Date\s+)?([A-Z][a-z]{2}\s+\d{1,2},?\s+\d{4})/i)?.[1] || null;
+  const holdingsCount= str.match(/"count":(\d+)/)?.[1] ||
+                       ovStripped.match(/Total Holdings\s+(\d+)/i)?.[1] || null;
 
   return {
-    name: null,
-    ter, distPolicy: 'Distributing', replication: null,
-    fundSize, holdingsCount, inceptionDate,
-    holdings, countries: [], sectors: [],
-    sourceUrl: `${baseUrl}/holdings/`,
+    name: null, ter, distPolicy: 'Distributing', replication: null,
+    fundSize: null, holdingsCount, inceptionDate,
+    holdings, countries, sectors,
+    sourceUrl: `${base}/holdings/`,
   };
 }
 
