@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback } from "react"; // v9-fix-logos-chart
+import React, { useState, useMemo, useEffect, useCallback } from "react"; // v10-fix-logos-key
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, AreaChart, ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid } from "recharts";
 
 const FONTS = `@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=IBM+Plex+Mono:wght@300;400;500;600&family=DM+Sans:wght@300;400;500&display=swap');`;
@@ -297,12 +297,14 @@ const CRYPTO_LOGOS = {
   AVAX:'avalanche', LINK:'chainlink', UNI:'uniswap', AAVE:'aave',
 };
 function AssetLogo({pos, size=36}) {
-  const [imgErr, setImgErr] = React.useState(false);
   const r = Math.round(size * 0.25);
   const resolvedTicker = pos.fmpTicker?.split('.')[0] || ISIN_MAP[pos.isin] || pos.symbol?.split('.')[0];
   const baseSymbol = resolvedTicker?.toUpperCase();
-  // Reset imgErr when the resolved ticker changes (e.g. after ISIN resolution)
-  React.useEffect(() => { setImgErr(false); }, [baseSymbol]);
+  // Use key on inner component so state resets when ticker changes
+  return <AssetLogoInner key={baseSymbol} baseSymbol={baseSymbol} pos={pos} size={size} r={r} />;
+}
+function AssetLogoInner({baseSymbol, pos, size, r}) {
+  const [imgErr, setImgErr] = React.useState(false);
 
   // Crypto: use CoinGecko asset logos
   if (pos.type === 'crypto' && CRYPTO_LOGOS[baseSymbol] && !imgErr) {
@@ -2098,7 +2100,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v9 · logos · txchart</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v10 · logos · txchart</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
