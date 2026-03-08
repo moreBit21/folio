@@ -284,16 +284,6 @@ function AssetLogo({pos}) {
         overflow:"hidden"
       }}>
         {svg}
-        {/* ── Mobile Bottom Nav ── */}
-        <nav className="mobile-bottom-nav">
-          {NAV_ITEMS.map(item=>(
-            <button key={item.id} className={`mob-nav-btn${nav===item.id?" active":""}`}
-              onClick={()=>setNav(item.id)}>
-              <span className="icon">{item.icon}</span>
-              {item.label==="Dashboard"?"Home":item.label==="News Feed"?"News":item.label}
-            </button>
-          ))}
-        </nav>
       </div>
     );
   }
@@ -2143,7 +2133,7 @@ export default function App() {
 
               {/* Table header — sortable */}
               <div className="trow" style={{padding:"9px 18px",borderBottom:"1px solid var(--border2)",borderTop:"1px solid var(--border)"}}>
-                {[["name","ASSET",""],["qty","QTY","trow-qty"],["price","AVG PRICE","trow-avg"],["value","LIVE PRICE",""],["pnl","P&L",""],["pnlpct","P&L %",""]].map(([col,label,cls])=>{
+                {[["name","ASSET"],["qty","QTY"],["price","AVG PRICE"],["value","LIVE PRICE"],["pnl","P&L"],["pnlpct","P&L %"]].map(([col,label])=>{
                   const active=sortBy===col;
                   return <div key={col} onClick={()=>toggleSort(col)} className="mono"
                     style={{fontSize:9,color:active?"var(--green)":"var(--text3)",letterSpacing:"0.12em",cursor:"pointer",userSelect:"none",display:"flex",alignItems:"center",gap:4}}>
@@ -2172,12 +2162,12 @@ export default function App() {
                     </div>
 
                     {/* Qty */}
-                    <div className="mono trow-qty" style={{fontSize:12,color:"var(--text2)"}}>
+                    <div className="mono" style={{fontSize:12,color:"var(--text2)"}}>
                       {pos.qty < 1 ? pos.qty.toFixed(4) : fmt(pos.qty, pos.qty<10?3:2)}
                     </div>
 
                     {/* Avg price */}
-                    <div className="mono trow-avg" style={{fontSize:12,color:"var(--text2)"}}>
+                    <div className="mono" style={{fontSize:12,color:"var(--text2)"}}>
                       {fmtE(pos.avgPrice)}
                     </div>
 
@@ -2194,7 +2184,7 @@ export default function App() {
                     <div className="mono" style={{fontSize:13,color:up?"var(--green)":"var(--red)",fontWeight:500}}>
                       {up?"+":"-"}{fmtE(Math.abs(p))}
                     </div>
-                    <div className="mono trow-pnl" style={{fontSize:13,color:up?"var(--green)":"var(--red)",fontWeight:500}}>
+                    <div className="mono" style={{fontSize:13,color:up?"var(--green)":"var(--red)",fontWeight:500}}>
                       {pos.avgPrice>0?(up?"+":"")+fmt(pp)+"%":"—"}
                     </div>
                   </div>
@@ -2317,6 +2307,19 @@ export default function App() {
           </div>
         </div>
       )}
+        </div>{/* end main-scroll */}
+
+        {/* ── Mobile Bottom Nav ── */}
+        <nav className="mobile-bottom-nav">
+          {NAV_ITEMS.map(item=>(
+            <button key={item.id} className={`mob-nav-btn${nav===item.id?" active":""}`}
+              onClick={()=>setNav(item.id)}>
+              <span className="icon">{item.icon}</span>
+              {item.label==="Dashboard"?"Home":item.label==="News Feed"?"News":item.label}
+            </button>
+          ))}
+        </nav>
+      </div>{/* end outer flex */}
     </>
   );
 }
