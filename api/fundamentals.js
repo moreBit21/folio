@@ -42,7 +42,7 @@ export default async function handler(req, res) {
       fmp(`/balance-sheet-statement?symbol=${symbol}&limit=5`),
       fmp(`/key-metrics?symbol=${symbol}&limit=5`),
       fmp(`/profile?symbol=${symbol}`),
-      fmpV3(`/analyst-estimates/${symbol}?limit=6&period=annual`),
+      fmpV3(`/analyst-estimates?symbol=${symbol}&limit=6&period=annual`),
     ]);
 
     const p = profile[0] || {};
@@ -124,7 +124,14 @@ export default async function handler(req, res) {
       const epsVals = byYear.map(y => y.eps).filter(v => v != null && v > 0);
       if (epsVals.length >= 2 && topPE != null) {
         const yoy = (epsVals[epsVals.length-1] - epsVals[epsVals.length-2]) / epsVals[epsVals.length-2];
-        if (yoy > 0) { pegRatio = topPE / (yoy * 100); pegNote = 'Trailing YoY (no fwd estimates)'; }
+        if (yoy > 0) {
+          pegRatio = topPE / (yoy * 100);
+          pegNote  = 'Trailing YoY (no fwd estimates)';
+        } else {
+          // Negative EPS growth — PEG is mathematically undefined/meaningless
+          pegRatio = null;
+          pegNote  = 'N/A — negative EPS growth';
+        }
       }
     }
 
