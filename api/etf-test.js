@@ -40,17 +40,28 @@ export default async function handler(req, res) {
     results.sectors_finance_sample = t.slice(0, 300);
   } catch(e) { results.sectors_finance = { error: e.message }; }
 
-  // Test 4: wisesheets / stockanalysis.com
-  try {
-    const r = await fetch(`https://stockanalysis.com/etf/${symbol.toLowerCase()}/holdings/?p=annual`, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
-    });
-    const t = await r.text();
-    const hasNvidia = t.includes('NVIDIA') || t.includes('Apple');
-    const stripped = t.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ');
-    const nIdx = stripped.indexOf('NVIDIA');
-    results.stockanalysis = { status: r.status, hasNvidia, snippet: nIdx > 0 ? stripped.slice(nIdx-10, nIdx+100) : stripped.slice(1000,1200) };
-  } catch(e) { results.stockanalysis = { error: e.message }; }
+  // Test 4: stockanalysis.com — try multiple UA strings and headers
+  for (const [label, headers] of [
+    ['sa_basic', { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }],
+    ['sa_curl', { 'User-Agent': 'curl/7.88.1', 'Accept': '*/*' }],
+    ['sa_bot', { 'User-Agent': 'Googlebot/2.1 (+http://www.google.com/bot.html)' }],
+    ['sa_full', { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36', 'Accept': 'text/html,application/xhtml+xml', 'Accept-Language': 'en-US,en;q=0.9', 'Accept-Encoding': 'gzip, deflate, br', 'Cache-Control': 'no-cache' }],
+  ]) {
+    try {
+      const r = await fetch(`https://stockanalysis.com/etf/${symbol.toLowerCase()}/holdings/`, { headers });
+      const t = await r.text();
+      const stripped = t.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ');
+      const nIdx = stripped.indexOf('NVIDIA');
+      const expIdx = stripped.search(/[Ee]xpense/);
+      results[label] = { 
+        status: r.status, 
+        hasNvidia: nIdx > 0,
+        snippet: nIdx > 0 ? stripped.slice(nIdx-20, nIdx+120) : stripped.slice(500, 700),
+        expenseSnippet: expIdx > 0 ? stripped.slice(expIdx, expIdx+60) : 'not found',
+        htmlStart: t.slice(0, 200),
+      };
+    } catch(e) { results[label] = { error: e.message }; }
+  }
 
   // Test 5: etf.com holdings API
   try {
