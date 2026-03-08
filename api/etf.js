@@ -75,56 +75,38 @@ async function fetchStockAnalysis(ticker) {
     fetch(`${baseUrl}/holdings/`, { headers: { 'User-Agent': ua } }).then(r => r.text()).catch(() => ''),
   ]);
 
-  // ── Parse meta description for holdings summary ──
-  // e.g. "top holdings are NVIDIA stock at 8.66%, Apple at 7.48%..."
-  const holdings = [];
-  const metaDesc = holdingsHtml.match(/<meta\s+name="description"\s+content="([^"]+)"/i)?.[1]
-                || overviewHtml.match(/<meta\s+name="description"\s+content="([^"]+)"/i)?.[1]
-                || '';
-
-  // Parse "NAME stock at X.XX%, NAME at X.XX%" pattern from meta
-  const metaHoldRe = /([A-Za-z][A-Za-z0-9\s\.\,\-&]+?)\s+(?:stock\s+)?at\s+([\d\.]+)%/g;
-  let hm;
-  while ((hm = metaHoldRe.exec(metaDesc)) !== null && holdings.length < 10) {
-    const name = hm[1].trim().replace(/^(?:the\s+)?top\s+holdings?\s+(?:are\s+)?/i, '').trim();
-    const weight = parseFloat(hm[2]);
-    if (name.length > 1 && weight > 0) holdings.push({ name, weight });
-  }
-
-  // ── Parse JSON data blobs embedded in the HTML ──
-  // stockanalysis embeds data as JSON in script tags
-  let ter = null, inceptionDate = null, holdingsCount = null, fundSize = null;
-  let sectors = [];
-
-  // Try to find embedded JSON data
-  const jsonMatches = [...holdingsHtml.matchAll(/<script[^>]*type="application\/json"[^>]*>([\s\S]*?)<\/script>/gi),
-                       ...overviewHtml.matchAll(/<script[^>]*type="application\/json"[^>]*>([\s\S]*?)<\/script>/gi)];
-
-  for (const match of jsonMatches) {
-    try {
-      const obj = JSON.parse(match[1]);
-      const str = JSON.stringify(obj);
-      // Look for expense ratio pattern in JSON
-      if (!ter) {
-        const em = str.match(/"expenseRatio"\s*:\s*"?([0-9.]+%?)"?/i) ||
-                   str.match(/"expense_ratio"\s*:\s*"?([0-9.]+%?)"?/i);
-        if (em) ter = em[1].includes('%') ? em[1] : em[1] + '%';
-      }
-      if (!inceptionDate) {
-        const im = str.match(/"inceptionDate"\s*:\s*"([^"]+)"/i) ||
-                   str.match(/"inception"\s*:\s*"([^"]+)"/i);
-        if (im) inceptionDate = im[1];
-      }
-    } catch {}
-  }
-
-  // ── Fallback: strip HTML and parse text patterns ──
+  // ── Strip HTML first ──
   const stripped = (holdingsHtml || overviewHtml)
     .replace(/<script[\s\S]*?<\/script>/gi, ' ')
     .replace(/<style[\s\S]*?<\/style>/gi, ' ')
     .replace(/<[^>]+>/g, ' ')
     .replace(/&amp;/g, '&').replace(/&nbsp;/g, ' ')
     .replace(/\s+/g, ' ').trim();
+
+  const overviewStripped = overviewHtml
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&amp;/g, '&').replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ').trim();
+
+  // ── Holdings: data is in body text "NVIDIA stock at 8.66%, Apple at 7.48%" ──
+  const holdings = [];
+  const proseIdx = stripped.search(/top holdings are/i);
+  const prose = proseIdx >= 0 ? stripped.slice(proseIdx, proseIdx + 600) : '';
+  const holdRe = /([A-Za-z][A-Za-z0-9\s\.\,\-&]+?)\s+(?:stock\s+)?at\s+([\d\.]+)%/g;
+  let hm;
+  while ((hm = holdRe.exec(prose)) !== null && holdings.length < 10) {
+    const name = hm[1].trim()
+      .replace(/^(?:the\s+)?top\s+holdings?\s+(?:are\s+)?/i, '')
+      .replace(/^and\s+/i, '')
+      .trim();
+    const weight = parseFloat(hm[2]);
+    if (name.length > 1 && name.length < 50 && weight > 0) holdings.push({ name, weight });
+  }
+
+  let ter = null, inceptionDate = null, holdingsCount = null, fundSize = null;
+  let sectors = [];
 
   // Expense ratio from text
   if (!ter) {
@@ -135,8 +117,7 @@ async function fetchStockAnalysis(ticker) {
   // Holdings count: "Total Holdings 104"
   if (!holdingsCount) {
     const hcm = stripped.match(/Total Holdings\s+(\d+)/i) ||
-                stripped.match(/Number of Holdings\s+(\d+)/i) ||
-                metaDesc.match(/Total Holdings\s+(\d+)/i);
+                stripped.match(/Number of Holdings\s+(\d+)/i);
     if (hcm) holdingsCount = hcm[1];
   }
 
@@ -146,28 +127,16 @@ async function fetchStockAnalysis(ticker) {
     if (im) inceptionDate = im[1];
   }
 
-  // Sectors: "Technology: 53.60%" in meta or stripped text
-  const fullText = metaDesc + ' ' + stripped;
-  const sectIdx = fullText.search(/[Ss]ector [Aa]llocation/);
-  if (sectIdx > 0) {
-    const sectSlice = fullText.slice(sectIdx, sectIdx + 600);
+  // Sectors: "Technology: 53.60%" pattern in stripped body text
+  const sectIdx = stripped.search(/[Ss]ector [Aa]llocation/);
+  if (sectIdx >= 0) {
+    const sectSlice = stripped.slice(sectIdx, sectIdx + 600);
     const sectRe = /([A-Za-z][A-Za-z\s&]{2,35}?):\s*([\d\.]+)%/g;
     let sm;
     while ((sm = sectRe.exec(sectSlice)) !== null && sectors.length < 5) {
       const n = sm[1].trim();
       const w = parseFloat(sm[2]);
       if (n.length > 2 && w > 0 && !n.match(/^(Other|End|Total|Asset)/i))
-        sectors.push({ name: n, weight: w });
-    }
-  }
-  // Also scan meta description for sector data
-  if (!sectors.length) {
-    const sectRe2 = /([A-Za-z][A-Za-z\s&]{2,30}?):\s*([\d\.]+)%/g;
-    let sm2;
-    while ((sm2 = sectRe2.exec(metaDesc)) !== null && sectors.length < 5) {
-      const n = sm2[1].trim().replace(/^.*?holdings?\s+/i, '');
-      const w = parseFloat(sm2[2]);
-      if (n.length > 2 && w > 0 && !n.match(/^(Other|End|Total)/i))
         sectors.push({ name: n, weight: w });
     }
   }
