@@ -1,5 +1,4 @@
 import React, { useState, useMemo, useEffect, useCallback } from "react"; // v3
-console.log("folio v4 - 1772971426623");
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, AreaChart, ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid } from "recharts";
 
 const FONTS = `@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=IBM+Plex+Mono:wght@300;400;500;600&family=DM+Sans:wght@300;400;500&display=swap');`;
@@ -55,7 +54,7 @@ const CSS = `
   .logo-fallback{width:36px;height:36px;border-radius:9px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
   .price-live{position:relative;display:inline-flex;align-items:center;gap:5px}
   .price-live::after{content:'';position:absolute;right:-10px;top:50%;transform:translateY(-50%);width:4px;height:4px;border-radius:50%;background:var(--green);animation:pulse 2s infinite}
-  /* ââ Mobile ââ */
+  /* ── Mobile ── */
   @media(max-width:768px){
     .sidebar{display:none!important}
     .main-scroll{padding:16px 14px 80px!important}
@@ -87,7 +86,7 @@ const CSS = `
   .mob-nav-btn span.icon{font-size:18px;line-height:1}
 `;
 
-// ââ Positions config (prices fetched live) ââ
+// ── Positions config (prices fetched live) ──
 const POSITIONS_CONFIG = [
   {id:1, symbol:"BTC",  name:"Bitcoin",               type:"crypto", coinId:"bitcoin",       qty:0.11, avgPrice:52000, broker:"Bitvavo",       color:"#f7931a"},
   {id:2, symbol:"ETH",  name:"Ethereum",              type:"crypto", coinId:"ethereum",      qty:1.4,  avgPrice:2800,  broker:"Bitvavo",       color:"#627eea"},
@@ -98,7 +97,7 @@ const POSITIONS_CONFIG = [
   {id:7, symbol:"KO",   name:"Coca-Cola",             type:"stock",  stockTicker:"KO",       qty:10,   avgPrice:58,    broker:"Trade Republic", color:"#e63b2e"},
 ];
 
-// ââ Inline SVG logos (no external requests needed) ââ
+// ── Inline SVG logos (no external requests needed) ──
 const LOGOS = {
   BTC: (
     <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" width="26" height="26">
@@ -167,15 +166,15 @@ const ALLOC_COLORS  = ["#00e5a0","#627eea","#f7931a","#9945ff","#f0b429","#76b90
 const BROKERS_OPT   = ["Bitvavo","Smartbroker+","Trade Republic","Manual"];
 const ASSET_TYPES   = ["stock","etf","crypto"];
 const NAV_ITEMS     = [
-  {id:"dashboard",label:"Dashboard",icon:"â¬¡"},
-  {id:"portfolio",label:"Portfolio", icon:"â"},
-  {id:"screener", label:"Screener",  icon:"â"},
-  {id:"news",     label:"News Feed", icon:"â"},
-  {id:"settings", label:"Settings",  icon:"â"},
+  {id:"dashboard",label:"Dashboard",icon:"⬡"},
+  {id:"portfolio",label:"Portfolio", icon:"◈"},
+  {id:"screener", label:"Screener",  icon:"⊞"},
+  {id:"news",     label:"News Feed", icon:"◎"},
+  {id:"settings", label:"Settings",  icon:"⚙"},
 ];
 
-// ââ Chart helpers ââ
-// Seeded PRNG â no sine waves
+// ── Chart helpers ──
+// Seeded PRNG — no sine waves
 function seededRand(seed) {
   let s = seed * 9301 + 49297;
   return () => { s=(s*9301+49297)%233280; return s/233280; };
@@ -217,7 +216,7 @@ function buildChart(months, positions, activeBrokers, activeBenchmarks, transact
     investedByDay.fill(totalCost);
   }
 
-  // Random-walk portfolio â anchored to totalCurrent at end
+  // Random-walk portfolio — anchored to totalCurrent at end
   const rPort = seededRand(42);
   const portByDay = new Array(totalDays+1);
   const startInvested = investedByDay[0]||totalCost||1;
@@ -236,7 +235,7 @@ function buildChart(months, positions, activeBrokers, activeBenchmarks, transact
   const scale = totalCurrent/(portByDay[totalDays]||1);
   for(let i=0;i<=totalDays;i++) portByDay[i]=+(portByDay[i]*scale).toFixed(2);
 
-  // Benchmarks â independent random walks from same startInvested base
+  // Benchmarks — independent random walks from same startInvested base
   const bmCfg = {
     sp500:{drift:0.00055,vol:0.012,seed:21},
     nasdaq:{drift:0.00072,vol:0.016,seed:37},
@@ -272,7 +271,7 @@ function buildChart(months, positions, activeBrokers, activeBenchmarks, transact
   return rows;
 }
 
-// ââ Logo component â inline SVG, no external requests ââ
+// ── Logo component — inline SVG, no external requests ──
 // Logo domain map for clearbit
 const LOGO_DOMAINS = {
   AAPL:'apple.com', MSFT:'microsoft.com', GOOGL:'google.com', GOOG:'google.com',
@@ -341,10 +340,10 @@ function AssetLogo({pos, size=36}) {
   );
 }
 
-// ââ Price badge ââ
+// ── Price badge ──
 function PriceBadge({loading}) {
   if (!loading) return null;
-  return <span className="mono shimmer" style={{fontSize:9,color:"var(--text3)",marginLeft:6}}>fetching live pricesâ¦</span>;
+  return <span className="mono shimmer" style={{fontSize:9,color:"var(--text3)",marginLeft:6}}>fetching live prices…</span>;
 }
 
 function PieTooltip({active, payload}) {
@@ -389,17 +388,17 @@ function ChartTip({active,payload,label}) {
             <span style={{display:"inline-block",width:6,height:6,borderRadius:2,background:p.color}}/>
             {p.name}
           </span>
-          <span style={{color:"var(--text)",fontWeight:600}}>â¬{Number(p.value).toLocaleString("de-DE",{maximumFractionDigits:0})}</span>
+          <span style={{color:"var(--text)",fontWeight:600}}>€{Number(p.value).toLocaleString("de-DE",{maximumFractionDigits:0})}</span>
         </div>
       ))}
     </div>
   );
 }
 
-// ââ EUR/USD rate fallback ââ
+// ── EUR/USD rate fallback ──
 const EUR_USD = 1.085;
 
-// ââ AI News Feed ââââââââââââââââââââââââââââââââââââââââââââââ
+// ── AI News Feed ──────────────────────────────────────────────
 const SENTIMENT_STYLE = {
   bullish:  { color:"#00e5a0", bg:"rgba(0,229,160,0.10)",  border:"rgba(0,229,160,0.25)",  label:"BULLISH"  },
   bearish:  { color:"#ff4d6d", bg:"rgba(255,77,109,0.10)", border:"rgba(255,77,109,0.25)", label:"BEARISH"  },
@@ -500,10 +499,10 @@ Return 6-8 items total. Prioritize market-moving news. RETURN ONLY THE JSON ARRA
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20,flexWrap:"wrap",gap:12}}>
         <div>
           <div className="serif" style={{fontSize:22,letterSpacing:"-0.02em"}}>News Feed</div>
-          <div className="mono" style={{fontSize:10,color:"var(--text3)",marginTop:3}}>AI-powered Â· filtered to your positions Â· web search enabled</div>
+          <div className="mono" style={{fontSize:10,color:"var(--text3)",marginTop:3}}>AI-powered · filtered to your positions · web search enabled</div>
         </div>
         {fetched && !loading && (
-          <button className="btn btn-ghost" onClick={()=>fetchNews(selectedTicker)} style={{fontSize:10}}>â» Refresh</button>
+          <button className="btn btn-ghost" onClick={()=>fetchNews(selectedTicker)} style={{fontSize:10}}>↻ Refresh</button>
         )}
       </div>
 
@@ -532,10 +531,10 @@ Return 6-8 items total. Prioritize market-moving news. RETURN ONLY THE JSON ARRA
         })}
       </div>
 
-      {/* Empty state â not yet fetched */}
+      {/* Empty state — not yet fetched */}
       {!fetched && !loading && (
         <div className="card" style={{padding:56,textAlign:"center"}}>
-          <div style={{fontSize:32,marginBottom:16}}>ð°</div>
+          <div style={{fontSize:32,marginBottom:16}}>📰</div>
           <div className="serif" style={{fontSize:20,color:"var(--text2)",marginBottom:8}}>Ready to fetch news</div>
           <div style={{fontSize:13,color:"var(--text3)",marginBottom:24,maxWidth:340,margin:"0 auto 24px"}}>
             Select a position above or click below to load AI-curated news for all your holdings
@@ -573,12 +572,12 @@ Return 6-8 items total. Prioritize market-moving news. RETURN ONLY THE JSON ARRA
   );
 }
 
-// ââ CSV Import Modal ââââââââââââââââââââââââââââââââââââââââââ
+// ── CSV Import Modal ──────────────────────────────────────────
 // Smartbroker+ activity CSV parser
 function parseSmartbrokerActivity(rows, headers) {
   const hi = k => headers.findIndex(h => new RegExp(k,'i').test(h));
   const iType=hi('transaktionstyp'), iISIN=hi('isin'), iName=hi('name 1|name1');
-  const iQty=hi('stÃ¼cke|stucke'), iAmount=hi('anlagebetrag in kontow');
+  const iQty=hi('stücke|stucke'), iAmount=hi('anlagebetrag in kontow');
   const iDate=hi('valutadatum'), iStatus=hi('status');
   const pd = s => parseFloat(String(s||'').trim().replace(/\./g,'').replace(',','.')) || 0;
   return rows
@@ -624,23 +623,23 @@ const BROKER_FORMATS = {
   },
   smartbroker: {
     name: "Smartbroker+", color: "#00a4ef",
-    detect: (headers) => headers.some(h => /kundennummer|depotnummer|einstandskurs|marktkurs|stÃ¼cke|kÃ¼rzel/i.test(h)),
+    detect: (headers) => headers.some(h => /kundennummer|depotnummer|einstandskurs|marktkurs|stücke|kürzel/i.test(h)),
     parse: (rows, headers) => {
       // Smartbroker+ depot snapshot format
-      // Columns: DATUM,KUNDENNUMMER,DEPOTNUMMER,ISIN,WKN,KÃRZEL,NAME 1,NAME 2,ASSETKLASSE,STÃCKE,
-      //          EINSTANDSKURS PRO STÃCK,MARKTKURS PRO STÃCK,EINSTANDSWERT,MARKTWERT,...,WÃHRUNG,...
+      // Columns: DATUM,KUNDENNUMMER,DEPOTNUMMER,ISIN,WKN,KÜRZEL,NAME 1,NAME 2,ASSETKLASSE,STÜCKE,
+      //          EINSTANDSKURS PRO STÜCK,MARKTKURS PRO STÜCK,EINSTANDSWERT,MARKTWERT,...,WÄHRUNG,...
       const hi = k => headers.findIndex(h => new RegExp(k,"i").test(h));
       const iISIN    = hi("isin");
-      const iKuerzel = hi("kÃ¼rzel|kurzel");
+      const iKuerzel = hi("kürzel|kurzel");
       const iName1   = hi("name 1|name1");
       const iName2   = hi("name 2|name2");
       const iKlasse  = hi("assetklasse");
-      const iQty     = hi("stÃ¼cke|stucke");
+      const iQty     = hi("stücke|stucke");
       const iAvg     = hi("einstandskurs pro|einstandskurs");
       const iCurrent = hi("marktkurs pro|marktkurs");
-      const iWaehrung= hi("wÃ¤hrung|wahrung");
+      const iWaehrung= hi("währung|wahrung");
 
-      // German number format: "1.234,56" â 1234.56
+      // German number format: "1.234,56" → 1234.56
       const parseDE = s => {
         if (!s) return 0;
         return parseFloat(s.replace(/\./g,"").replace(",",".")) || 0;
@@ -662,7 +661,7 @@ const BROKER_FORMATS = {
 
         if (!isin || !qty) return acc;
 
-        // Always use ISIN as the canonical symbol â KÃRZEL is a display name only
+        // Always use ISIN as the canonical symbol — KÜRZEL is a display name only
         const symbol = isin;
         const displaySymbol = (kuerzel && !isISIN(kuerzel)) ? kuerzel.toUpperCase() : null;
 
@@ -695,7 +694,7 @@ const BROKER_FORMATS = {
     detect: (headers) => headers.some(h => /isin|shares|share price|asset/i.test(h)),
     parse: (rows, headers) => {
       const h = k => headers.findIndex(h => new RegExp(k,"i").test(h));
-      const iAsset=h("asset|name|titel|security"), iQty=h("shares|amount|anzahl|qty|stÃ¼ck"), iPrice=h("price|kurs|avg"), iType=h("type|typ|status");
+      const iAsset=h("asset|name|titel|security"), iQty=h("shares|amount|anzahl|qty|stück"), iPrice=h("price|kurs|avg"), iType=h("type|typ|status");
       return rows.filter(r=>/buy|kauf/i.test(r[iType]||"")).reduce((acc,r)=>{
         const symbol=(r[iAsset]||"").toUpperCase().trim().split(" ")[0];
         if(!symbol) return acc;
@@ -713,7 +712,7 @@ const BROKER_FORMATS = {
     detect: () => true,
     parse: (rows, headers) => {
       const h = k => headers.findIndex(h => new RegExp(k,"i").test(h));
-      const iSymbol=h("symbol|ticker|asset|coin"), iName=h("name"), iQty=h("qty|quantity|amount|shares|stÃ¼ck"), iPrice=h("price|avg|kurs"), iType=h("type|typ");
+      const iSymbol=h("symbol|ticker|asset|coin"), iName=h("name"), iQty=h("qty|quantity|amount|shares|stück"), iPrice=h("price|avg|kurs"), iType=h("type|typ");
       return rows.reduce((acc,r)=>{
         const symbol=(r[iSymbol]||"").toUpperCase().trim();
         if(!symbol||symbol==="SYMBOL") return acc;
@@ -950,7 +949,7 @@ function ImportModal({ onClose, onImport }) {
             <div className="serif" style={{fontSize:20}}>Import Portfolio</div>
             <div style={{fontSize:12,color:"var(--text2)",marginTop:2}}>Upload a CSV export from your broker</div>
           </div>
-          <button onClick={onClose} style={{background:"none",border:"none",color:"var(--text3)",fontSize:18,cursor:"pointer"}}>â</button>
+          <button onClick={onClose} style={{background:"none",border:"none",color:"var(--text3)",fontSize:18,cursor:"pointer"}}>✕</button>
         </div>
 
         {step==="upload" && (<>
@@ -974,9 +973,9 @@ function ImportModal({ onClose, onImport }) {
               cursor:"pointer", transition:"all 0.2s",
               background:dragging?"var(--green-dim)":"transparent"
             }}>
-            <div style={{fontSize:32,marginBottom:12}}>ð</div>
+            <div style={{fontSize:32,marginBottom:12}}>📂</div>
             <div style={{fontSize:14,color:"var(--text)",marginBottom:6}}>Drop your CSV file here</div>
-            <div style={{fontSize:12,color:"var(--text3)"}}>or click to browse â Bitvavo, Smartbroker+, Trade Republic, or any CSV</div>
+            <div style={{fontSize:12,color:"var(--text3)"}}>or click to browse — Bitvavo, Smartbroker+, Trade Republic, or any CSV</div>
             <input id="csv-file-input" type="file" accept=".csv,.txt" style={{display:"none"}} onChange={e=>processFile(e.target.files[0])}/>
           </div>
 
@@ -995,19 +994,19 @@ function ImportModal({ onClose, onImport }) {
 
         {step==="resolving" && (
           <div style={{textAlign:"center",padding:"40px 20px"}}>
-            <div style={{fontSize:32,marginBottom:16}}>ð</div>
+            <div style={{fontSize:32,marginBottom:16}}>🔍</div>
             <div style={{fontSize:14,color:"var(--text)",marginBottom:8}}>Resolving ISINs to tickers...</div>
-            <div style={{fontSize:12,color:"var(--text3)"}}>Resolving tickers via FMPâ¦</div>
+            <div style={{fontSize:12,color:"var(--text3)"}}>Resolving tickers via FMP…</div>
           </div>
         )}
 
         {step==="preview" && (<>
           {/* Detected broker */}
           <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:18,padding:"10px 14px",borderRadius:8,background:"var(--green-dim)",border:"1px solid rgba(0,229,160,0.25)"}}>
-            <span style={{fontSize:16}}>â</span>
+            <span style={{fontSize:16}}>✓</span>
             <div>
               <div style={{fontSize:13,color:"var(--green)",fontWeight:500}}>Detected: {fmt?.name || "Generic"}</div>
-              <div className="mono" style={{fontSize:10,color:"var(--text2)"}}>{fileName} Â· {preview.length} positions found</div>
+              <div className="mono" style={{fontSize:10,color:"var(--text2)"}}>{fileName} · {preview.length} positions found</div>
             </div>
           </div>
 
@@ -1028,34 +1027,34 @@ function ImportModal({ onClose, onImport }) {
                   </div>
                 </div>
                 <div className="mono" style={{fontSize:12,color:"var(--text2)"}}>{p.qty.toFixed(p.qty<1?4:2)}</div>
-                <div className="mono" style={{fontSize:12,color:"var(--text2)"}}>â¬{p.avgPrice.toFixed(2)}</div>
+                <div className="mono" style={{fontSize:12,color:"var(--text2)"}}>€{p.avgPrice.toFixed(2)}</div>
                 <span className={`tag tag-${p.type==="crypto"?"gold":p.type==="etf"?"blue":"gray"}`}>{p.type.toUpperCase()}</span>
               </div>
             ))}
           </div>
 
           <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
-            <button className="btn btn-ghost" onClick={()=>setStep("upload")}>â Back</button>
+            <button className="btn btn-ghost" onClick={()=>setStep("upload")}>← Back</button>
             <button className="btn btn-primary" onClick={()=>onImport(preview)}>
-              Import {preview.length} position{preview.length!==1?"s":""} â
+              Import {preview.length} position{preview.length!==1?"s":""} →
             </button>
           </div>
         </>)}
         {step==="activity"&&txPreview&&(<>
           <div style={{padding:"10px 14px",borderRadius:8,background:"var(--green-dim)",border:"1px solid rgba(0,229,160,0.25)",marginBottom:16,display:"flex",gap:10,alignItems:"center"}}>
-            <span>ð</span>
+            <span>📈</span>
             <div>
               <div style={{fontSize:13,color:"var(--green)",fontWeight:500}}>Transaction History Detected</div>
-              <div className="mono" style={{fontSize:10,color:"var(--text2)"}}>{txPreview.count} confirmed transactions Â· {txPreview.from} â {txPreview.to}</div>
+              <div className="mono" style={{fontSize:10,color:"var(--text2)"}}>{txPreview.count} confirmed transactions · {txPreview.from} → {txPreview.to}</div>
             </div>
           </div>
           <div style={{padding:"10px 14px",borderRadius:8,background:"var(--surface2)",border:"1px solid var(--border)",marginBottom:16,fontSize:12,color:"var(--text2)"}}>
-            This powers your <span style={{color:"var(--green)"}}>real performance chart</span> â invested capital staircase based on actual trade dates and amounts.
+            This powers your <span style={{color:"var(--green)"}}>real performance chart</span> — invested capital staircase based on actual trade dates and amounts.
           </div>
           <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
-            <button className="btn btn-ghost" onClick={()=>setStep("upload")}>â Back</button>
+            <button className="btn btn-ghost" onClick={()=>setStep("upload")}>← Back</button>
             <button className="btn btn-primary" onClick={()=>onImport({type:"transactions",data:txData})}>
-              Import {txPreview.count} transactions â
+              Import {txPreview.count} transactions →
             </button>
           </div>
         </>)}
@@ -1067,11 +1066,11 @@ function ImportModal({ onClose, onImport }) {
 
 
 const fmt  = (n,d=2)=>n.toLocaleString("de-DE",{minimumFractionDigits:d,maximumFractionDigits:d});
-const fmtE = (n)=>`â¬${fmt(Math.abs(n),0)}`;
+const fmtE = (n)=>`€${fmt(Math.abs(n),0)}`;
 
-// ââ StockDetail â full page (3a financials + 3b charts + 3d scorecard) ââââââ
+// ── StockDetail — full page (3a financials + 3b charts + 3d scorecard) ──────
 
-// ââ TxPriceChart: price history with buy/sell markers ââ
+// ── TxPriceChart: price history with buy/sell markers ──
 function TxPriceChart({ ticker, txs, currentPrice }) {
   const [prices, setPrices] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
@@ -1185,22 +1184,22 @@ function StockDetail({ pos, onBack, transactions }) {
   }, [ticker]);
 
   const fmtB = v => {
-    if (v == null) return 'â';
+    if (v == null) return '—';
     const abs = Math.abs(v);
     if (abs >= 1e12) return (v/1e12).toFixed(2) + 'T';
     if (abs >= 1e9)  return (v/1e9).toFixed(2)  + 'B';
     if (abs >= 1e6)  return (v/1e6).toFixed(1)  + 'M';
     return v.toFixed(0);
   };
-  const fmtPct = v => v == null ? 'â' : (v * 100).toFixed(1) + '%';
-  const fmtX   = v => v == null ? 'â' : v.toFixed(1) + 'x';
-  const fmtN   = v => v == null ? 'â' : v.toFixed(2);
+  const fmtPct = v => v == null ? '—' : (v * 100).toFixed(1) + '%';
+  const fmtX   = v => v == null ? '—' : v.toFixed(1) + 'x';
+  const fmtN   = v => v == null ? '—' : v.toFixed(2);
 
   const yrs = data?.byYear?.slice(-5) || [];
   const last = yrs[yrs.length - 1] || {};
   const prev = yrs[yrs.length - 2] || {};
 
-  // ââ Scorecard ââ
+  // ── Scorecard ──
   const SCORE_COLOR = { green:'#00e5a0', gold:'#f0b429', red:'#ff4d6d', gray:'#3d4f5e' };
   const SCORE_BG    = { green:'rgba(0,229,160,0.08)', gold:'rgba(240,180,41,0.08)', red:'rgba(255,77,109,0.08)', gray:'rgba(61,79,94,0.08)' };
 
@@ -1209,7 +1208,7 @@ function StockDetail({ pos, onBack, transactions }) {
   const trendGrade = (cur, prv) => cur==null||prv==null?'gray': cur>prv*1.03?'green': cur<prv*0.97?'red':'gold';
 
   const scorecard = [
-    { label:'Profitability',   icon:'ð°',
+    { label:'Profitability',   icon:'💰',
       color: grade(last.netMargin, 0.15, 0.05),
       metrics: [
         { l:'Gross Margin',    v: fmtPct(last.grossMargin) },
@@ -1219,37 +1218,37 @@ function StockDetail({ pos, onBack, transactions }) {
         { l:'ROIC',            v: fmtPct(last.roic) },
       ]
     },
-    { label:'Revenue Growth',  icon:'ð',
+    { label:'Revenue Growth',  icon:'📈',
       color: trendGrade(last.revenue, prev.revenue),
       metrics: [
         { l:'Revenue',         v: fmtB(last.revenue) },
-        { l:'YoY Growth',      v: last.revenue&&prev.revenue ? ((last.revenue/prev.revenue-1)*100).toFixed(1)+'%' : 'â' },
+        { l:'YoY Growth',      v: last.revenue&&prev.revenue ? ((last.revenue/prev.revenue-1)*100).toFixed(1)+'%' : '—' },
         { l:'Gross Profit',    v: fmtB(last.grossProfit) },
         { l:'EBITDA',          v: fmtB(last.ebitda) },
         { l:'EPS',             v: fmtN(last.eps) },
       ]
     },
-    { label:'Cash Generation', icon:'ð¦',
+    { label:'Cash Generation', icon:'🏦',
       color: last.freeCashFlow==null?'gray': last.freeCashFlow>0?'green':'red',
       metrics: [
         { l:'Operating CF',    v: fmtB(last.operatingCF) },
         { l:'CapEx',           v: fmtB(last.capex) },
         { l:'Free Cash Flow',  v: fmtB(last.freeCashFlow) },
         { l:'FCF Yield',       v: fmtPct(last.fcfYield) },
-        { l:'FCF / Revenue',   v: last.freeCashFlow&&last.revenue ? fmtPct(last.freeCashFlow/last.revenue) : 'â' },
+        { l:'FCF / Revenue',   v: last.freeCashFlow&&last.revenue ? fmtPct(last.freeCashFlow/last.revenue) : '—' },
       ]
     },
-    { label:'Balance Sheet',   icon:'ð',
+    { label:'Balance Sheet',   icon:'🏛',
       color: last.debtEquity==null?'gray': last.debtEquity<0.5?'green': last.debtEquity<1.5?'gold':'red',
       metrics: [
         { l:'Total Assets',    v: fmtB(last.totalAssets) },
         { l:'Total Debt',      v: fmtB(last.totalDebt) },
         { l:'Cash',            v: fmtB(last.cashAndEquiv) },
         { l:'Equity',          v: fmtB(last.equity) },
-        { l:'Debt / Equity',   v: last.debtEquity!=null ? last.debtEquity.toFixed(2)+'x' : 'â' },
+        { l:'Debt / Equity',   v: last.debtEquity!=null ? last.debtEquity.toFixed(2)+'x' : '—' },
       ]
     },
-    { label:'Valuation',       icon:'ð¯',
+    { label:'Valuation',       icon:'🎯',
       color: gradeInv(data?.peRatio, 15, 30),
       metrics: [
         { l:'P/E Ratio',       v: fmtX(data?.peRatio) },
@@ -1261,7 +1260,7 @@ function StockDetail({ pos, onBack, transactions }) {
     },
   ];
 
-  // ââ Mini bar chart ââ
+  // ── Mini bar chart ──
   function BarChart({ data: bdata, getVal, color='#00e5a0', fmtFn=fmtB }) {
     const vals = bdata.map(getVal);
     const max  = Math.max(...vals.filter(v=>v!=null).map(Math.abs), 1);
@@ -1274,7 +1273,7 @@ function StockDetail({ pos, onBack, transactions }) {
           return (
             <div key={yr.year} style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',gap:3}}>
               <div className="mono" style={{fontSize:7,color:'var(--text3)',textAlign:'center',lineHeight:1.2}}>
-                {v==null?'â':fmtFn(v)}
+                {v==null?'—':fmtFn(v)}
               </div>
               <div style={{width:'100%',height:h,background:c,borderRadius:'2px 2px 0 0',
                 opacity: i===bdata.length-1?1:0.55, minHeight:2}}/>
@@ -1293,10 +1292,10 @@ function StockDetail({ pos, onBack, transactions }) {
 
   return (
     <div className="fu" style={{paddingBottom:40}}>
-      {/* ââ Back + header ââ */}
+      {/* ── Back + header ── */}
       <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:24}}>
         <button className="btn btn-ghost" style={{fontSize:12,padding:'4px 12px'}} onClick={onBack}>
-          â Back
+          ← Back
         </button>
         <AssetLogo pos={pos}/>
         <div style={{flex:1}}>
@@ -1309,7 +1308,7 @@ function StockDetail({ pos, onBack, transactions }) {
         </div>
       </div>
 
-      {/* ââ Position KPIs ââ */}
+      {/* ── Position KPIs ── */}
       <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10,marginBottom:20}}>
         {[
           { l:'POSITION VALUE', v: fmtE(posVal),                        c: 'var(--text)' },
@@ -1324,7 +1323,7 @@ function StockDetail({ pos, onBack, transactions }) {
         ))}
       </div>
 
-      {/* ââ Tabs ââ */}
+      {/* ── Tabs ── */}
       <div style={{display:'flex',gap:6,marginBottom:20}}>
         {[['overview','Overview'],['financials','Financials'],['ratios','Ratios'],['transactions','Transactions']].map(([id,label])=>(
           <button key={id} className="btn" onClick={()=>setTab(id)}
@@ -1336,16 +1335,16 @@ function StockDetail({ pos, onBack, transactions }) {
       </div>
 
       {loading && <div className="card" style={{padding:60,textAlign:'center'}}>
-        <span className="mono shimmer" style={{fontSize:12,color:'var(--text3)'}}>â³ Loading fundamentals for {ticker}â¦</span>
+        <span className="mono shimmer" style={{fontSize:12,color:'var(--text3)'}}>⟳ Loading fundamentals for {ticker}…</span>
       </div>}
 
       {error && <div className="card" style={{padding:24,color:'var(--red)',fontSize:13}}>
-        â Could not load fundamentals: {error}
+        ✕ Could not load fundamentals: {error}
       </div>}
 
       {!loading && data && (<>
 
-        {/* ââ OVERVIEW TAB ââ */}
+        {/* ══ OVERVIEW TAB ══ */}
         {tab==='overview' && (<>
           {/* Scorecard grid */}
           <div style={{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:12,marginBottom:16}}>
@@ -1407,7 +1406,7 @@ function StockDetail({ pos, onBack, transactions }) {
           )}
         </>)}
 
-        {/* ââ FINANCIALS TAB ââ */}
+        {/* ══ FINANCIALS TAB ══ */}
         {tab==='financials' && yrs.length>0 && (<>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
             {[
@@ -1455,7 +1454,7 @@ function StockDetail({ pos, onBack, transactions }) {
           </div>
         </>)}
 
-        {/* ââ RATIOS TAB ââ */}
+        {/* ══ RATIOS TAB ══ */}
         {tab==='ratios' && (<>
           <div className="card" style={{padding:0,overflow:'hidden',marginBottom:12}}>
             <div style={{padding:'12px 16px',background:'var(--surface2)',borderBottom:'1px solid var(--border)'}}>
@@ -1486,7 +1485,7 @@ function StockDetail({ pos, onBack, transactions }) {
                 {yrs.map(y=>{
                   const v=get(y);
                   return <div key={y.year} className="mono" style={{fontSize:12,textAlign:'right',
-                    color:v==null?'var(--text3)':'var(--text)'}}>{v==null?'â':fmt(v)}</div>;
+                    color:v==null?'var(--text3)':'var(--text)'}}>{v==null?'—':fmt(v)}</div>;
                 })}
               </div>
             ))}
@@ -1509,7 +1508,7 @@ function StockDetail({ pos, onBack, transactions }) {
           </div>
         </>)}
 
-        {/* ââ TRANSACTIONS TAB ââ */}
+        {/* ══ TRANSACTIONS TAB ══ */}
         {tab==='transactions' && (() => {
           const txs = (transactions||[])
             .filter(t => t.isin === pos.isin)
@@ -1522,7 +1521,7 @@ function StockDetail({ pos, onBack, transactions }) {
           );
 
           // Running P&L per lot: for each buy, P&L = (currentPrice - buyPrice) * qty
-          // For sells: realised P&L = (sellPrice - avgCost) * qty â we approximate with sell price vs pos.avgPrice
+          // For sells: realised P&L = (sellPrice - avgCost) * qty — we approximate with sell price vs pos.avgPrice
           const totalInvested = txs.filter(t=>t.type==='buy').reduce((s,t)=>s+t.amountEur,0);
           const totalRealized = txs.filter(t=>t.type==='sell').reduce((s,t)=>s+t.amountEur,0);
 
@@ -1531,7 +1530,7 @@ function StockDetail({ pos, onBack, transactions }) {
 
           return (
             <div>
-              {/* ââ Price chart with buy/sell markers ââ */}
+              {/* ── Price chart with buy/sell markers ── */}
               {ticker && <TxPriceChart ticker={ticker} txs={txs} currentPrice={pos.currentPrice}/>}
 
               {/* Summary bar */}
@@ -1592,10 +1591,10 @@ function StockDetail({ pos, onBack, transactions }) {
                         <div className="mono" style={{fontSize:10,color:'var(--text3)'}}>{tx.date}</div>
                       </div>
 
-                      {/* Qty Ã price */}
+                      {/* Qty × price */}
                       <div style={{textAlign:'right'}}>
                         <div className="mono" style={{fontSize:13,fontWeight:500}}>
-                          {tx.qty % 1 === 0 ? tx.qty : tx.qty.toFixed(4)} Ã {fmtE(pricePerShare)}
+                          {tx.qty % 1 === 0 ? tx.qty : tx.qty.toFixed(4)} × {fmtE(pricePerShare)}
                         </div>
                         <div className="mono" style={{fontSize:10,color:'var(--text3)'}}>
                           {tx.qty % 1 === 0 ? tx.qty : tx.qty.toFixed(4)} Stk.
@@ -1652,8 +1651,8 @@ export default function App() {
   const [newPos,      setNewPos]      = useState({symbol:"",name:"",type:"stock",qty:"",avgPrice:"",currentPrice:"",broker:"Smartbroker+"});
   const [selectedPos,  setSelectedPos]  = useState(null);
 
-  // ââ Fetch live prices ââ
-  // ââ Data fetching â powered by FMP (Financial Modeling Prep) ââ
+  // ── Fetch live prices ──
+  // ── Data fetching — powered by FMP (Financial Modeling Prep) ──
   // All calls go through /api/fmp Vercel proxy to keep key server-side
   const fmpGet = useCallback(async (path) => {
     const r = await fetch('/api/fmp?path=' + encodeURIComponent(path));
@@ -1750,7 +1749,7 @@ export default function App() {
   const pnl       = totalVal-totalCost;
   const pnlPct    = (pnl/totalCost)*100;
 
-  // ââ Real historical chart ââââââââââââââââââââââââââââââââââââââ
+  // ── Real historical chart ──────────────────────────────────────
   const [chartData,    setChartData]    = useState([]);
   const [chartLoading, setChartLoading] = useState(false);
   const [chartError,   setChartError]   = useState(null);
@@ -1805,7 +1804,7 @@ export default function App() {
       const now    = new Date(2026,2,7);
       const toStr  = now.toISOString().slice(0,10);
 
-      // ââ Sort transactions first (needed to clamp window start) ââ
+      // ── Sort transactions first (needed to clamp window start) ──
       const sorted = [...transactions].sort((a,b)=>a.date.localeCompare(b.date));
 
       // Clamp window start to first transaction date
@@ -1818,7 +1817,7 @@ export default function App() {
       const totalDays = Math.round((now-from)/86400000);
       const step = Math.max(1, Math.floor(totalDays/180));
 
-      // ââ Ticker resolver ââ
+      // ── Ticker resolver ──
       const getT = p => {
         if(p.fmpTicker) return p.fmpTicker;
         if(!p.isin) return p.symbol;
@@ -1828,10 +1827,10 @@ export default function App() {
         return p.symbol;
       };
 
-      // ââ Reconstruct exact qty per ISIN per day ââ
+      // ── Reconstruct exact qty per ISIN per day ──
       const allIsins = [...new Set(sorted.map(t=>t.isin).filter(Boolean))];
 
-      // ââ Qty reconstruction ââ
+      // ── Qty reconstruction ──
       // Strategy: use current depot qty as ground truth, work backwards using ALL transactions
       // This correctly handles positions bought before transaction history starts
       const depotQty = {};
@@ -1856,15 +1855,15 @@ export default function App() {
 
       // qtyByDay built above
 
-      // ââ EUR/USD ââ
+      // ── EUR/USD ──
       let eurUsd=1.085;
       try{ const fx=await fetch('https://api.frankfurter.app/latest?from=USD&to=EUR').then(r=>r.json()); eurUsd=1/(fx?.rates?.EUR||0.92); }catch(e){}
 
-      // ââ Resolve ISIN â FMP ticker ââ
+      // ── Resolve ISIN → FMP ticker ──
       const isinToTicker={};
       const pickTicker = (results, isin) => {
         if(!Array.isArray(results)||!results.length) return null;
-        // US ISINs: prefer clean US ticker (no suffix) â APC.DE/NVD.DE are wrong German mappings
+        // US ISINs: prefer clean US ticker (no suffix) — APC.DE/NVD.DE are wrong German mappings
         if(isin?.startsWith('US')) {
           return (results.find(r=>!r.symbol?.includes('.'))
             || results.find(r=>r.marketCap>0)
@@ -1903,7 +1902,7 @@ export default function App() {
       console.log('Total resolved:', Object.keys(isinToTicker).length, '/', allIsins.length);
       console.log('Sample tickers:', Object.values(isinToTicker).slice(0,10));
 
-      // ââ Price history per ticker ââ
+      // ── Price history per ticker ──
       const priceByIsin={};
       const skippedTickers=[];
       const uniqueTickers = [...new Set(Object.values(isinToTicker))];
@@ -1923,7 +1922,7 @@ export default function App() {
         }catch(e){ if(e.message==='Premium') skippedTickers.push(ticker+'(premium)'); else { skippedTickers.push(ticker+'(err)'); console.warn('hist fail:',ticker,e.message); } }
       }));
 
-      // ââ Crypto via CoinGecko ââ
+      // ── Crypto via CoinGecko ──
       const cryptoPos = positions.filter(p=>p.type==='crypto'&&p.coinId&&p.qty>0);
       await Promise.all(cryptoPos.map(async p=>{
         if(!p.isin) return;
@@ -1934,7 +1933,7 @@ export default function App() {
         }catch(e){}
       }));
 
-      // ââ Benchmark history ââ
+      // ── Benchmark history ──
       const BM_FMP={sp500:'SPY',nasdaq:'QQQ',dax:'EWG',btc:'GBTC'};
       const bmPrices={};
       await Promise.all(activeBM.map(async id=>{
@@ -1947,7 +1946,7 @@ export default function App() {
         }catch(e){}
       }));
 
-      // ââ Build carry-forward price maps (every day, no step) ââ
+      // ── Build carry-forward price maps (every day, no step) ──
       const lastPrice={};
       const lastBmPrice={};
       // priceOnDay[isin][i] = price at day i (carry-forward filled)
@@ -1976,7 +1975,7 @@ export default function App() {
         }
       });
 
-      // ââ Benchmark = hypothetical portfolio that invested same cash flows into benchmark ââ
+      // ── Benchmark = hypothetical portfolio that invested same cash flows into benchmark ──
       // On each buy transaction, "buy" equivalent benchmark units at that day's price.
       // This makes the comparison fair regardless of when capital was deployed.
       const bmUnits={};  // benchmark units accumulated per id
@@ -2006,7 +2005,7 @@ export default function App() {
         }
       });
 
-      // ââ Assemble rows ââ
+      // ── Assemble rows ──
       const rows=[];
       for(let i=0;i<=totalDays;i+=step){
         const d=new Date(from); d.setDate(d.getDate()+i);
@@ -2035,7 +2034,7 @@ export default function App() {
       setChartData(rows);
       if(skippedTickers.length>0){
         const covered = uniqueTickers.length - skippedTickers.length;
-        setChartError(`Partial data â ${covered}/${uniqueTickers.length} positions loaded. Missing: ${skippedTickers.join(', ')}`);
+        setChartError(`Partial data — ${covered}/${uniqueTickers.length} positions loaded. Missing: ${skippedTickers.join(', ')}`);
       }
     }catch(e){ console.error('fetchChart:',e); setChartError(e.message); }
     finally{ setChartLoading(false); }
@@ -2090,7 +2089,7 @@ export default function App() {
       <style>{FONTS}{CSS}</style>
       <div style={{display:"flex",height:"100vh",overflow:"hidden",background:"var(--bg)"}}>
 
-        {/* ââ Sidebar ââ */}
+        {/* ── Sidebar ── */}
         <div className="sidebar" style={{width:220,flexShrink:0,background:"var(--surface)",borderRight:"1px solid var(--border)",display:"flex",flexDirection:"column",padding:"20px 12px"}}>
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
@@ -2120,7 +2119,7 @@ export default function App() {
           </div>
         </div>
 
-        {/* ââ Main ââ */}
+        {/* ── Main ── */}
         <div className="main-scroll" style={{flex:1,overflow:"auto",padding:"26px 30px"}}>
 
           {/* Header */}
@@ -2132,10 +2131,10 @@ export default function App() {
               <div style={{display:"flex",alignItems:"center",gap:8,marginTop:3}}>
                 <span className="ldot"/>
                 <span className="mono" style={{fontSize:10,color:"var(--text2)"}}>
-                  {priceLoading ? "Fetching live pricesâ¦" : `Updated ${lastUpdated?.toLocaleTimeString("de-DE",{hour:"2-digit",minute:"2-digit"})}`}
+                  {priceLoading ? "Fetching live prices…" : `Updated ${lastUpdated?.toLocaleTimeString("de-DE",{hour:"2-digit",minute:"2-digit"})}`}
                 </span>
                 {!priceLoading && (
-                  <button onClick={fetchPrices} style={{background:"none",border:"none",cursor:"pointer",color:"var(--text3)",fontSize:11,padding:"0 4px"}} title="Refresh prices">â»</button>
+                  <button onClick={fetchPrices} style={{background:"none",border:"none",cursor:"pointer",color:"var(--text3)",fontSize:11,padding:"0 4px"}} title="Refresh prices">↻</button>
                 )}
                 <PriceBadge loading={priceLoading}/>
               </div>
@@ -2148,13 +2147,13 @@ export default function App() {
             {/* Empty state */}
             {positions.length === 0 && (
               <div className="fu card" style={{padding:"60px 40px",textAlign:"center",marginBottom:16}}>
-                <div style={{fontSize:48,marginBottom:16}}>ð</div>
+                <div style={{fontSize:48,marginBottom:16}}>📂</div>
                 <div className="serif" style={{fontSize:24,marginBottom:8}}>Your portfolio is empty</div>
                 <div style={{fontSize:13,color:"var(--text2)",marginBottom:28,maxWidth:400,margin:"0 auto 28px"}}>
                   Import your positions from Bitvavo, Trade Republic, Smartbroker+ or any broker CSV to get started.
                 </div>
                 <div style={{display:"flex",gap:10,justifyContent:"center"}}>
-                  <button className="btn btn-primary" onClick={()=>{setNav("settings");setShowImport(true)}}>â Import CSV</button>
+                  <button className="btn btn-primary" onClick={()=>{setNav("settings");setShowImport(true)}}>↑ Import CSV</button>
                   <button className="btn btn-ghost" onClick={()=>setShowModal(true)}>+ Add manually</button>
                 </div>
               </div>
@@ -2163,10 +2162,10 @@ export default function App() {
 
             <div className="fu2 kpi-grid" style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:16}}>
               {[
-                {label:"PORTFOLIO VALUE", val: priceLoading?"Loadingâ¦":`â¬${fmt(totalVal,0)}`, sub:`${vis.length} positions`, bar:null},
-                {label:"TOTAL P&L",       val: priceLoading?"â¦":`${pnl>=0?"+":"-"}â¬${fmt(Math.abs(pnl),0)}`, sub:`${pnl>=0?"â²":"â¼"} ${fmt(Math.abs(pnlPct))}%`, bar:pnl>=0?"g":"r"},
-                {label:"INVESTED",        val:`â¬${fmt(totalCost,0)}`, sub:"Cost basis", bar:"n"},
-                {label:"LIVE PRICES",     val: priceLoading?"Syncingâ¦":"Active", sub:"CoinGecko + FMP", bar:priceLoading?null:"g"},
+                {label:"PORTFOLIO VALUE", val: priceLoading?"Loading…":`€${fmt(totalVal,0)}`, sub:`${vis.length} positions`, bar:null},
+                {label:"TOTAL P&L",       val: priceLoading?"…":`${pnl>=0?"+":"-"}€${fmt(Math.abs(pnl),0)}`, sub:`${pnl>=0?"▲":"▼"} ${fmt(Math.abs(pnlPct))}%`, bar:pnl>=0?"g":"r"},
+                {label:"INVESTED",        val:`€${fmt(totalCost,0)}`, sub:"Cost basis", bar:"n"},
+                {label:"LIVE PRICES",     val: priceLoading?"Syncing…":"Active", sub:"CoinGecko + FMP", bar:priceLoading?null:"g"},
               ].map((k,i)=>(
                 <div key={i} className="card" style={{padding:"16px 18px",position:"relative",overflow:"hidden"}}>
                   <div style={{position:"absolute",top:0,left:0,right:0,height:2,background:k.bar==="g"?"var(--green)":k.bar==="r"?"var(--red)":"var(--border2)"}}/>
@@ -2177,7 +2176,7 @@ export default function App() {
               ))}
             </div>
 
-            {/* âââ PERFORMANCE CHART âââ */}
+            {/* ═══ PERFORMANCE CHART ═══ */}
             <div className="fu3 card" style={{padding:"20px 20px 14px",marginBottom:16}}>
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8,marginBottom:12}}>
                 <div style={{display:"flex",alignItems:"center",gap:12}}>
@@ -2207,19 +2206,19 @@ export default function App() {
                   borderRadius:6,fontSize:11,
                   color:chartError.includes('Partial')?"var(--gold)":"var(--red)",
                   fontFamily:"IBM Plex Mono"}}>
-                  â  {chartError}
+                  ⚠ {chartError}
                 </div>
               )}
               {chartLoading && (
                 <div style={{height:250,display:"flex",alignItems:"center",justifyContent:"center"}}>
-                  <span className="mono shimmer" style={{fontSize:11,color:"var(--text3)"}}>â³ Loading price historyâ¦</span>
+                  <span className="mono shimmer" style={{fontSize:11,color:"var(--text3)"}}>⟳ Loading price history…</span>
                 </div>
               )}
               {!chartLoading && !transactions.length && (
                 <div style={{height:250,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:10}}>
-                  <div style={{fontSize:32}}>ð</div>
+                  <div style={{fontSize:32}}>📊</div>
                   <div className="mono" style={{fontSize:11,color:"var(--text3)"}}>Import your transaction history to see performance</div>
-                  <button className="btn btn-ghost" style={{fontSize:11,padding:"5px 14px"}} onClick={()=>setShowImport(true)}>â Import CSV</button>
+                  <button className="btn btn-ghost" style={{fontSize:11,padding:"5px 14px"}} onClick={()=>setShowImport(true)}>↑ Import CSV</button>
                 </div>
               )}
               {!chartLoading && transactions.length>0 && (
@@ -2237,7 +2236,7 @@ export default function App() {
                     </defs>
                     <CartesianGrid strokeDasharray="3 3" stroke="#1c2730" vertical={false}/>
                     <XAxis dataKey="date" tick={{fontFamily:"IBM Plex Mono",fontSize:9,fill:"#3d4f5e"}} axisLine={false} tickLine={false} interval="preserveStartEnd"/>
-                    <YAxis tick={{fontFamily:"IBM Plex Mono",fontSize:9,fill:"#3d4f5e"}} axisLine={false} tickLine={false} tickFormatter={v=>"â¬"+(v/1000).toFixed(0)+"k"} width={44} domain={chartDomain}/>
+                    <YAxis tick={{fontFamily:"IBM Plex Mono",fontSize:9,fill:"#3d4f5e"}} axisLine={false} tickLine={false} tickFormatter={v=>"€"+(v/1000).toFixed(0)+"k"} width={44} domain={chartDomain}/>
                     <Tooltip content={<ChartTip/>}/>
 
                     {activeBM.map(id=>{
@@ -2249,10 +2248,10 @@ export default function App() {
                 </ResponsiveContainer>
               )}
               <div className="mono" style={{fontSize:9,color:"var(--text3)",marginTop:6,textAlign:"right"}}>
-                {chartData.length ? "â REAL DATA â FMP" : transactions.length ? "â invested line only â prices loading" : ""}
+                {chartData.length ? "● REAL DATA — FMP" : transactions.length ? "● invested line only — prices loading" : ""}
               </div>
             </div>
-                        {/* Allocation â full width */}
+                        {/* Allocation — full width */}
             <div style={{marginBottom:16}}>
               <div className="card" style={{padding:20}}>
                 <div className="mono" style={{fontSize:10,color:"var(--text2)",letterSpacing:"0.1em",marginBottom:14}}>ALLOCATION BY ASSET</div>
@@ -2260,12 +2259,12 @@ export default function App() {
               </div>
             </div>
 
-            {/* ââ Positions Table ââ */}
+            {/* ── Positions Table ── */}
             <div className="card" style={{padding:0,overflow:"hidden"}}>
               <div style={{padding:"14px 18px 0",display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,flexWrap:"wrap",marginBottom:12}}>
                 <div style={{display:"flex",alignItems:"center",gap:10}}>
                   <div className="mono" style={{fontSize:10,color:"var(--text2)",letterSpacing:"0.1em"}}>POSITIONS</div>
-                  {priceLoading && <span className="mono shimmer" style={{fontSize:9,color:"var(--text3)"}}>â syncing</span>}
+                  {priceLoading && <span className="mono shimmer" style={{fontSize:9,color:"var(--text3)"}}>● syncing</span>}
                 </div>
                 <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
                   {["All",...BROKERS_LIST].map(b=>(
@@ -2280,13 +2279,13 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Table header â sortable */}
+              {/* Table header — sortable */}
               <div className="trow" style={{padding:"9px 18px",borderBottom:"1px solid var(--border2)",borderTop:"1px solid var(--border)"}}>
                 {[["name","ASSET"],["qty","QTY"],["price","AVG PRICE"],["value","LIVE PRICE"],["pnl","P&L"],["pnlpct","P&L %"]].map(([col,label])=>{
                   const active=sortBy===col;
                   return <div key={col} onClick={()=>toggleSort(col)} className="mono"
                     style={{fontSize:9,color:active?"var(--green)":"var(--text3)",letterSpacing:"0.12em",cursor:"pointer",userSelect:"none",display:"flex",alignItems:"center",gap:4}}>
-                    {label}<span style={{opacity:active?1:0.3,fontSize:8}}>{active&&sortDir==="asc"?"â²":"â¼"}</span>
+                    {label}<span style={{opacity:active?1:0.3,fontSize:8}}>{active&&sortDir==="asc"?"▲":"▼"}</span>
                   </div>;
                 })}
               </div>
@@ -2334,7 +2333,7 @@ export default function App() {
                       {up?"+":"-"}{fmtE(Math.abs(p))}
                     </div>
                     <div className="mono" style={{fontSize:13,color:up?"var(--green)":"var(--red)",fontWeight:500}}>
-                      {pos.avgPrice>0?(up?"+":"")+fmt(pp)+"%":"â"}
+                      {pos.avgPrice>0?(up?"+":"")+fmt(pp)+"%":"—"}
                     </div>
                   </div>
                 );
@@ -2343,7 +2342,7 @@ export default function App() {
           </>)}
 
           {nav==="stock"&&selectedPos&&<StockDetail pos={selectedPos} onBack={()=>{setNav("dashboard");setSelectedPos(null)}} transactions={transactions}/> }
-          {nav==="screener"&&<div className="fu card" style={{padding:40,textAlign:"center"}}><div className="serif" style={{fontSize:22,color:"var(--text2)",marginBottom:8}}>Stock Screener</div><div style={{fontSize:13,color:"var(--text3)"}}>Coming in Phase 3 â filter by P/E, dividend yield, sector, region & more</div></div>}
+          {nav==="screener"&&<div className="fu card" style={{padding:40,textAlign:"center"}}><div className="serif" style={{fontSize:22,color:"var(--text2)",marginBottom:8}}>Stock Screener</div><div style={{fontSize:13,color:"var(--text3)"}}>Coming in Phase 3 — filter by P/E, dividend yield, sector, region & more</div></div>}
           {nav==="news"&&<NewsFeed positions={positions}/>}
           {nav==="settings"&&(
             <div className="fu" style={{display:"flex",flexDirection:"column",gap:14}}>
@@ -2354,12 +2353,12 @@ export default function App() {
                     <div className="mono" style={{fontSize:10,color:"var(--text3)",letterSpacing:"0.12em",marginBottom:4}}>PORTFOLIO IMPORT</div>
                     <div style={{fontSize:13,color:"var(--text2)"}}>Import your transaction history from any broker</div>
                   </div>
-                  <button className="btn btn-primary" onClick={()=>setShowImport(true)}>â Import CSV</button>
+                  <button className="btn btn-primary" onClick={()=>setShowImport(true)}>↑ Import CSV</button>
                 </div>
                 <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10}}>
                   {[
-                    {broker:"Bitvavo",   steps:"Account â Transaction History â Export â Full History (CSV)",   native:true},
-                    {broker:"Smartbroker+", steps:"Depot â Transaktionen â Export â CSV",                       native:true},
+                    {broker:"Bitvavo",   steps:"Account → Transaction History → Export → Full History (CSV)",   native:true},
+                    {broker:"Smartbroker+", steps:"Depot → Transaktionen → Export → CSV",                       native:true},
                     {broker:"Trade Republic", steps:"Use TR Exporter browser extension, then import CSV here",  native:false},
                   ].map(b=>(
                     <div key={b.broker} style={{background:"var(--surface2)",borderRadius:8,padding:"14px 16px",border:"1px solid var(--border)"}}>
@@ -2388,7 +2387,7 @@ export default function App() {
 
         </div>{/* end main-scroll */}
 
-        {/* ââ Mobile Bottom Nav ââ */}
+        {/* ── Mobile Bottom Nav ── */}
         <nav className="mobile-bottom-nav">
           {NAV_ITEMS.map(item=>(
             <button key={item.id} className={`mob-nav-btn${nav===item.id?" active":""}`}
