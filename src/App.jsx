@@ -2060,7 +2060,7 @@ function StockDetail({ pos, onBack, transactions }) {
                 </button>
               ))}
             </div>
-            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
+            <div style={{display:'grid',gridTemplateColumns:'1fr',gap:12,marginBottom:12}}>
               {[
                 {label:'REVENUE',         getVal:y=>y.revenue,        color:'#4d9fff'},
                 {label:'GROSS PROFIT',    getVal:y=>y.grossProfit,    color:'#00e5a0'},
@@ -2075,7 +2075,7 @@ function StockDetail({ pos, onBack, transactions }) {
                 </div>
               ))}
             </div>
-            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
+            <div style={{display:'grid',gridTemplateColumns:'1fr',gap:12,marginBottom:12}}>
               {[
                 {label:'OPERATING CASH FLOW', getVal:y=>y.operatingCF,  color:'#4d9fff'},
                 {label:'FREE CASH FLOW',      getVal:y=>y.freeCashFlow, color:'#f0b429'},
@@ -2091,7 +2091,7 @@ function StockDetail({ pos, onBack, transactions }) {
             {/* Margins */}
             <div className="card" style={{padding:14}}>
               <div className="mono" style={{fontSize:9,color:'var(--text3)',letterSpacing:'0.1em',marginBottom:12}}>MARGIN TRENDS</div>
-              <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:12}}>
+              <div style={{display:'grid',gridTemplateColumns:'1fr',gap:12}}>
                 {[
                   {label:'GROSS MARGIN',    getVal:y=>y.grossMargin,    color:'#4d9fff'},
                   {label:'OPERATING MARGIN',getVal:y=>y.operatingMargin,color:'#a78bfa'},
@@ -2749,7 +2749,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v40 · Quarterly financials fix</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v41 · 1-col financials, 12 quarters</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(

@@ -44,8 +44,8 @@ export default async function handler(req, res) {
       fmp(`/key-metrics?symbol=${symbol}&limit=5`),
       fmp(`/profile?symbol=${symbol}`),
       fmp(`/analyst-estimates?symbol=${symbol}&limit=6&period=annual`),
-      fmp(`/income-statement?symbol=${symbol}&limit=8&period=quarter`),
-      fmp(`/cash-flow-statement?symbol=${symbol}&limit=8&period=quarter`),
+      fmp(`/income-statement?symbol=${symbol}&limit=12&period=quarter`),
+      fmp(`/cash-flow-statement?symbol=${symbol}&limit=12&period=quarter`),
     ]);
 
     const p = profile[0] || {};
