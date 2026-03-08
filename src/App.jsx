@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback } from "react"; // v8-debug
+import React, { useState, useMemo, useEffect, useCallback } from "react"; // v9-fix-logos-chart
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, AreaChart, ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid } from "recharts";
 
 const FONTS = `@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=IBM+Plex+Mono:wght@300;400;500;600&family=DM+Sans:wght@300;400;500&display=swap');`;
@@ -301,7 +301,8 @@ function AssetLogo({pos, size=36}) {
   const r = Math.round(size * 0.25);
   const resolvedTicker = pos.fmpTicker?.split('.')[0] || ISIN_MAP[pos.isin] || pos.symbol?.split('.')[0];
   const baseSymbol = resolvedTicker?.toUpperCase();
-  console.log('AssetLogo:', pos.symbol, '| fmpTicker:', pos.fmpTicker, '| resolved:', baseSymbol, '| domain:', LOGO_DOMAINS[baseSymbol], '| imgErr:', imgErr);
+  // Reset imgErr when the resolved ticker changes (e.g. after ISIN resolution)
+  React.useEffect(() => { setImgErr(false); }, [baseSymbol]);
 
   // Crypto: use CoinGecko asset logos
   if (pos.type === 'crypto' && CRYPTO_LOGOS[baseSymbol] && !imgErr) {
@@ -323,7 +324,7 @@ function AssetLogo({pos, size=36}) {
   if (domain && !imgErr) {
     return (
       <div style={{width:size,height:size,borderRadius:r,overflow:'hidden',flexShrink:0,background:'#fff',border:'1px solid rgba(255,255,255,0.08)'}}>
-        <img src={`https://logo.clearbit.com/${domain}`} width={size} height={size}
+        <img src={`https://img.logo.dev/${domain}?token=pk_Eg3WdBSMRxWs8VKgxD5dXA`} width={size} height={size}
           style={{objectFit:'cover'}} onError={()=>setImgErr(true)}/>
       </div>
     );
@@ -1083,7 +1084,7 @@ function TxPriceChart({ ticker, txs, currentPrice }) {
     setLoading(true);
     const to   = new Date().toISOString().slice(0,10);
     const from = new Date(Date.now() - 365*2*86400000).toISOString().slice(0,10);
-    fetch(`/api/fmp?path=/stable/historical-price-eod/full%3Fsymbol%3D${ticker}%26from%3D${from}%26to%3D${to}`)
+    fetch(`/api/fmp?path=/historical-price-eod/full?symbol=${ticker}&from=${from}&to=${to}`)
       .then(r=>r.json())
       .then(data=>{
         const arr = Array.isArray(data) ? data : (data?.historical||[]);
@@ -1530,7 +1531,6 @@ function StockDetail({ pos, onBack, transactions }) {
 
           // Build chart: fetch 1Y historical prices + overlay buy/sell markers
           const ticker = pos.fmpTicker?.split('.')[0] || ISIN_MAP[pos.isin] || pos.symbol?.split('.')[0];
-          console.log('TxTab ticker:', ticker, '| fmpTicker:', pos.fmpTicker, '| isin:', pos.isin, '| symbol:', pos.symbol, '| txs:', txs.length);
 
           return (
             <div>
@@ -2098,7 +2098,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v8 · debug</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v9 · logos · txchart</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
