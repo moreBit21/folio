@@ -116,17 +116,22 @@ async function fetchStockAnalysis(ticker) {
 
   const ter           = ov.match(/Expense Ratio\s+([\d.]+%)/i)?.[1] ?? null;
   const inceptionDate = ov.match(/Inception\s+(?:Date\s+)?([A-Z][a-z]{2}\s+\d{1,2},?\s+\d{4})/i)?.[1] ?? null;
-  // holdingsCount from the data node's "count" field
-  const countIdx = str.indexOf('"count"');
-  const holdingsCount = countIdx > 0
-    ? String(flat[flat[JSON.parse(str.slice(countIdx - 1, countIdx + 20).match(/(\{[^}]+\})/)?.[0] ?? '{}')?.count ?? -1] ?? ''))
-    : ov.match(/Total Holdings\s+(\d+)/i)?.[1] ?? null;
+  // holdingsCount — find numeric value that follows the key "count" in flat array
+  let holdingsCount = ov.match(/Total Holdings\s+(\d+)/i)?.[1] ?? null;
+  const countKeyIdx = flat.indexOf('count');
+  if (countKeyIdx >= 0) {
+    // The schema object has {count: refIdx}, so find the ref and resolve it
+    for (let i = countKeyIdx + 1; i < Math.min(countKeyIdx + 20, flat.length); i++) {
+      if (typeof flat[i] === 'number' && flat[i] > 0 && flat[i] < 10000) {
+        holdingsCount = String(flat[i]);
+        break;
+      }
+    }
+  }
 
   return {
     name: null, ter, distPolicy: 'Distributing', replication: null,
-    fundSize: null,
-    holdingsCount: holdingsCount || String(flat.find((v, i) => flat[i-1] === 'count' && typeof v === 'number') ?? '') || null,
-    inceptionDate,
+    fundSize: null, holdingsCount, inceptionDate,
     holdings, countries, sectors,
     sourceUrl: `${base}/holdings/`,
   };
