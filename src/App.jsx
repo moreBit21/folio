@@ -1647,7 +1647,7 @@ function EtfOverview({ pos }) {
       <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:10,marginBottom:16}}>
         {[
           { l:'TER p.a.',      v: etf.ter        || '—', icon:'💸', note:'Total expense ratio' },
-          { l:'Fund Size',     v: etf.fundSize    || '—', icon:'🏦', note:'Assets under management' },
+          { l:'Fund Size',     v: etf.fundSize || (etf.marketCap ? (etf.marketCap>=1e12?`$${(etf.marketCap/1e12).toFixed(2)}T`:etf.marketCap>=1e9?`$${(etf.marketCap/1e9).toFixed(2)}B`:`$${(etf.marketCap/1e6).toFixed(0)}M`) : '—'), icon:'🏦', note:'Assets under management' },
           { l:'Distribution',  v: etf.distPolicy  || '—', icon: etf.distPolicy?.toLowerCase().includes('accum') ? '🔄' : '💰', note:'Dividend policy' },
           { l:'Replication',   v: etf.replication || '—', icon:'🔁', note:'Index tracking method' },
           { l:'Holdings',      v: etf.holdingsCount ? Number(etf.holdingsCount.replace(/,/g,'')).toLocaleString('de-DE') : '—', icon:'📊', note:'Total number of positions' },
@@ -2729,7 +2729,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v33 · ETF overview+holdings pages</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v34 · ETF table parse + AUM</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(

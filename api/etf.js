@@ -90,19 +90,33 @@ async function fetchStockAnalysis(ticker) {
     .replace(/&amp;/g, '&').replace(/&nbsp;/g, ' ')
     .replace(/\s+/g, ' ').trim();
 
-  // ── Holdings: data is in body text "NVIDIA stock at 8.66%, Apple at 7.48%" ──
+  // ── Holdings: parse table from holdings page ──
+  // Table format in stripped text: "1 NVDA NVIDIA Corporation 8.66% 185319834 2 AAPL Apple..."
+  // Also has prose fallback: "top holdings are NVIDIA stock at 8.66%..."
   const holdings = [];
-  const proseIdx = stripped.search(/top holdings are/i);
-  const prose = proseIdx >= 0 ? stripped.slice(proseIdx, proseIdx + 600) : '';
-  const holdRe = /([A-Za-z][A-Za-z0-9\s\.\,\-&]+?)\s+(?:stock\s+)?at\s+([\d\.]+)%/g;
+
+  // Primary: parse table rows — "\d+ [A-Z]+ Name Weight% Shares"
+  const tableRe = /\d+\s+[A-Z]{1,6}\s+([A-Za-z][A-Za-z0-9\s\.\,\-&\']+?)\s+([\d]+\.[\d]+)%\s+[\d,]+/g;
   let hm;
-  while ((hm = holdRe.exec(prose)) !== null && holdings.length < 10) {
-    const name = hm[1].trim()
-      .replace(/^(?:the\s+)?top\s+holdings?\s+(?:are\s+)?/i, '')
-      .replace(/^and\s+/i, '')
-      .trim();
+  while ((hm = tableRe.exec(stripped)) !== null && holdings.length < 10) {
+    const name = hm[1].trim();
     const weight = parseFloat(hm[2]);
-    if (name.length > 1 && name.length < 50 && weight > 0) holdings.push({ name, weight });
+    if (name.length > 1 && name.length < 60 && weight > 0 && weight < 25)
+      holdings.push({ name, weight });
+  }
+
+  // Fallback: prose "top holdings are NVIDIA stock at 8.66%, Apple at 7.48%"
+  if (!holdings.length) {
+    const proseIdx = stripped.search(/top holdings are/i);
+    const prose = proseIdx >= 0 ? stripped.slice(proseIdx, proseIdx + 600) : '';
+    const proseRe = /([A-Za-z][A-Za-z0-9\s\.\,\-&]+?)\s+(?:stock\s+)?at\s+([\d\.]+)%/g;
+    while ((hm = proseRe.exec(prose)) !== null && holdings.length < 10) {
+      const name = hm[1].trim()
+        .replace(/^(?:the\s+)?top\s+holdings?\s+(?:are\s+)?/i, '')
+        .replace(/^and\s+/i, '').trim();
+      const weight = parseFloat(hm[2]);
+      if (name.length > 1 && name.length < 50 && weight > 0) holdings.push({ name, weight });
+    }
   }
 
   let ter = null, inceptionDate = null, holdingsCount = null, fundSize = null;
@@ -148,7 +162,7 @@ async function fetchStockAnalysis(ticker) {
     name: null,
     ter, distPolicy: 'Distributing', replication: null,
     fundSize, holdingsCount, inceptionDate,
-    holdings, countries: [], sectors,
+    holdings, countries: [], sectors: [],
     sourceUrl: `${baseUrl}/holdings/`,
   };
 }
