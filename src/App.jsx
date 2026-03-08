@@ -1580,6 +1580,150 @@ function CompareView() {
   );
 }
 
+// ── EtfOverview — ETF-specific overview tab ────────────────────────────────
+function EtfOverview({ pos }) {
+  const [etf, setEtf]     = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  const isin   = pos.isin;
+  const symbol = pos.fmpTicker || ISIN_MAP[pos.isin] || pos.symbol;
+
+  useEffect(() => {
+    setLoading(true); setError(null); setEtf(null);
+    const params = isin ? `isin=${isin}&symbol=${symbol}` : `symbol=${symbol}`;
+    fetch('/api/etf?' + params)
+      .then(r => r.json())
+      .then(d => { if (d.error) throw new Error(d.error); setEtf(d); })
+      .catch(e => setError(e.message))
+      .finally(() => setLoading(false));
+  }, [isin, symbol]);
+
+  if (loading) return (
+    <div className="card" style={{padding:60,textAlign:'center'}}>
+      <span className="mono shimmer" style={{fontSize:12,color:'var(--text3)'}}>⟳ Loading ETF data…</span>
+    </div>
+  );
+  if (error) return (
+    <div className="card" style={{padding:24}}>
+      <div style={{color:'var(--red)',fontSize:13,marginBottom:8}}>✕ Could not load ETF data: {error}</div>
+      <div style={{fontSize:11,color:'var(--text3)'}}>
+        ETF data is sourced from justETF. This ETF may not be listed there, or the ISIN could not be resolved.
+      </div>
+    </div>
+  );
+  if (!etf) return null;
+
+  // ── Weight bar component ──
+  const WeightBar = ({ name, weight, color = 'var(--green)', maxWeight }) => {
+    const pct = maxWeight > 0 ? (weight / maxWeight) * 100 : 0;
+    return (
+      <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:8}}>
+        <div style={{width:140,flexShrink:0,fontSize:12,color:'var(--text)',overflow:'hidden',whiteSpace:'nowrap',textOverflow:'ellipsis'}}>{name}</div>
+        <div style={{flex:1,height:16,background:'var(--surface2)',borderRadius:3,overflow:'hidden',position:'relative'}}>
+          <div style={{
+            position:'absolute',top:0,bottom:0,left:0,
+            width:pct+'%',
+            background:color+'30',
+            borderRight:`2px solid ${color}`,
+            borderRadius:3,
+            transition:'width 0.5s ease',
+          }}/>
+        </div>
+        <div className="mono" style={{width:42,textAlign:'right',fontSize:11,fontWeight:600,color,flexShrink:0}}>
+          {weight.toFixed(2)}%
+        </div>
+      </div>
+    );
+  };
+
+  const maxHolding = etf.holdings?.[0]?.weight || 1;
+  const maxCountry = etf.countries?.[0]?.weight || 1;
+  const maxSector  = etf.sectors?.[0]?.weight   || 1;
+
+  return (
+    <div className="fu2">
+      {/* ── Key Facts bar ── */}
+      <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:10,marginBottom:16}}>
+        {[
+          { l:'TER p.a.',      v: etf.ter        || '—', icon:'💸', note:'Total expense ratio' },
+          { l:'Fund Size',     v: etf.fundSize    || '—', icon:'🏦', note:'Assets under management' },
+          { l:'Distribution',  v: etf.distPolicy  || '—', icon: etf.distPolicy?.toLowerCase().includes('accum') ? '🔄' : '💰', note:'Dividend policy' },
+          { l:'Replication',   v: etf.replication || '—', icon:'🔁', note:'Index tracking method' },
+          { l:'Holdings',      v: etf.holdingsCount ? Number(etf.holdingsCount.replace(/,/g,'')).toLocaleString('de-DE') : '—', icon:'📊', note:'Total number of positions' },
+        ].map(({l,v,icon,note}) => (
+          <div key={l} className="card" style={{padding:'14px 16px'}}>
+            <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:8}}>
+              <span style={{fontSize:14}}>{icon}</span>
+              <div className="mono" style={{fontSize:8,color:'var(--text3)',letterSpacing:'0.1em'}}>{l}</div>
+            </div>
+            <div className="mono" style={{fontSize:13,fontWeight:600,color:'var(--text)',marginBottom:2}}>{v}</div>
+            <div style={{fontSize:10,color:'var(--text3)'}}>{note}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── 3-column grid: Holdings / Countries / Sectors ── */}
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12,marginBottom:16}}>
+
+        {/* Top 10 Holdings */}
+        <div className="card" style={{padding:'18px 20px'}}>
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14}}>
+            <div className="mono" style={{fontSize:10,letterSpacing:'0.12em',color:'var(--text2)'}}>TOP 10 HOLDINGS</div>
+            {etf.holdingsCount && <span className="mono" style={{fontSize:9,color:'var(--text3)'}}>of {Number(etf.holdingsCount.replace(/,/g,'')).toLocaleString('de-DE')} total</span>}
+          </div>
+          {etf.holdings?.length > 0 ? etf.holdings.map((h, i) => (
+            <div key={i} style={{display:'flex',alignItems:'center',gap:8,marginBottom:7}}>
+              <span className="mono" style={{fontSize:9,color:'var(--text3)',width:14,flexShrink:0}}>{i+1}</span>
+              <div style={{flex:1,overflow:'hidden'}}>
+                <div style={{fontSize:11,color:'var(--text)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',marginBottom:2}}>{h.name}</div>
+                <div style={{height:4,background:'var(--surface2)',borderRadius:2,overflow:'hidden'}}>
+                  <div style={{height:'100%',width:(h.weight/maxHolding*100)+'%',background:'var(--green)',borderRadius:2,opacity:0.7}}/>
+                </div>
+              </div>
+              <span className="mono" style={{fontSize:10,fontWeight:600,color:'var(--green)',flexShrink:0,width:36,textAlign:'right'}}>{h.weight.toFixed(2)}%</span>
+            </div>
+          )) : <div style={{fontSize:11,color:'var(--text3)',textAlign:'center',padding:'20px 0'}}>No holdings data</div>}
+        </div>
+
+        {/* Top Countries */}
+        <div className="card" style={{padding:'18px 20px'}}>
+          <div className="mono" style={{fontSize:10,letterSpacing:'0.12em',color:'var(--text2)',marginBottom:14}}>TOP 5 COUNTRIES</div>
+          {etf.countries?.length > 0 ? etf.countries.map((c, i) => (
+            <WeightBar key={i} name={c.name} weight={c.weight} maxWeight={maxCountry} color='#4d9fff'/>
+          )) : <div style={{fontSize:11,color:'var(--text3)',textAlign:'center',padding:'20px 0'}}>No country data</div>}
+        </div>
+
+        {/* Top Sectors */}
+        <div className="card" style={{padding:'18px 20px'}}>
+          <div className="mono" style={{fontSize:10,letterSpacing:'0.12em',color:'var(--text2)',marginBottom:14}}>TOP 5 SECTORS</div>
+          {etf.sectors?.length > 0 ? etf.sectors.map((s, i) => (
+            <WeightBar key={i} name={s.name} weight={s.weight} maxWeight={maxSector} color='#a78bfa'/>
+          )) : <div style={{fontSize:11,color:'var(--text3)',textAlign:'center',padding:'20px 0'}}>No sector data</div>}
+        </div>
+      </div>
+
+      {/* ── Description ── */}
+      {etf.description && (
+        <div className="card" style={{padding:'16px 20px'}}>
+          <div className="mono" style={{fontSize:9,color:'var(--text3)',letterSpacing:'0.1em',marginBottom:8}}>DESCRIPTION</div>
+          <div style={{fontSize:12,color:'var(--text2)',lineHeight:1.7}}>{etf.description}</div>
+        </div>
+      )}
+
+      {/* ── Source credit ── */}
+      <div style={{marginTop:10,textAlign:'right'}}>
+        <span className="mono" style={{fontSize:9,color:'var(--text3)'}}>
+          Holdings & weights via{' '}
+          <a href={etf.sourceUrl} target="_blank" rel="noreferrer"
+            style={{color:'var(--text3)',textDecoration:'underline'}}>justETF</a>
+          {etf.isin && ` · ISIN ${etf.isin}`}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function StockDetail({ pos, onBack, transactions }) {
   const [data, setData]     = useState(null);
   const [loading, setLoading] = useState(true);
@@ -1826,6 +1970,10 @@ function StockDetail({ pos, onBack, transactions }) {
 
         {/* ══ OVERVIEW TAB ══ */}
         {tab==='overview' && (<>
+          {/* ETF: show ETF-specific overview instead of scorecard */}
+          {pos.type === 'etf' ? (
+            <EtfOverview pos={pos} />
+          ) : (<>
           {/* Scorecard grid */}
           <div style={{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:12,marginBottom:16}}>
             {scorecard.slice(0,4).map(sc => (
@@ -1887,6 +2035,7 @@ function StockDetail({ pos, onBack, transactions }) {
               </div>
             </div>
           )}
+          </>)}  {/* end non-ETF scorecard */}
         </>)}
 
         {/* ══ FINANCIALS TAB ══ */}
@@ -2579,7 +2728,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v26 · table winner highlight</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v27 · ETF overview</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
