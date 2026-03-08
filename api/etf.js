@@ -8,7 +8,6 @@ export default async function handler(req, res) {
   const FMP_KEY = process.env.FMP_KEY;
 
   try {
-    // Resolve ISIN if missing
     let lookupIsin = isin;
     if (!lookupIsin && symbol && FMP_KEY) {
       lookupIsin = await resolveIsin(symbol, FMP_KEY);
@@ -17,7 +16,9 @@ export default async function handler(req, res) {
     // FMP profile for price/marketCap/description/name
     let fmpProfile = null;
     if (FMP_KEY && symbol) {
-      const tickers = symbol.includes('.') ? [symbol, symbol.replace(/\.\w+$/, '')] : [`${symbol}.AS`, `${symbol}.DE`, symbol];
+      const tickers = symbol.includes('.')
+        ? [symbol, symbol.replace(/\.\w+$/, '')]
+        : [`${symbol}.AS`, `${symbol}.DE`, symbol];
       for (const tk of tickers) {
         try {
           const r = await fetch(`https://financialmodelingprep.com/stable/profile?symbol=${tk}&apikey=${FMP_KEY}`);
@@ -28,7 +29,6 @@ export default async function handler(req, res) {
       }
     }
 
-    // Route: US ISIN or bare ticker (no exchange suffix) → stockanalysis.com
     const isUS = lookupIsin?.startsWith('US') || (!lookupIsin && symbol && !symbol.includes('.'));
     const baseTicker = (symbol || '').replace(/\.(AS|DE|L|PA|F|MI|SW)$/i, '').toUpperCase();
 
@@ -65,62 +65,116 @@ export default async function handler(req, res) {
 }
 
 // ── stockanalysis.com — US ETFs ───────────────────────────────────────────────
+// Server-side renders a SvelteKit app — data lives in <meta> tags and JSON blobs
 async function fetchStockAnalysis(ticker) {
   const ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
   const baseUrl = `https://stockanalysis.com/etf/${ticker.toLowerCase()}`;
 
-  // Fetch overview page and holdings page in parallel
   const [overviewHtml, holdingsHtml] = await Promise.all([
     fetch(`${baseUrl}/`, { headers: { 'User-Agent': ua } }).then(r => r.text()).catch(() => ''),
     fetch(`${baseUrl}/holdings/`, { headers: { 'User-Agent': ua } }).then(r => r.text()).catch(() => ''),
   ]);
 
-  const ov = stripHtml(overviewHtml);
-  const ho = stripHtml(holdingsHtml);
-
-  // Key facts from overview page — tab-separated values
-  const ter          = matchTabValue(ov, 'Expense Ratio');
-  const inceptionDate= matchTabValue(ov, 'Inception Date');
-  const holdingsCount= matchTabValue(ov, /Number of Holdings|Holdings\s*\n/);
-
-  // Fund size — look for AUM pattern "$XXX.XX B" or "XXX.XXM"
-  const aumMatch = ov.match(/(?:AUM|Net Assets|Total Assets|Fund Size)\s*[\t\n]\s*\$?([\d,\.]+\s*[BMT])/i);
-  const fundSize = aumMatch ? aumMatch[1] : null;
-
-  // ETF name
-  const nameMatch = overviewHtml.match(/<h1[^>]*>([^<]{5,80})<\/h1>/i);
-  const name = nameMatch ? nameMatch[1].trim() : null;
-
-  // Holdings — from holdings page, pattern: "No. Symbol Name % Weight"
-  // Text format: "1\tNVDA\tNVIDIA Corporation\t8.66%\t..."
+  // ── Parse meta description for holdings summary ──
+  // e.g. "top holdings are NVIDIA stock at 8.66%, Apple at 7.48%..."
   const holdings = [];
-  const holdRe = /\d+\t[A-Z]{1,6}\t([^\t]+)\t([\d\.]+)%/g;
+  const metaDesc = holdingsHtml.match(/<meta\s+name="description"\s+content="([^"]+)"/i)?.[1]
+                || overviewHtml.match(/<meta\s+name="description"\s+content="([^"]+)"/i)?.[1]
+                || '';
+
+  // Parse "NAME stock at X.XX%, NAME at X.XX%" pattern from meta
+  const metaHoldRe = /([A-Za-z][A-Za-z0-9\s\.\,\-&]+?)\s+(?:stock\s+)?at\s+([\d\.]+)%/g;
   let hm;
-  while ((hm = holdRe.exec(ho)) !== null && holdings.length < 10) {
-    holdings.push({ name: hm[1].trim(), weight: parseFloat(hm[2]) });
+  while ((hm = metaHoldRe.exec(metaDesc)) !== null && holdings.length < 10) {
+    const name = hm[1].trim().replace(/^(?:the\s+)?top\s+holdings?\s+(?:are\s+)?/i, '').trim();
+    const weight = parseFloat(hm[2]);
+    if (name.length > 1 && weight > 0) holdings.push({ name, weight });
   }
-  // Fallback: parse from overview "Name\tSymbol\tWeight" table
-  if (!holdings.length) {
-    const tableRe = /([A-Za-z][A-Za-z0-9\s,\.\-&']+)\t[A-Z]{1,6}\t([\d\.]+)%/g;
-    const topSection = ov.slice(ov.search(/Top 10 Holdings|Top Holdings/i), ov.search(/Top 10 Holdings|Top Holdings/i) + 1000);
-    while ((hm = tableRe.exec(topSection)) !== null && holdings.length < 10) {
-      holdings.push({ name: hm[1].trim(), weight: parseFloat(hm[2]) });
+
+  // ── Parse JSON data blobs embedded in the HTML ──
+  // stockanalysis embeds data as JSON in script tags
+  let ter = null, inceptionDate = null, holdingsCount = null, fundSize = null;
+  let sectors = [];
+
+  // Try to find embedded JSON data
+  const jsonMatches = [...holdingsHtml.matchAll(/<script[^>]*type="application\/json"[^>]*>([\s\S]*?)<\/script>/gi),
+                       ...overviewHtml.matchAll(/<script[^>]*type="application\/json"[^>]*>([\s\S]*?)<\/script>/gi)];
+
+  for (const match of jsonMatches) {
+    try {
+      const obj = JSON.parse(match[1]);
+      const str = JSON.stringify(obj);
+      // Look for expense ratio pattern in JSON
+      if (!ter) {
+        const em = str.match(/"expenseRatio"\s*:\s*"?([0-9.]+%?)"?/i) ||
+                   str.match(/"expense_ratio"\s*:\s*"?([0-9.]+%?)"?/i);
+        if (em) ter = em[1].includes('%') ? em[1] : em[1] + '%';
+      }
+      if (!inceptionDate) {
+        const im = str.match(/"inceptionDate"\s*:\s*"([^"]+)"/i) ||
+                   str.match(/"inception"\s*:\s*"([^"]+)"/i);
+        if (im) inceptionDate = im[1];
+      }
+    } catch {}
+  }
+
+  // ── Fallback: strip HTML and parse text patterns ──
+  const stripped = (holdingsHtml || overviewHtml)
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&amp;/g, '&').replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ').trim();
+
+  // Expense ratio from text
+  if (!ter) {
+    const em = stripped.match(/[Ee]xpense [Rr]atio\s+([0-9.]+%)/);
+    if (em) ter = em[1];
+  }
+
+  // Holdings count: "Total Holdings 104"
+  if (!holdingsCount) {
+    const hcm = stripped.match(/Total Holdings\s+(\d+)/i) ||
+                stripped.match(/Number of Holdings\s+(\d+)/i) ||
+                metaDesc.match(/Total Holdings\s+(\d+)/i);
+    if (hcm) holdingsCount = hcm[1];
+  }
+
+  // Inception date from text
+  if (!inceptionDate) {
+    const im = stripped.match(/Inception\s+(?:Date\s+)?([A-Z][a-z]{2}\s+\d{1,2},?\s+\d{4})/i);
+    if (im) inceptionDate = im[1];
+  }
+
+  // Sectors: "Technology: 53.60%" in meta or stripped text
+  const fullText = metaDesc + ' ' + stripped;
+  const sectIdx = fullText.search(/[Ss]ector [Aa]llocation/);
+  if (sectIdx > 0) {
+    const sectSlice = fullText.slice(sectIdx, sectIdx + 600);
+    const sectRe = /([A-Za-z][A-Za-z\s&]{2,35}?):\s*([\d\.]+)%/g;
+    let sm;
+    while ((sm = sectRe.exec(sectSlice)) !== null && sectors.length < 5) {
+      const n = sm[1].trim();
+      const w = parseFloat(sm[2]);
+      if (n.length > 2 && w > 0 && !n.match(/^(Other|End|Total|Asset)/i))
+        sectors.push({ name: n, weight: w });
+    }
+  }
+  // Also scan meta description for sector data
+  if (!sectors.length) {
+    const sectRe2 = /([A-Za-z][A-Za-z\s&]{2,30}?):\s*([\d\.]+)%/g;
+    let sm2;
+    while ((sm2 = sectRe2.exec(metaDesc)) !== null && sectors.length < 5) {
+      const n = sm2[1].trim().replace(/^.*?holdings?\s+/i, '');
+      const w = parseFloat(sm2[2]);
+      if (n.length > 2 && w > 0 && !n.match(/^(Other|End|Total)/i))
+        sectors.push({ name: n, weight: w });
     }
   }
 
-  // Sectors — from holdings page "Technology: 53.60%"
-  const sectors = [];
-  const sectSection = ho.slice(ho.search(/Sector Allocation/i), ho.search(/Sector Allocation/i) + 600);
-  const sectRe = /([A-Za-z][A-Za-z\s&]+?):\s*([\d\.]+)%/g;
-  let sm;
-  while ((sm = sectRe.exec(sectSection)) !== null && sectors.length < 5) {
-    const n = sm[1].trim();
-    const w = parseFloat(sm[2]);
-    if (n !== 'Other' && n.length > 2) sectors.push({ name: n, weight: w });
-  }
-
   return {
-    name, ter, distPolicy: 'Distributing', replication: null,
+    name: null,
+    ter, distPolicy: 'Distributing', replication: null,
     fundSize, holdingsCount, inceptionDate,
     holdings, countries: [], sectors,
     sourceUrl: `${baseUrl}/holdings/`,
@@ -140,7 +194,6 @@ async function fetchJustEtf(isin) {
 
   const s = stripHtml(html);
 
-  // Key facts
   const ter          = matchAfter(s, /\bTER\b/, /[\d]+[.,][\d]+\s*%\s*p\.a\./);
   const distPolicy   = matchAfter(s, /Distribution policy/, /(Accumulating|Distributing)/i);
   const replication  = matchAfter(s, /Replication/, /(Physical|Synthetic|Optimised sampling|Full replication|Sampling)/i);
@@ -149,7 +202,6 @@ async function fetchJustEtf(isin) {
   const holdingsCount= matchAfter(s, /\bHoldings\b/, /(\d[\d,]+)/);
   const nameMatch    = html.match(/<h1[^>]*>([^<]{10,100})<\/h1>/i);
 
-  // Holdings
   const holdings = [];
   const holdSection = s.match(/Top 10 Holdings[\s\S]*?(?=Countries|Sectors|Savings plan|$)/i)?.[0] || '';
   const holdRe = /([A-Za-z][A-Za-z0-9\s,\.\-&'®]+?)\s+([\d]+[.,][\d]+)\s*%/g;
@@ -162,7 +214,6 @@ async function fetchJustEtf(isin) {
       holdings.push({ name: n, weight: w });
   }
 
-  // Countries — between LAST "Countries" and next "Sectors"
   const countries = [];
   const cIdx = s.lastIndexOf(' Countries ');
   const sIdx = s.indexOf(' Sectors ', cIdx);
@@ -179,7 +230,6 @@ async function fetchJustEtf(isin) {
     }
   }
 
-  // Sectors
   const sectors = [];
   const lastSIdx = s.lastIndexOf(' Sectors ');
   if (lastSIdx !== -1) {
@@ -189,8 +239,7 @@ async function fetchJustEtf(isin) {
     while ((sm = re.exec(slice)) !== null && sectors.length < 5) {
       const n = sm[1].trim();
       const w = parseFloat(sm[2].replace(',', '.'));
-      if (n.length >= 3 && n.length <= 40 && w > 0
-          && !n.match(/^(?:Show|Other|As of|Sectors)/i))
+      if (n.length >= 3 && n.length <= 40 && w > 0 && !n.match(/^(?:Show|Other|As of|Sectors)/i))
         sectors.push({ name: n, weight: w });
     }
   }
@@ -210,14 +259,6 @@ function stripHtml(html) {
     .replace(/<[^>]+>/g, ' ')
     .replace(/&amp;/g, '&').replace(/&nbsp;/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
     .replace(/\s+/g, ' ').trim();
-}
-
-function matchTabValue(text, labelRe) {
-  const re = typeof labelRe === 'string'
-    ? new RegExp(labelRe.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*[\\t\\n]\\s*([^\\t\\n]{1,40})')
-    : new RegExp(labelRe.source + '\\s*[\\t\\n]\\s*([^\\t\\n]{1,40})');
-  const m = text.match(re);
-  return m ? m[1].trim() : null;
 }
 
 function matchAfter(text, labelRe, valueRe) {
