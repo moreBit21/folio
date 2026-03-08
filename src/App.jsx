@@ -1729,6 +1729,7 @@ function StockDetail({ pos, onBack, transactions }) {
   const [loading, setLoading] = useState(true);
   const [error, setError]   = useState(null);
   const [tab, setTab]       = useState('overview');
+  const [finPeriod, setFinPeriod] = useState('quarterly');
 
   const ticker = pos.fmpTicker || ISIN_MAP[pos.isin] || pos.symbol;
 
@@ -2041,11 +2042,10 @@ function StockDetail({ pos, onBack, transactions }) {
         </>)}
 
         {/* ══ FINANCIALS TAB ══ */}
-        {tab==='financials' && yrs.length>0 && (() => {
+        {tab==='financials' && yrs.length>0 && (()=>{
           const qtrs = data?.byQuarter || [];
-          const [finPeriod, setFinPeriod] = React.useState('quarterly');
-          const finData = finPeriod === 'quarterly' ? qtrs : yrs;
-          const getLabel = y => finPeriod === 'quarterly' ? y.label : y.year;
+          const finData = finPeriod === 'quarterly' && qtrs.length ? qtrs : yrs;
+          const getLabel = y => finPeriod === 'quarterly' && qtrs.length ? (y.label ?? y.year) : y.year;
           return (<>
             {/* Period toggle */}
             <div style={{display:'flex',gap:6,marginBottom:12}}>
@@ -2749,7 +2749,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v39 · Quarterly financials</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v40 · Quarterly financials fix</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
