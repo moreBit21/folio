@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback } from "react"; // v10-fix-logos-key
+import React, { useState, useMemo, useEffect, useCallback } from "react"; // v12-fix-dup-domain
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, AreaChart, ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid } from "recharts";
 
 const FONTS = `@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=IBM+Plex+Mono:wght@300;400;500;600&family=DM+Sans:wght@300;400;500&display=swap');`;
@@ -305,6 +305,7 @@ function AssetLogo({pos, size=36}) {
 }
 function AssetLogoInner({baseSymbol, pos, size, r}) {
   const [imgErr, setImgErr] = React.useState(false);
+  const domain = LOGO_DOMAINS[baseSymbol];
 
   // Crypto: use CoinGecko asset logos
   if (pos.type === 'crypto' && CRYPTO_LOGOS[baseSymbol] && !imgErr) {
@@ -321,8 +322,7 @@ function AssetLogoInner({baseSymbol, pos, size, r}) {
     );
   }
 
-  // Stocks/ETFs: use Clearbit logo API
-  const domain = LOGO_DOMAINS[baseSymbol];
+  // Stocks/ETFs: use logo.dev
   if (domain && !imgErr) {
     return (
       <div style={{width:size,height:size,borderRadius:r,overflow:'hidden',flexShrink:0,background:'#fff',border:'1px solid rgba(255,255,255,0.08)'}}>
@@ -2100,7 +2100,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v10 · logos · txchart</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v12 · logos · txchart</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
