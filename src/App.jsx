@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback } from "react"; // v17-layout-perf-alloc
+import React, { useState, useMemo, useEffect, useCallback } from "react"; // v18-scorecard-thresholds
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, AreaChart, ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid } from "recharts";
 
 const FONTS = `@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=IBM+Plex+Mono:wght@300;400;500;600&family=DM+Sans:wght@300;400;500&display=swap');`;
@@ -1257,13 +1257,66 @@ function StockDetail({ pos, onBack, transactions }) {
   const SCORE_COLOR = { green:'#00e5a0', gold:'#f0b429', red:'#ff4d6d', gray:'#3d4f5e' };
   const SCORE_BG    = { green:'rgba(0,229,160,0.08)', gold:'rgba(240,180,41,0.08)', red:'rgba(255,77,109,0.08)', gray:'rgba(61,79,94,0.08)' };
 
-  const grade = (val, good, ok) => val==null?'gray': val>=good?'green': val>=ok?'gold':'red';
+  // ── Grading helpers ──────────────────────────────────────────────────────────
+  // Sources: Benjamin Graham "The Intelligent Investor" (P/E ≤15, P/B ≤1.5),
+  //          Damodaran (NYU Stern) sector data, CFA Institute ratio analysis,
+  //          Wall Street Prep (ROIC 10-15% threshold), S&P 500 historical avg P/E ~17x
+  const grade    = (val, good, ok) => val==null?'gray': val>=good?'green': val>=ok?'gold':'red';
   const gradeInv = (val, good, ok) => val==null?'gray': val<=good?'green': val<=ok?'gold':'red';
-  const trendGrade = (cur, prv) => cur==null||prv==null?'gray': cur>prv*1.03?'green': cur<prv*0.97?'red':'gold';
+
+  // Revenue trend: +5% YoY = healthy growth (Damodaran avg US equity growth),
+  //                -5% = concern, flat in between = caution
+  const trendGrade = (cur, prv) => cur==null||prv==null?'gray': cur>prv*1.05?'green': cur<prv*0.95?'red':'gold';
+
+  // Profitability grading: net margin thresholds vary widely by sector.
+  // We use a composite score across margin + ROE + ROIC for a fairer picture.
+  // Net margin: >10% strong (Damodaran S&P 500 median ~11%), >3% acceptable, <3% weak
+  // ROE: >15% strong (Buffett/Graham standard, cost of equity ~10-12%),
+  //       >8% acceptable (above typical cost of equity floor), <8% weak
+  // ROIC: >10% strong (above WACC for most firms, Wall Street Prep),
+  //        >5% acceptable, <5% value-destroying territory
+  const profitColor = (() => {
+    const nm   = last.netMargin;
+    const roe  = last.roe;
+    const roic = last.roic;
+    const scores = [
+      nm   != null ? (nm   >= 0.10 ? 2 : nm   >= 0.03 ? 1 : 0) : null,
+      roe  != null ? (roe  >= 0.15 ? 2 : roe  >= 0.08 ? 1 : 0) : null,
+      roic != null ? (roic >= 0.10 ? 2 : roic >= 0.05 ? 1 : 0) : null,
+    ].filter(s => s !== null);
+    if (!scores.length) return 'gray';
+    const avg = scores.reduce((a,b)=>a+b,0) / scores.length;
+    return avg >= 1.5 ? 'green' : avg >= 0.8 ? 'gold' : 'red';
+  })();
+
+  // Balance sheet: D/E thresholds per CFA Institute & BDC research.
+  // D/E < 1.0x = conservative/healthy (below "equal debt/equity" line per CFA)
+  // D/E < 2.0x = acceptable (BDC: 2-2.5x "generally considered good" for most industries)
+  // D/E >= 2.0x = elevated leverage, risk increases
+  const balanceColor = last.debtEquity==null ? 'gray'
+    : last.debtEquity < 1.0 ? 'green'
+    : last.debtEquity < 2.0 ? 'gold' : 'red';
+
+  // Valuation: P/E grading anchored to Benjamin Graham (≤15x = value, The Intelligent
+  // Investor Ch.14), S&P 500 historical avg ~17x, and interest-rate context.
+  // We use EV/EBITDA alongside P/E as a more capital-structure-neutral check.
+  // P/E ≤ 17x = reasonable (S&P avg), ≤ 25x = elevated but not extreme (growth premium),
+  // > 25x = expensive; EV/EBITDA ≤ 10x = value, ≤ 15x = fair
+  const peRatio  = data?.peRatio;
+  const evEbitda = data?.evEbitda ?? last.evEbitda;
+  const valuationColor = (() => {
+    const scores = [
+      peRatio  != null ? (peRatio  <= 17 ? 2 : peRatio  <= 25 ? 1 : 0) : null,
+      evEbitda != null ? (evEbitda <= 10 ? 2 : evEbitda <= 15 ? 1 : 0) : null,
+    ].filter(s => s !== null);
+    if (!scores.length) return 'gray';
+    const avg = scores.reduce((a,b)=>a+b,0) / scores.length;
+    return avg >= 1.5 ? 'green' : avg >= 0.8 ? 'gold' : 'red';
+  })();
 
   const scorecard = [
     { label:'Profitability',   icon:'💰',
-      color: grade(last.netMargin, 0.15, 0.05),
+      color: profitColor,
       metrics: [
         { l:'Gross Margin',    v: fmtPct(last.grossMargin) },
         { l:'Operating Margin',v: fmtPct(last.operatingMargin) },
@@ -1273,6 +1326,7 @@ function StockDetail({ pos, onBack, transactions }) {
       ]
     },
     { label:'Revenue Growth',  icon:'📈',
+      // YoY >5% = healthy (Damodaran US equity avg growth), <-5% = declining
       color: trendGrade(last.revenue, prev.revenue),
       metrics: [
         { l:'Revenue',         v: fmtB(last.revenue) },
@@ -1283,7 +1337,10 @@ function StockDetail({ pos, onBack, transactions }) {
       ]
     },
     { label:'Cash Generation', icon:'🏦',
-      color: last.freeCashFlow==null?'gray': last.freeCashFlow>0?'green':'red',
+      // FCF>0 is minimum bar; FCF/Revenue >5% = strong cash conversion (Old School Value: >15% excellent)
+      color: last.freeCashFlow==null ? 'gray'
+        : last.freeCashFlow <= 0 ? 'red'
+        : (last.revenue && last.freeCashFlow/last.revenue >= 0.05) ? 'green' : 'gold',
       metrics: [
         { l:'Operating CF',    v: fmtB(last.operatingCF) },
         { l:'CapEx',           v: fmtB(last.capex) },
@@ -1293,7 +1350,7 @@ function StockDetail({ pos, onBack, transactions }) {
       ]
     },
     { label:'Balance Sheet',   icon:'🏛',
-      color: last.debtEquity==null?'gray': last.debtEquity<0.5?'green': last.debtEquity<1.5?'gold':'red',
+      color: balanceColor,
       metrics: [
         { l:'Total Assets',    v: fmtB(last.totalAssets) },
         { l:'Total Debt',      v: fmtB(last.totalDebt) },
@@ -1303,7 +1360,7 @@ function StockDetail({ pos, onBack, transactions }) {
       ]
     },
     { label:'Valuation',       icon:'🎯',
-      color: gradeInv(data?.peRatio, 15, 30),
+      color: valuationColor,
       metrics: [
         { l:'P/E Ratio',       v: fmtX(data?.peRatio) },
         { l:'P/B Ratio',       v: fmtX(data?.pbRatio ?? last.pbRatio) },
@@ -2150,7 +2207,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v17 · layout</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v18 · scorecard</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
