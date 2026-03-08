@@ -81,10 +81,10 @@ async function fetchStockAnalysis(ticker) {
 
   // ── Holdings: interleaved as [idx, "Name", "$SYM", "X.XX%", "shares", {ref}, ...] ──
   const holdings = [];
-  const holdRe = /\d+,"([^"]{3,60})","\\$[A-Z]{1,6}","([\d.]+)%"/g;
+  const holdRe = /\},(\d+),"([^"]{3,60})","\\$[A-Z]{1,6}","([\d.]+)%"/g;
   let hm;
   while ((hm = holdRe.exec(str)) !== null && holdings.length < 10) {
-    holdings.push({ name: hm[1], weight: parseFloat(hm[2]) });
+    holdings.push({ name: hm[2], weight: parseFloat(hm[3]) });
   }
 
   // ── Sectors: flat array pattern "Name", weight (number), {ref} repeating ──
