@@ -69,93 +69,64 @@ async function fetchStockAnalysis(ticker) {
   const ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
   const base = `https://stockanalysis.com/etf/${ticker.toLowerCase()}`;
 
-  // Fetch __data.json (SvelteKit data endpoint) + overview HTML in parallel
-  const [skData, overviewHtml] = await Promise.all([
+  // Fetch __data.json + overview HTML in parallel
+  const [skRaw, overviewHtml] = await Promise.all([
     fetch(`${base}/holdings/__data.json`, { headers: { 'User-Agent': ua } }).then(r => r.json()).catch(() => null),
     fetch(`${base}/`, { headers: { 'User-Agent': ua } }).then(r => r.text()).catch(() => ''),
   ]);
 
-  // ── Parse SvelteKit node-reference data format ──
-  // Data is stored as a flat array where objects reference indices: {"n":4,"w":5} means nodes[4], nodes[5]
-  const flatData = skData?.nodes?.[0]?.data ?? [];
+  // Data is in nodes[2] (node 0=session, 1=layout, 2=page data)
+  const flat = skRaw?.nodes?.[2]?.data ?? skRaw?.nodes?.[1]?.data ?? [];
+  const str = JSON.stringify(flat);
 
-  // Helper: flatten the node array into readable values
-  function resolveNode(idx) {
-    const v = flatData[idx];
-    if (v === null || v === undefined) return null;
-    if (typeof v !== 'object') return v;
-    // It's a reference object like {n:4, w:5} or {code:196, weight:197, country:198}
-    const out = {};
-    for (const [k, refIdx] of Object.entries(v)) {
-      out[k] = flatData[refIdx];
-    }
-    return out;
-  }
-
-  // Find key indices by looking for known string markers
-  const str = JSON.stringify(flatData);
-
-  // ── Holdings: pattern "No, Name, $SYMBOL, weight%, shares" ──
+  // ── Holdings: interleaved as [idx, "Name", "$SYM", "X.XX%", "shares", {ref}, ...] ──
   const holdings = [];
-  const holdRe = /(\d+),"([^"]{3,60})","\$[A-Z]{1,6}","([\d]+\.[\d]+)%","([\d,]+)"/g;
+  const holdRe = /\d+,"([^"]{3,60})","\\$[A-Z]{1,6}","([\d.]+)%"/g;
   let hm;
   while ((hm = holdRe.exec(str)) !== null && holdings.length < 10) {
-    const weight = parseFloat(hm[3]);
-    if (weight > 0) holdings.push({ name: hm[2], weight });
+    holdings.push({ name: hm[1], weight: parseFloat(hm[2]) });
   }
 
-  // ── Sectors: "SectorName",weight pattern after "sectors" key ──
+  // ── Sectors: flat array pattern "Name", weight (number), {ref} repeating ──
+  // Sectors block starts just after the array-of-indices [...] at position ~157
+  // Pattern: "SectorName", 53.6, {ref}, "Next Sector", 13.04, {ref}, ...
   const sectors = [];
-  const sectStart = str.indexOf('"sectors"');
-  if (sectStart > 0) {
-    const sectSlice = str.slice(sectStart, sectStart + 800);
-    const sectRe = /"([A-Za-z][A-Za-z &]{2,35})",([\d]+\.[\d]+)/g;
-    let sm;
-    while ((sm = sectRe.exec(sectSlice)) !== null && sectors.length < 5) {
-      const n = sm[1];
-      const w = parseFloat(sm[2]);
-      if (w > 0 && w <= 100 && !n.match(/^(sectors|countries|news|info|date)/i))
-        sectors.push({ name: n, weight: w });
-    }
+  const sectRe = /"([A-Za-z][A-Za-z &]{2,35})",([\d]+\.[\d]+),\{"n":/g;
+  let sm;
+  while ((sm = sectRe.exec(str)) !== null && sectors.length < 5) {
+    const n = sm[1];
+    const w = parseFloat(sm[2]);
+    if (w > 0 && !n.match(/^(Cash|Other|Real Estate)/i))
+      sectors.push({ name: n, weight: w });
   }
 
-  // ── Countries: "CC",weight,"Country Name" pattern after "countries" key ──
+  // ── Countries: "CC", weight, "Country Name" repeating ──
   const countries = [];
-  const countryStart = str.indexOf('"countries"');
-  if (countryStart > 0) {
-    const countrySlice = str.slice(countryStart, countryStart + 600);
-    const countryRe = /"([A-Z]{2})",([\d]+\.[\d]+),"([^"]{2,40})"/g;
-    let cm;
-    while ((cm = countryRe.exec(countrySlice)) !== null && countries.length < 5) {
-      const w = parseFloat(cm[2]);
-      if (w > 0) countries.push({ name: cm[3], weight: w });
-    }
-  }
-
-  // ── Fallback for holdings if __data.json parse failed ──
-  if (!holdings.length) {
-    const hoHtml = await fetch(`${base}/holdings/`, { headers: { 'User-Agent': ua } }).then(r => r.text()).catch(() => '');
-    const stripped = hoHtml.replace(/<script[\s\S]*?<\/script>/gi,' ').replace(/<[^>]+>/g,' ').replace(/\s+/g,' ');
-    const proseIdx = stripped.search(/top holdings are/i);
-    const prose = proseIdx >= 0 ? stripped.slice(proseIdx, proseIdx+600) : '';
-    const proseRe = /([A-Za-z][A-Za-z0-9\s\.\,\-&]+?)\s+(?:stock\s+)?at\s+([\d\.]+)%/g;
-    while ((hm = proseRe.exec(prose)) !== null && holdings.length < 10) {
-      const name = hm[1].trim().replace(/^(?:the\s+)?top\s+holdings?\s+(?:are\s+)?/i,'').replace(/^and\s+/i,'').trim();
-      const weight = parseFloat(hm[2]);
-      if (name.length > 1 && name.length < 50 && weight > 0) holdings.push({ name, weight });
-    }
+  const countryRe = /"([A-Z]{2})",([\d]+\.[\d]+),"([^"]{2,40})"/g;
+  let cm;
+  while ((cm = countryRe.exec(str)) !== null && countries.length < 5) {
+    countries.push({ name: cm[3], weight: parseFloat(cm[2]) });
   }
 
   // ── Key facts from overview HTML ──
-  const ovStripped = overviewHtml.replace(/<script[\s\S]*?<\/script>/gi,' ').replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim();
-  const ter          = ovStripped.match(/Expense Ratio\s+([\d\.]+%)/i)?.[1] || null;
-  const inceptionDate= ovStripped.match(/Inception\s+(?:Date\s+)?([A-Z][a-z]{2}\s+\d{1,2},?\s+\d{4})/i)?.[1] || null;
-  const holdingsCount= str.match(/"count":(\d+)/)?.[1] ||
-                       ovStripped.match(/Total Holdings\s+(\d+)/i)?.[1] || null;
+  const ov = overviewHtml
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ').trim();
+
+  const ter           = ov.match(/Expense Ratio\s+([\d.]+%)/i)?.[1] ?? null;
+  const inceptionDate = ov.match(/Inception\s+(?:Date\s+)?([A-Z][a-z]{2}\s+\d{1,2},?\s+\d{4})/i)?.[1] ?? null;
+  // holdingsCount from the data node's "count" field
+  const countIdx = str.indexOf('"count"');
+  const holdingsCount = countIdx > 0
+    ? String(flat[flat[JSON.parse(str.slice(countIdx - 1, countIdx + 20).match(/(\{[^}]+\})/)?.[0] ?? '{}')?.count ?? -1] ?? ''))
+    : ov.match(/Total Holdings\s+(\d+)/i)?.[1] ?? null;
 
   return {
     name: null, ter, distPolicy: 'Distributing', replication: null,
-    fundSize: null, holdingsCount, inceptionDate,
+    fundSize: null,
+    holdingsCount: holdingsCount || String(flat.find((v, i) => flat[i-1] === 'count' && typeof v === 'number') ?? '') || null,
+    inceptionDate,
     holdings, countries, sectors,
     sourceUrl: `${base}/holdings/`,
   };
