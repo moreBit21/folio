@@ -99,17 +99,45 @@ export default async function handler(req, res) {
       ? 1 / latestKm.earningsYield : null;
     const topPB    = div(latestKm.marketCap, (balance[0] || {}).totalStockholdersEquity);
 
-    // ── PEG Ratio — Forward analyst consensus (Peter Lynch: PEG = PE / fwd EPS growth%)
-    // Uses next fiscal year's analyst consensus EPS vs most recent actual EPS.
-    // This is the same methodology as Bloomberg, FactSet, and most professional platforms.
-    // Note: TradingView may use NTM (blended quarterly) EPS which can differ slightly.
-    let pegRatio = null;
-    let pegNote  = null;
-
+    // ── Forward EPS estimates — sorted ascending by date ────────────────────
     const now       = new Date();
     const sortedEst = [...analystEstimates].sort((a,b) => new Date(a.date)-new Date(b.date));
-    const fwdEst    = sortedEst.find(r => new Date(r.date) > now);
+    // Future estimates only (FY1 = nearest, FY2 = second nearest)
+    const futureEst = sortedEst.filter(r => new Date(r.date) > now);
+    const fwdEst    = futureEst[0] || null;  // FY1 — current year estimate
+    const fwd2Est   = futureEst[1] || null;  // FY2 — next year estimate
+
     const latestActualEps = byYear[byYear.length - 1]?.eps;
+    const prevActualEps   = byYear[byYear.length - 2]?.eps;
+
+    // ── TTM EPS Growth (trailing YoY: latest actual vs prior actual) ─────────
+    const ttmEpsGrowth = (latestActualEps != null && prevActualEps != null && prevActualEps !== 0)
+      ? (latestActualEps - prevActualEps) / Math.abs(prevActualEps)
+      : null;
+
+    // ── Current year expected EPS growth (FY1 est vs latest actual) ──────────
+    const fy1EpsGrowth = (fwdEst?.epsAvg && latestActualEps != null && latestActualEps !== 0)
+      ? (fwdEst.epsAvg - latestActualEps) / Math.abs(latestActualEps)
+      : null;
+
+    // ── Next year expected EPS growth (FY2 est vs FY1 est) ───────────────────
+    const fy2EpsGrowth = (fwd2Est?.epsAvg && fwdEst?.epsAvg && fwdEst.epsAvg !== 0)
+      ? (fwd2Est.epsAvg - fwdEst.epsAvg) / Math.abs(fwdEst.epsAvg)
+      : null;
+
+    // ── Forward P/E (current price / FY1 EPS estimate) ───────────────────────
+    // Price derived from P/E × current EPS (best proxy without live price endpoint)
+    const currentPrice = (topPE != null && latestActualEps != null && latestActualEps > 0)
+      ? topPE * latestActualEps : null;
+
+    const forwardPE  = (currentPrice != null && fwdEst?.epsAvg  && fwdEst.epsAvg  > 0)
+      ? currentPrice / fwdEst.epsAvg  : null;
+    const forward2PE = (currentPrice != null && fwd2Est?.epsAvg && fwd2Est.epsAvg > 0)
+      ? currentPrice / fwd2Est.epsAvg : null;
+
+    // ── PEG Ratio — Forward analyst consensus (Peter Lynch: PEG = PE / fwd EPS growth%)
+    let pegRatio = null;
+    let pegNote  = null;
 
     if (fwdEst?.epsAvg && latestActualEps && latestActualEps > 0 && topPE != null) {
       const fwdGrowth = (fwdEst.epsAvg - latestActualEps) / latestActualEps;
@@ -128,7 +156,6 @@ export default async function handler(req, res) {
           pegRatio = topPE / (yoy * 100);
           pegNote  = 'Trailing YoY (no fwd estimates)';
         } else {
-          // Negative EPS growth — PEG is mathematically undefined/meaningless
           pegRatio = null;
           pegNote  = 'N/A — negative EPS growth';
         }
@@ -143,6 +170,15 @@ export default async function handler(req, res) {
       peRatio: topPE, pbRatio: topPB,
       evEbitda: latestKm.evToEBITDA ?? null,
       pegRatio, pegNote,
+      // Forward valuation
+      forwardPE, forward2PE,
+      // EPS growth
+      ttmEpsGrowth, fy1EpsGrowth, fy2EpsGrowth,
+      // Raw estimates for reference
+      fy1EpsEst: fwdEst?.epsAvg ?? null,
+      fy2EpsEst: fwd2Est?.epsAvg ?? null,
+      fy1Date: fwdEst?.date?.slice(0,7) ?? null,
+      fy2Date: fwd2Est?.date?.slice(0,7) ?? null,
       beta: p.beta ?? null, dividendYield: p.lastDividend ?? null,
       description: p.description || null,
       byYear,

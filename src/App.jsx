@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback } from "react"; // v24-compare
+import React, { useState, useMemo, useEffect, useCallback } from "react"; // v25-compare-fwd-metrics
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, AreaChart, ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid } from "recharts";
 
 const FONTS = `@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=IBM+Plex+Mono:wght@300;400;500;600&family=DM+Sans:wght@300;400;500&display=swap');`;
@@ -1344,6 +1344,11 @@ function CompareView() {
         pbRatio:    s.data.pbRatio ?? last.pbRatio,
         pegRatio:   s.data.pegRatio,
         evEbitda:   s.data.evEbitda ?? last.evEbitda,
+        // forward valuation
+        forwardPE:  s.data.forwardPE,
+        forward2PE: s.data.forward2PE,
+        fy1Date:    s.data.fy1Date,
+        fy2Date:    s.data.fy2Date,
         // profitability
         netMargin:  last.netMargin,
         grossMargin:last.grossMargin,
@@ -1353,6 +1358,9 @@ function CompareView() {
         // growth
         revGrowth,
         epsGrowth,
+        ttmEpsGrowth: s.data.ttmEpsGrowth,
+        fy1EpsGrowth: s.data.fy1EpsGrowth,
+        fy2EpsGrowth: s.data.fy2EpsGrowth,
         eps:        last.eps,
         revenue:    last.revenue,
         // balance sheet
@@ -1469,10 +1477,12 @@ function CompareView() {
 
         {/* Valuation */}
         <CompareSection title="VALUATION" icon="🎯">
-          <CompareBar label="P/E RATIO"      stocks={stocksWithMetrics} valueKey="peRatio"   format="x"   good={17}  bad={30}  invert={true}/>
-          <CompareBar label="P/B RATIO"      stocks={stocksWithMetrics} valueKey="pbRatio"   format="x"   good={2}   bad={5}   invert={true}/>
-          <CompareBar label="PEG RATIO"      stocks={stocksWithMetrics} valueKey="pegRatio"  format="raw" good={1}   bad={2.5} invert={true}/>
-          <CompareBar label="EV / EBITDA"    stocks={stocksWithMetrics} valueKey="evEbitda"  format="x"   good={10}  bad={20}  invert={true}/>
+          <CompareBar label="P/E (TRAILING)"   stocks={stocksWithMetrics} valueKey="peRatio"    format="x"   good={17}  bad={30}  invert={true}/>
+          <CompareBar label="P/E (FORWARD FY1)" stocks={stocksWithMetrics} valueKey="forwardPE"  format="x"   good={15}  bad={25}  invert={true}/>
+          <CompareBar label="P/E (FORWARD FY2)" stocks={stocksWithMetrics} valueKey="forward2PE" format="x"   good={12}  bad={20}  invert={true}/>
+          <CompareBar label="P/B RATIO"         stocks={stocksWithMetrics} valueKey="pbRatio"    format="x"   good={2}   bad={5}   invert={true}/>
+          <CompareBar label="PEG RATIO"         stocks={stocksWithMetrics} valueKey="pegRatio"   format="raw" good={1}   bad={2.5} invert={true}/>
+          <CompareBar label="EV / EBITDA"       stocks={stocksWithMetrics} valueKey="evEbitda"   format="x"   good={10}  bad={20}  invert={true}/>
         </CompareSection>
 
         {/* Profitability */}
@@ -1485,10 +1495,12 @@ function CompareView() {
         </CompareSection>
 
         {/* Growth */}
-        <CompareSection title="GROWTH (YoY)" icon="📈">
-          <CompareBar label="REVENUE GROWTH"   stocks={stocksWithMetrics} valueKey="revGrowth"  format="pct" good={0.10} bad={-0.05}/>
-          <CompareBar label="EPS GROWTH"       stocks={stocksWithMetrics} valueKey="epsGrowth"  format="pct" good={0.10} bad={-0.05}/>
-          <CompareBar label="EPS (LATEST)"     stocks={stocksWithMetrics} valueKey="eps"        format="raw"/>
+        <CompareSection title="GROWTH" icon="📈">
+          <CompareBar label="REVENUE GROWTH (YoY)"        stocks={stocksWithMetrics} valueKey="revGrowth"    format="pct" good={0.10} bad={-0.05}/>
+          <CompareBar label="EPS GROWTH TTM (actual)"     stocks={stocksWithMetrics} valueKey="ttmEpsGrowth" format="pct" good={0.10} bad={-0.05}/>
+          <CompareBar label="EPS GROWTH FY1 (est)"        stocks={stocksWithMetrics} valueKey="fy1EpsGrowth" format="pct" good={0.10} bad={-0.05}/>
+          <CompareBar label="EPS GROWTH FY2 (est)"        stocks={stocksWithMetrics} valueKey="fy2EpsGrowth" format="pct" good={0.10} bad={-0.05}/>
+          <CompareBar label="EPS LATEST (actual)"         stocks={stocksWithMetrics} valueKey="eps"          format="raw"/>
         </CompareSection>
 
         {/* Summary table */}
@@ -1507,15 +1519,21 @@ function CompareView() {
             </thead>
             <tbody>
               {[
-                {label:'P/E',       key:'peRatio',    fmt:v=>v!=null?v.toFixed(1)+'x':'—'},
-                {label:'P/B',       key:'pbRatio',    fmt:v=>v!=null?v.toFixed(1)+'x':'—'},
-                {label:'PEG',       key:'pegRatio',   fmt:v=>v!=null?v.toFixed(2):'—'},
-                {label:'EV/EBITDA', key:'evEbitda',   fmt:v=>v!=null?v.toFixed(1)+'x':'—'},
-                {label:'Net Margin',key:'netMargin',  fmt:v=>v!=null?(v*100).toFixed(1)+'%':'—'},
-                {label:'ROE',       key:'roe',        fmt:v=>v!=null?(v*100).toFixed(1)+'%':'—'},
-                {label:'ROIC',      key:'roic',       fmt:v=>v!=null?(v*100).toFixed(1)+'%':'—'},
-                {label:'Rev Growth',key:'revGrowth',  fmt:v=>v!=null?(v*100).toFixed(1)+'%':'—'},
-                {label:'D/E',       key:'debtEquity', fmt:v=>v!=null?v.toFixed(2)+'x':'—'},
+                {label:'P/E (TTM)',    key:'peRatio',      fmt:v=>v!=null?v.toFixed(1)+'x':'—'},
+                {label:'P/E (FY1)',   key:'forwardPE',    fmt:v=>v!=null?v.toFixed(1)+'x':'—'},
+                {label:'P/E (FY2)',   key:'forward2PE',   fmt:v=>v!=null?v.toFixed(1)+'x':'—'},
+                {label:'P/B',         key:'pbRatio',      fmt:v=>v!=null?v.toFixed(1)+'x':'—'},
+                {label:'PEG',         key:'pegRatio',     fmt:v=>v!=null?v.toFixed(2):'—'},
+                {label:'EV/EBITDA',   key:'evEbitda',     fmt:v=>v!=null?v.toFixed(1)+'x':'—'},
+                {label:'Gross Margin',key:'grossMargin',  fmt:v=>v!=null?(v*100).toFixed(1)+'%':'—'},
+                {label:'Net Margin',  key:'netMargin',    fmt:v=>v!=null?(v*100).toFixed(1)+'%':'—'},
+                {label:'ROE',         key:'roe',          fmt:v=>v!=null?(v*100).toFixed(1)+'%':'—'},
+                {label:'ROIC',        key:'roic',         fmt:v=>v!=null?(v*100).toFixed(1)+'%':'—'},
+                {label:'Rev Growth',  key:'revGrowth',    fmt:v=>v!=null?(v*100).toFixed(1)+'%':'—'},
+                {label:'EPS Grw TTM', key:'ttmEpsGrowth', fmt:v=>v!=null?(v*100).toFixed(1)+'%':'—'},
+                {label:'EPS Grw FY1', key:'fy1EpsGrowth', fmt:v=>v!=null?(v*100).toFixed(1)+'%':'—'},
+                {label:'EPS Grw FY2', key:'fy2EpsGrowth', fmt:v=>v!=null?(v*100).toFixed(1)+'%':'—'},
+                {label:'D/E',         key:'debtEquity',   fmt:v=>v!=null?v.toFixed(2)+'x':'—'},
               ].map(row => (
                 <tr key={row.label} style={{borderTop:'1px solid var(--border)'}}>
                   <td className="mono" style={{fontSize:10,color:'var(--text3)',padding:'7px 16px 7px 0',letterSpacing:'0.04em'}}>{row.label}</td>
@@ -2533,7 +2551,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v24 · Compare tool</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v25 · fwd PE + EPS growth</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
