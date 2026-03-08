@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback } from "react"; // v5-logos-txchart
+import React, { useState, useMemo, useEffect, useCallback } from "react"; // v6-fix-logo-ticker
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, AreaChart, ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid } from "recharts";
 
 const FONTS = `@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=IBM+Plex+Mono:wght@300;400;500;600&family=DM+Sans:wght@300;400;500&display=swap');`;
@@ -316,7 +316,9 @@ function AssetLogo({pos, size=36}) {
   }
 
   // Stocks/ETFs: use Clearbit logo API
-  const domain = LOGO_DOMAINS[pos.symbol] || LOGO_DOMAINS[pos.fmpTicker?.split('.')[0]];
+  const baseSymbol = pos.symbol?.split('.')[0].split('-')[0].toUpperCase();
+  const baseFmp = pos.fmpTicker?.split('.')[0].toUpperCase();
+  const domain = LOGO_DOMAINS[baseSymbol] || LOGO_DOMAINS[baseFmp] || LOGO_DOMAINS[pos.symbol];
   if (domain && !imgErr) {
     return (
       <div style={{width:size,height:size,borderRadius:r,overflow:'hidden',flexShrink:0,background:'#fff',border:'1px solid rgba(255,255,255,0.08)'}}>
@@ -1526,7 +1528,7 @@ function StockDetail({ pos, onBack, transactions }) {
           const totalRealized = txs.filter(t=>t.type==='sell').reduce((s,t)=>s+t.amountEur,0);
 
           // Build chart: fetch 1Y historical prices + overlay buy/sell markers
-          const ticker = pos.fmpTicker || pos.symbol;
+          const ticker = (pos.fmpTicker || pos.symbol)?.split('.')[0];
 
           return (
             <div>
@@ -2094,7 +2096,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v5 · logos · txchart</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v6 · logos · txchart</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
