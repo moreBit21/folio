@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback } from "react"; // v16-fix-isin-names
+import React, { useState, useMemo, useEffect, useCallback } from "react"; // v17-layout-perf-alloc
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, AreaChart, ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid } from "recharts";
 
 const FONTS = `@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=IBM+Plex+Mono:wght@300;400;500;600&family=DM+Sans:wght@300;400;500&display=swap');`;
@@ -2150,7 +2150,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v16 · etf types · logos</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v17 · layout</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
@@ -2233,8 +2233,9 @@ export default function App() {
               ))}
             </div>
 
-            {/* ═══ PERFORMANCE CHART ═══ */}
+            {/* ═══ PERFORMANCE + ALLOCATION ═══ */}
             <div className="fu3 card" style={{padding:"20px 20px 14px",marginBottom:16}}>
+              {/* Header row */}
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8,marginBottom:12}}>
                 <div style={{display:"flex",alignItems:"center",gap:12}}>
                   <div className="mono" style={{fontSize:10,color:"var(--text2)",letterSpacing:"0.1em"}}>PERFORMANCE</div>
@@ -2256,63 +2257,99 @@ export default function App() {
                   ))}
                 </div>
               </div>
+
               {chartError && (
                 <div style={{padding:"8px 12px",marginBottom:8,
                   background:chartError.includes('Partial')?"rgba(240,180,41,0.08)":"rgba(255,77,109,0.1)",
                   border:"1px solid "+(chartError.includes('Partial')?"rgba(240,180,41,0.3)":"rgba(255,77,109,0.3)"),
-                  borderRadius:6,fontSize:11,
-                  color:chartError.includes('Partial')?"var(--gold)":"var(--red)",
-                  fontFamily:"IBM Plex Mono"}}>
+                  borderRadius:6,fontSize:11,color:chartError.includes('Partial')?"var(--gold)":"var(--red)",fontFamily:"IBM Plex Mono"}}>
                   ⚠ {chartError}
                 </div>
               )}
-              {chartLoading && (
-                <div style={{height:250,display:"flex",alignItems:"center",justifyContent:"center"}}>
-                  <span className="mono shimmer" style={{fontSize:11,color:"var(--text3)"}}>⟳ Loading price history…</span>
-                </div>
-              )}
-              {!chartLoading && !transactions.length && (
-                <div style={{height:250,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:10}}>
-                  <div style={{fontSize:32}}>📊</div>
-                  <div className="mono" style={{fontSize:11,color:"var(--text3)"}}>Import your transaction history to see performance</div>
-                  <button className="btn btn-ghost" style={{fontSize:11,padding:"5px 14px"}} onClick={()=>setShowImport(true)}>↑ Import CSV</button>
-                </div>
-              )}
-              {!chartLoading && transactions.length>0 && (
-                <ResponsiveContainer width="100%" height={250}>
-                  <ComposedChart data={chartData.length ? chartData : investedChartData} margin={{top:4,right:4,left:0,bottom:0}}>
-                    <defs>
-                      <linearGradient id="gPort" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#00e5a0" stopOpacity={0.15}/><stop offset="95%" stopColor="#00e5a0" stopOpacity={0}/>
-                      </linearGradient>
-                      {BENCHMARKS.map(b=>(
-                        <linearGradient key={b.id} id={"g_"+b.id} x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor={b.color} stopOpacity={0.10}/><stop offset="95%" stopColor={b.color} stopOpacity={0}/>
-                        </linearGradient>
-                      ))}
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#1c2730" vertical={false}/>
-                    <XAxis dataKey="date" tick={{fontFamily:"IBM Plex Mono",fontSize:9,fill:"#3d4f5e"}} axisLine={false} tickLine={false} interval="preserveStartEnd"/>
-                    <YAxis tick={{fontFamily:"IBM Plex Mono",fontSize:9,fill:"#3d4f5e"}} axisLine={false} tickLine={false} tickFormatter={v=>"€"+(v/1000).toFixed(0)+"k"} width={44} domain={chartDomain}/>
-                    <Tooltip content={<ChartTip/>}/>
 
-                    {activeBM.map(id=>{
-                      const b=BENCHMARKS.find(x=>x.id===id);
-                      return <Line key={id} type="linear" dataKey={id} name={b.label} stroke={b.color} strokeWidth={1.5} strokeOpacity={0.75} dot={false} connectNulls isAnimationActive={false}/>;
-                    })}
-                    <Area type="linear" dataKey="portfolio" name="Portfolio" stroke="#00e5a0" strokeWidth={2.5} fill="url(#gPort)" dot={false}/>
-                  </ComposedChart>
-                </ResponsiveContainer>
-              )}
-              <div className="mono" style={{fontSize:9,color:"var(--text3)",marginTop:6,textAlign:"right"}}>
-                {chartData.length ? "● REAL DATA — FMP" : transactions.length ? "● invested line only — prices loading" : ""}
-              </div>
-            </div>
-                        {/* Allocation — full width */}
-            <div style={{marginBottom:16}}>
-              <div className="card" style={{padding:20}}>
-                <div className="mono" style={{fontSize:10,color:"var(--text2)",letterSpacing:"0.1em",marginBottom:14}}>ALLOCATION BY ASSET</div>
-                <div style={{height:340}}><MiniPie data={allocData}/></div>
+              {/* Side-by-side: chart left, donut right */}
+              <div style={{display:"flex",gap:20,alignItems:"stretch"}}>
+
+                {/* ── Left: Performance Chart ── */}
+                <div style={{flex:"1 1 0",minWidth:0}}>
+                  {chartLoading && (
+                    <div style={{height:240,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                      <span className="mono shimmer" style={{fontSize:11,color:"var(--text3)"}}>⟳ Loading price history…</span>
+                    </div>
+                  )}
+                  {!chartLoading && !transactions.length && (
+                    <div style={{height:240,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:10}}>
+                      <div style={{fontSize:32}}>📊</div>
+                      <div className="mono" style={{fontSize:11,color:"var(--text3)"}}>Import your transaction history to see performance</div>
+                      <button className="btn btn-ghost" style={{fontSize:11,padding:"5px 14px"}} onClick={()=>setShowImport(true)}>↑ Import CSV</button>
+                    </div>
+                  )}
+                  {!chartLoading && transactions.length>0 && (
+                    <ResponsiveContainer width="100%" height={240}>
+                      <ComposedChart data={chartData.length ? chartData : investedChartData} margin={{top:4,right:4,left:0,bottom:0}}>
+                        <defs>
+                          <linearGradient id="gPort" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#00e5a0" stopOpacity={0.15}/><stop offset="95%" stopColor="#00e5a0" stopOpacity={0}/>
+                          </linearGradient>
+                          {BENCHMARKS.map(b=>(
+                            <linearGradient key={b.id} id={"g_"+b.id} x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor={b.color} stopOpacity={0.10}/><stop offset="95%" stopColor={b.color} stopOpacity={0}/>
+                            </linearGradient>
+                          ))}
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#1c2730" vertical={false}/>
+                        <XAxis dataKey="date" tick={{fontFamily:"IBM Plex Mono",fontSize:9,fill:"#3d4f5e"}} axisLine={false} tickLine={false} interval="preserveStartEnd"/>
+                        <YAxis tick={{fontFamily:"IBM Plex Mono",fontSize:9,fill:"#3d4f5e"}} axisLine={false} tickLine={false} tickFormatter={v=>"€"+(v/1000).toFixed(0)+"k"} width={44} domain={chartDomain}/>
+                        <Tooltip content={<ChartTip/>}/>
+                        {activeBM.map(id=>{
+                          const b=BENCHMARKS.find(x=>x.id===id);
+                          return <Line key={id} type="linear" dataKey={id} name={b.label} stroke={b.color} strokeWidth={1.5} strokeOpacity={0.75} dot={false} connectNulls isAnimationActive={false}/>;
+                        })}
+                        <Area type="linear" dataKey="portfolio" name="Portfolio" stroke="#00e5a0" strokeWidth={2.5} fill="url(#gPort)" dot={false}/>
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  )}
+                  <div className="mono" style={{fontSize:9,color:"var(--text3)",marginTop:4,textAlign:"right"}}>
+                    {chartData.length ? "● REAL DATA — FMP" : transactions.length ? "● invested line only — prices loading" : ""}
+                  </div>
+                </div>
+
+                {/* ── Divider ── */}
+                <div style={{width:1,background:"var(--border)",flexShrink:0}}/>
+
+                {/* ── Right: Allocation Donut + Legend ── */}
+                <div style={{width:220,flexShrink:0,display:"flex",flexDirection:"column",justifyContent:"center",gap:0}}>
+                  <div className="mono" style={{fontSize:10,color:"var(--text2)",letterSpacing:"0.1em",marginBottom:10}}>ALLOCATION</div>
+                  {allocData.length ? (
+                    <>
+                      <div style={{height:160,position:"relative"}}>
+                        <MiniPie data={allocData}/>
+                        {/* Centre label */}
+                        <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",pointerEvents:"none"}}>
+                          <div className="mono" style={{fontSize:13,fontWeight:600,color:"var(--text)"}}>{allocData.length}</div>
+                          <div className="mono" style={{fontSize:9,color:"var(--text3)"}}>positions</div>
+                        </div>
+                      </div>
+                      {/* Legend */}
+                      <div style={{display:"flex",flexDirection:"column",gap:6,marginTop:12}}>
+                        {allocData.slice(0,6).map(d=>(
+                          <div key={d.name} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
+                            <div style={{display:"flex",alignItems:"center",gap:6}}>
+                              <div style={{width:8,height:8,borderRadius:2,background:d.color,flexShrink:0}}/>
+                              <span className="mono" style={{fontSize:10,color:"var(--text2)",maxWidth:110,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.name}</span>
+                            </div>
+                            <span className="mono" style={{fontSize:10,color:"var(--text)",fontWeight:500}}>{d.value}%</span>
+                          </div>
+                        ))}
+                        {allocData.length>6&&<div className="mono" style={{fontSize:9,color:"var(--text3)",marginTop:2}}>+{allocData.length-6} more</div>}
+                      </div>
+                    </>
+                  ) : (
+                    <div style={{height:200,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                      <span className="mono" style={{fontSize:10,color:"var(--text3)"}}>No positions</span>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
 
