@@ -2236,10 +2236,22 @@ export default function App() {
               </div>
             </div>
           )}
-        </div>
-      </div>
+        </div>{/* end settings */}
+        </div>{/* end page content */}
+        </div>{/* end main-scroll */}
 
-      
+        {/* ── Mobile Bottom Nav ── */}
+        <nav className="mobile-bottom-nav">
+          {NAV_ITEMS.map(item=>(
+            <button key={item.id} className={`mob-nav-btn${nav===item.id?" active":""}`}
+              onClick={()=>setNav(item.id)}>
+              <span className="icon">{item.icon}</span>
+              {item.label==="Dashboard"?"Home":item.label==="News Feed"?"News":item.label}
+            </button>
+          ))}
+        </nav>
+      </div>{/* end outer flex */}
+
       {showImport&&<ImportModal onClose={()=>setShowImport(false)} onImport={(imported)=>{
     if(imported?.type==="transactions"){
       const txs = imported.data;
@@ -2318,7 +2330,6 @@ export default function App() {
             </button>
           ))}
         </nav>
-      </div>
     </>
   );
 }
