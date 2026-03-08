@@ -54,6 +54,36 @@ const CSS = `
   .logo-fallback{width:36px;height:36px;border-radius:9px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
   .price-live{position:relative;display:inline-flex;align-items:center;gap:5px}
   .price-live::after{content:'';position:absolute;right:-10px;top:50%;transform:translateY(-50%);width:4px;height:4px;border-radius:50%;background:var(--green);animation:pulse 2s infinite}
+  /* ── Mobile ── */
+  @media(max-width:768px){
+    .sidebar{display:none!important}
+    .main-scroll{padding:16px 14px 80px!important}
+    .kpi-grid{grid-template-columns:1fr 1fr!important}
+    .trow{grid-template-columns:1fr auto!important}
+    .trow-qty,.trow-avg,.trow-pnl{display:none!important}
+    .modal{width:calc(100vw - 32px)!important;padding:20px!important}
+    .chart-bm-row{flex-wrap:wrap;gap:4px!important}
+    .mobile-bottom-nav{display:flex!important}
+    .page-header-actions{display:none!important}
+  }
+  @media(min-width:769px){
+    .mobile-bottom-nav{display:none!important}
+  }
+  .mobile-bottom-nav{
+    position:fixed;bottom:0;left:0;right:0;height:60px;
+    background:var(--surface);border-top:1px solid var(--border);
+    display:flex;align-items:center;justify-content:space-around;
+    z-index:50;padding:0 8px;
+  }
+  .mob-nav-btn{
+    display:flex;flex-direction:column;align-items:center;gap:2px;
+    padding:6px 12px;border-radius:8px;cursor:pointer;
+    font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:0.06em;
+    color:var(--text3);background:transparent;border:none;transition:all 0.15s;
+    flex:1;
+  }
+  .mob-nav-btn.active{color:var(--green)}
+  .mob-nav-btn span.icon{font-size:18px;line-height:1}
 `;
 
 // ── Positions config (prices fetched live) ──
@@ -254,6 +284,16 @@ function AssetLogo({pos}) {
         overflow:"hidden"
       }}>
         {svg}
+        {/* ── Mobile Bottom Nav ── */}
+        <nav className="mobile-bottom-nav">
+          {NAV_ITEMS.map(item=>(
+            <button key={item.id} className={`mob-nav-btn${nav===item.id?" active":""}`}
+              onClick={()=>setNav(item.id)}>
+              <span className="icon">{item.icon}</span>
+              {item.label==="Dashboard"?"Home":item.label==="News Feed"?"News":item.label}
+            </button>
+          ))}
+        </nav>
       </div>
     );
   }
@@ -994,7 +1034,7 @@ const fmt  = (n,d=2)=>n.toLocaleString("de-DE",{minimumFractionDigits:d,maximumF
 const fmtE = (n)=>`€${fmt(Math.abs(n),0)}`;
 
 // ── StockDetail — full page (3a financials + 3b charts + 3d scorecard) ──────
-function StockDetail({ pos, onBack }) {
+function StockDetail({ pos, onBack, transactions }) {
   const [data, setData]     = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError]   = useState(null);
@@ -1153,7 +1193,7 @@ function StockDetail({ pos, onBack }) {
 
       {/* ── Tabs ── */}
       <div style={{display:'flex',gap:6,marginBottom:20}}>
-        {[['overview','Overview'],['financials','Financials'],['ratios','Ratios']].map(([id,label])=>(
+        {[['overview','Overview'],['financials','Financials'],['ratios','Ratios'],['buchungen','Buchungen']].map(([id,label])=>(
           <button key={id} className="btn" onClick={()=>setTab(id)}
             style={{fontSize:11,padding:'5px 14px',
               ...(tab===id?{background:'var(--green-dim)',color:'var(--green)',borderColor:'rgba(0,229,160,0.3)'}:{})}}>
@@ -1335,6 +1375,117 @@ function StockDetail({ pos, onBack }) {
             </div>
           </div>
         </>)}
+
+        {/* ══ BUCHUNGEN TAB ══ */}
+        {tab==='buchungen' && (() => {
+          const txs = (transactions||[])
+            .filter(t => t.isin === pos.isin)
+            .sort((a,b) => b.date.localeCompare(a.date));
+
+          if (!txs.length) return (
+            <div className="card" style={{padding:40,textAlign:'center',color:'var(--text3)',fontSize:13}}>
+              No transactions found for this position.
+            </div>
+          );
+
+          // Running P&L per lot: for each buy, P&L = (currentPrice - buyPrice) * qty
+          // For sells: realised P&L = (sellPrice - avgCost) * qty — we approximate with sell price vs pos.avgPrice
+          const totalInvested = txs.filter(t=>t.type==='buy').reduce((s,t)=>s+t.amountEur,0);
+          const totalRealized = txs.filter(t=>t.type==='sell').reduce((s,t)=>s+t.amountEur,0);
+
+          return (
+            <div>
+              {/* Summary bar */}
+              <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:10,marginBottom:16}}>
+                {[
+                  { l:'TOTAL INVESTED', v: fmtE(totalInvested), c:'var(--text)' },
+                  { l:'TOTAL SOLD',     v: fmtE(totalRealized), c:'var(--text)' },
+                  { l:'TRANSACTIONS',   v: txs.length,          c:'var(--text)' },
+                ].map(({l,v,c})=>(
+                  <div key={l} className="card" style={{padding:'12px 14px'}}>
+                    <div className="mono" style={{fontSize:8,color:'var(--text3)',letterSpacing:'0.1em',marginBottom:4}}>{l}</div>
+                    <div className="mono" style={{fontSize:14,fontWeight:600,color:c}}>{v}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Transaction list */}
+              <div className="card" style={{padding:0,overflow:'hidden'}}>
+                {/* Header */}
+                <div style={{display:'grid',gridTemplateColumns:'90px 1fr 1fr 1fr',
+                  padding:'8px 16px',background:'var(--surface2)',borderBottom:'1px solid var(--border)'}}>
+                  {['DATE','DETAILS','AMOUNT','P&L'].map(h=>(
+                    <div key={h} className="mono" style={{fontSize:9,color:'var(--text3)',letterSpacing:'0.1em',
+                      textAlign: h==='DATE'?'left':'right'}}>{h}</div>
+                  ))}
+                </div>
+
+                {txs.map((tx, i) => {
+                  const isBuy  = tx.type === 'buy';
+                  const pricePerShare = tx.qty > 0 ? tx.amountEur / tx.qty : 0;
+                  // P&L: unrealised for buys (vs current price), realised for sells (vs avg cost)
+                  const pnl = isBuy
+                    ? (pos.currentPrice - pricePerShare) * tx.qty
+                    : (pricePerShare - pos.avgPrice) * tx.qty;
+                  const pnlPct = pricePerShare > 0
+                    ? ((isBuy ? pos.currentPrice : pricePerShare) / pricePerShare - 1) * 100 * (isBuy ? 1 : -1) * (isBuy ? 1 : -1)
+                    : 0;
+                  const pnlUp = pnl >= 0;
+
+                  return (
+                    <div key={i} style={{
+                      display:'grid', gridTemplateColumns:'90px 1fr 1fr 1fr',
+                      padding:'12px 16px', borderBottom: i<txs.length-1?'1px solid var(--border)':'none',
+                      alignItems:'center',
+                    }}>
+                      {/* Date + type badge */}
+                      <div>
+                        <div style={{marginBottom:4}}>
+                          <span style={{
+                            fontSize:9, fontWeight:700, letterSpacing:'0.06em',
+                            padding:'2px 7px', borderRadius:4,
+                            background: isBuy?'rgba(0,229,160,0.12)':'rgba(255,77,109,0.12)',
+                            color: isBuy?'var(--green)':'var(--red)',
+                          }}>
+                            {isBuy ? 'KAUF' : 'VERKAUF'}
+                          </span>
+                        </div>
+                        <div className="mono" style={{fontSize:10,color:'var(--text3)'}}>{tx.date}</div>
+                      </div>
+
+                      {/* Qty × price */}
+                      <div style={{textAlign:'right'}}>
+                        <div className="mono" style={{fontSize:13,fontWeight:500}}>
+                          {tx.qty % 1 === 0 ? tx.qty : tx.qty.toFixed(4)} × {fmtE(pricePerShare)}
+                        </div>
+                        <div className="mono" style={{fontSize:10,color:'var(--text3)'}}>
+                          {tx.qty % 1 === 0 ? tx.qty : tx.qty.toFixed(4)} Stk.
+                        </div>
+                      </div>
+
+                      {/* Total amount */}
+                      <div style={{textAlign:'right'}}>
+                        <div className="mono" style={{fontSize:13,fontWeight:500}}>{fmtE(tx.amountEur)}</div>
+                      </div>
+
+                      {/* P&L */}
+                      <div style={{textAlign:'right'}}>
+                        <div className="mono" style={{fontSize:13,fontWeight:600,
+                          color: pnlUp?'var(--green)':'var(--red)'}}>
+                          {pnlUp?'+':''}{fmtE(pnl)}
+                        </div>
+                        <div className="mono" style={{fontSize:10,
+                          color: pnlUp?'var(--green)':'var(--red)'}}>
+                          {isBuy ? 'unrealised' : 'realised'}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
       </>)}
     </div>
   );
@@ -1801,7 +1952,7 @@ export default function App() {
       <div style={{display:"flex",height:"100vh",overflow:"hidden",background:"var(--bg)"}}>
 
         {/* ── Sidebar ── */}
-        <div style={{width:220,flexShrink:0,background:"var(--surface)",borderRight:"1px solid var(--border)",display:"flex",flexDirection:"column",padding:"20px 12px"}}>
+        <div className="sidebar" style={{width:220,flexShrink:0,background:"var(--surface)",borderRight:"1px solid var(--border)",display:"flex",flexDirection:"column",padding:"20px 12px"}}>
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
@@ -1831,7 +1982,7 @@ export default function App() {
         </div>
 
         {/* ── Main ── */}
-        <div style={{flex:1,overflow:"auto",padding:"26px 30px"}}>
+        <div className="main-scroll" style={{flex:1,overflow:"auto",padding:"26px 30px"}}>
 
           {/* Header */}
           <div className="fu" style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:22}}>
@@ -1871,7 +2022,7 @@ export default function App() {
             )}
 
 
-            <div className="fu2" style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:16}}>
+            <div className="fu2 kpi-grid" style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:16}}>
               {[
                 {label:"PORTFOLIO VALUE", val: priceLoading?"Loading…":`€${fmt(totalVal,0)}`, sub:`${vis.length} positions`, bar:null},
                 {label:"TOTAL P&L",       val: priceLoading?"…":`${pnl>=0?"+":"-"}€${fmt(Math.abs(pnl),0)}`, sub:`${pnl>=0?"▲":"▼"} ${fmt(Math.abs(pnlPct))}%`, bar:pnl>=0?"g":"r"},
@@ -1992,7 +2143,7 @@ export default function App() {
 
               {/* Table header — sortable */}
               <div className="trow" style={{padding:"9px 18px",borderBottom:"1px solid var(--border2)",borderTop:"1px solid var(--border)"}}>
-                {[["name","ASSET"],["qty","QTY"],["price","AVG PRICE"],["value","LIVE PRICE"],["pnl","P&L"],["pnlpct","P&L %"]].map(([col,label])=>{
+                {[["name","ASSET",""],["qty","QTY","trow-qty"],["price","AVG PRICE","trow-avg"],["value","LIVE PRICE",""],["pnl","P&L",""],["pnlpct","P&L %",""]].map(([col,label,cls])=>{
                   const active=sortBy===col;
                   return <div key={col} onClick={()=>toggleSort(col)} className="mono"
                     style={{fontSize:9,color:active?"var(--green)":"var(--text3)",letterSpacing:"0.12em",cursor:"pointer",userSelect:"none",display:"flex",alignItems:"center",gap:4}}>
@@ -2021,12 +2172,12 @@ export default function App() {
                     </div>
 
                     {/* Qty */}
-                    <div className="mono" style={{fontSize:12,color:"var(--text2)"}}>
+                    <div className="mono trow-qty" style={{fontSize:12,color:"var(--text2)"}}>
                       {pos.qty < 1 ? pos.qty.toFixed(4) : fmt(pos.qty, pos.qty<10?3:2)}
                     </div>
 
                     {/* Avg price */}
-                    <div className="mono" style={{fontSize:12,color:"var(--text2)"}}>
+                    <div className="mono trow-avg" style={{fontSize:12,color:"var(--text2)"}}>
                       {fmtE(pos.avgPrice)}
                     </div>
 
@@ -2043,7 +2194,7 @@ export default function App() {
                     <div className="mono" style={{fontSize:13,color:up?"var(--green)":"var(--red)",fontWeight:500}}>
                       {up?"+":"-"}{fmtE(Math.abs(p))}
                     </div>
-                    <div className="mono" style={{fontSize:13,color:up?"var(--green)":"var(--red)",fontWeight:500}}>
+                    <div className="mono trow-pnl" style={{fontSize:13,color:up?"var(--green)":"var(--red)",fontWeight:500}}>
                       {pos.avgPrice>0?(up?"+":"")+fmt(pp)+"%":"—"}
                     </div>
                   </div>
@@ -2052,7 +2203,7 @@ export default function App() {
             </div>
           </>)}
 
-          {nav==="stock"&&selectedPos&&<StockDetail pos={selectedPos} onBack={()=>{setNav("dashboard");setSelectedPos(null)}}/> }
+          {nav==="stock"&&selectedPos&&<StockDetail pos={selectedPos} onBack={()=>{setNav("dashboard");setSelectedPos(null)}} transactions={transactions}/> }
           {nav==="screener"&&<div className="fu card" style={{padding:40,textAlign:"center"}}><div className="serif" style={{fontSize:22,color:"var(--text2)",marginBottom:8}}>Stock Screener</div><div style={{fontSize:13,color:"var(--text3)"}}>Coming in Phase 3 — filter by P/E, dividend yield, sector, region & more</div></div>}
           {nav==="news"&&<NewsFeed positions={positions}/>}
           {nav==="settings"&&(
