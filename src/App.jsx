@@ -272,25 +272,70 @@ function buildChart(months, positions, activeBrokers, activeBenchmarks, transact
 }
 
 // ── Logo component — inline SVG, no external requests ──
-function AssetLogo({pos}) {
-  const svg = getLogoSVG(pos.symbol);
-  if (svg) {
+// Logo domain map for clearbit
+const LOGO_DOMAINS = {
+  AAPL:'apple.com', MSFT:'microsoft.com', GOOGL:'google.com', GOOG:'google.com',
+  AMZN:'amazon.com', META:'meta.com', NVDA:'nvidia.com', TSLA:'tesla.com',
+  JPM:'jpmorganchase.com', GS:'goldmansachs.com', SHOP:'shopify.com',
+  COIN:'coinbase.com', AVGO:'broadcom.com', QCOM:'qualcomm.com',
+  HUBS:'hubspot.com', TTD:'thetradedesk.com', NFLX:'netflix.com',
+  ORCL:'oracle.com', ADBE:'adobe.com', CRM:'salesforce.com', AMD:'amd.com',
+  INTC:'intel.com', PYPL:'paypal.com', DIS:'disney.com', V:'visa.com',
+  MA:'mastercard.com', WMT:'walmart.com', PG:'pg.com', JNJ:'jnj.com',
+  XOM:'exxonmobil.com', CVX:'chevron.com', BAC:'bankofamerica.com',
+  WFC:'wellsfargo.com', MRNA:'modernatx.com', PFE:'pfizer.com',
+  KO:'coca-cola.com', PEP:'pepsico.com', MCD:'mcdonalds.com',
+  SBUX:'starbucks.com', NKE:'nike.com', ABNB:'airbnb.com',
+  UBER:'uber.com', LYFT:'lyft.com', SNAP:'snap.com', TWTR:'twitter.com',
+  BILI:'bilibili.com', BABA:'alibaba.com', TCEHY:'tencent.com',
+  SPY:'ssga.com', QQQ:'invesco.com', GLD:'spdrgoldshares.com',
+  IVV:'ishares.com', VTI:'vanguard.com',
+};
+const CRYPTO_LOGOS = {
+  BTC:'bitcoin', ETH:'ethereum', SOL:'solana', BNB:'binance-coin',
+  XRP:'xrp', ADA:'cardano', DOT:'polkadot', MATIC:'polygon',
+  AVAX:'avalanche', LINK:'chainlink', UNI:'uniswap', AAVE:'aave',
+};
+function AssetLogo({pos, size=36}) {
+  const [imgErr, setImgErr] = React.useState(false);
+  const r = Math.round(size * 0.25);
+
+  // Crypto: use CoinGecko asset logos
+  if (pos.type === 'crypto' && CRYPTO_LOGOS[pos.symbol] && !imgErr) {
+    const url = `https://assets.coingecko.com/coins/images/1/small/bitcoin.png`
+      .replace('1/small/bitcoin', (() => {
+        const m = {BTC:'1/small/bitcoin',ETH:'279/small/ethereum',SOL:'4128/small/solana',BNB:'825/small/binance-coin',XRP:'44/small/xrp-symbol-white-128',ADA:'975/small/cardano',DOT:'12171/small/polkadot',MATIC:'4713/small/matic-token',AVAX:'12559/small/avalanche-2',LINK:'877/small/chainlink-new-logo',UNI:'12504/small/uni',AAVE:'7279/small/aave-v3-logo'};
+        return m[pos.symbol] || '1/small/bitcoin';
+      })());
     return (
-      <div style={{
-        width:36, height:36, borderRadius:9, flexShrink:0,
-        background: pos.type==="crypto" ? "transparent" : `${pos.color}15`,
-        border:`1px solid ${pos.color}33`,
-        display:"flex", alignItems:"center", justifyContent:"center",
-        overflow:"hidden"
-      }}>
-        {svg}
+      <div style={{width:size,height:size,borderRadius:r,overflow:'hidden',flexShrink:0,background:'#1a1a2e'}}>
+        <img src={url} width={size} height={size} style={{objectFit:'cover'}}
+          onError={()=>setImgErr(true)}/>
       </div>
     );
   }
+
+  // Stocks/ETFs: use Clearbit logo API
+  const domain = LOGO_DOMAINS[pos.symbol] || LOGO_DOMAINS[pos.fmpTicker?.split('.')[0]];
+  if (domain && !imgErr) {
+    return (
+      <div style={{width:size,height:size,borderRadius:r,overflow:'hidden',flexShrink:0,background:'#fff',border:'1px solid rgba(255,255,255,0.08)'}}>
+        <img src={`https://logo.clearbit.com/${domain}`} width={size} height={size}
+          style={{objectFit:'cover'}} onError={()=>setImgErr(true)}/>
+      </div>
+    );
+  }
+
   // Fallback: colored ticker badge
+  const svg = getLogoSVG(pos.symbol);
+  if (svg) return (
+    <div style={{width:size,height:size,borderRadius:r,flexShrink:0,background:`${pos.color}15`,border:`1px solid ${pos.color}33`,display:'flex',alignItems:'center',justifyContent:'center',overflow:'hidden'}}>
+      {svg}
+    </div>
+  );
   return (
-    <div style={{width:36,height:36,borderRadius:9,background:`${pos.color}22`,border:`1px solid ${pos.color}44`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-      <span className="mono" style={{fontSize:9,color:pos.color,fontWeight:700}}>{pos.symbol.slice(0,4)}</span>
+    <div style={{width:size,height:size,borderRadius:r,background:`${pos.color}22`,border:`1px solid ${pos.color}44`,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+      <span className="mono" style={{fontSize:size*0.25,color:pos.color,fontWeight:700}}>{pos.symbol.slice(0,4)}</span>
     </div>
   );
 }
@@ -1024,6 +1069,103 @@ const fmt  = (n,d=2)=>n.toLocaleString("de-DE",{minimumFractionDigits:d,maximumF
 const fmtE = (n)=>`€${fmt(Math.abs(n),0)}`;
 
 // ── StockDetail — full page (3a financials + 3b charts + 3d scorecard) ──────
+
+// ── TxPriceChart: price history with buy/sell markers ──
+function TxPriceChart({ ticker, txs, currentPrice }) {
+  const [prices, setPrices] = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    if (!ticker) return;
+    setLoading(true);
+    const to   = new Date().toISOString().slice(0,10);
+    const from = new Date(Date.now() - 365*2*86400000).toISOString().slice(0,10);
+    fetch(`/api/fmp?path=/stable/historical-price-eod/full%3Fsymbol%3D${ticker}%26from%3D${from}%26to%3D${to}`)
+      .then(r=>r.json())
+      .then(data=>{
+        const arr = Array.isArray(data) ? data : (data?.historical||[]);
+        const sorted = [...arr].sort((a,b)=>a.date.localeCompare(b.date));
+        setPrices(sorted);
+      })
+      .catch(()=>{})
+      .finally(()=>setLoading(false));
+  }, [ticker]);
+
+  if (loading) return (
+    <div className="card shimmer" style={{height:160,marginBottom:16,borderRadius:10}}/>
+  );
+  if (!prices.length) return null;
+
+  const firstTx = txs.length ? txs.reduce((a,b)=>a.date<b.date?a:b).date : null;
+  const visible = firstTx ? prices.filter(p=>p.date>=firstTx) : prices;
+  if (!visible.length) return null;
+
+  const vals = visible.map(p=>p.close);
+  const minV = Math.min(...vals)*0.97;
+  const maxV = Math.max(...vals)*1.03;
+  const W = 700, H = 140, PAD = {t:10,r:12,b:24,l:44};
+  const cw = W - PAD.l - PAD.r;
+  const ch = H - PAD.t - PAD.b;
+  const xf = i => PAD.l + (i/(visible.length-1||1))*cw;
+  const yf = v => PAD.t + ch - ((v-minV)/(maxV-minV||1))*ch;
+
+  const pathD = visible.map((p,i)=>`${i===0?'M':'L'}${xf(i).toFixed(1)},${yf(p.close).toFixed(1)}`).join(' ');
+  const areaD = pathD + ` L${xf(visible.length-1)},${H-PAD.b} L${PAD.l},${H-PAD.b} Z`;
+
+  const markers = txs.map(tx => {
+    const idx = visible.findIndex(p=>p.date>=tx.date);
+    if (idx < 0) return null;
+    return { ...tx, cx: xf(idx), cy: yf(visible[idx].close), isBuy: tx.type==='buy' };
+  }).filter(Boolean);
+
+  const yLabels = [0,0.5,1].map(t=>({ v: minV+t*(maxV-minV), y: PAD.t+ch*(1-t) }));
+  const xLabels = [0,0.33,0.66,1].map(t=>({ i:Math.round(t*(visible.length-1)) }))
+    .map(l=>({ ...l, date: visible[l.i]?.date?.slice(0,7) }));
+  const isUp = currentPrice >= (visible[0]?.close||0);
+
+  return (
+    <div className="card" style={{padding:'16px 16px 10px',marginBottom:16,overflow:'hidden'}}>
+      <div className="mono" style={{fontSize:9,color:'var(--text3)',letterSpacing:'0.1em',marginBottom:10}}>PRICE HISTORY</div>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:'auto',display:'block'}}>
+        <defs>
+          <linearGradient id="txgrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={isUp?'#00e5a0':'#ff4d6d'} stopOpacity="0.18"/>
+            <stop offset="100%" stopColor={isUp?'#00e5a0':'#ff4d6d'} stopOpacity="0"/>
+          </linearGradient>
+        </defs>
+        {yLabels.map((l,i)=>(
+          <g key={i}>
+            <line x1={PAD.l} x2={W-PAD.r} y1={l.y} y2={l.y} stroke="#1c2730" strokeWidth="1"/>
+            <text x={PAD.l-4} y={l.y+4} textAnchor="end" fill="#3d4f5e" fontSize="8" fontFamily="IBM Plex Mono">
+              {l.v>=1000?`${(l.v/1000).toFixed(1)}k`:l.v.toFixed(1)}
+            </text>
+          </g>
+        ))}
+        <path d={areaD} fill="url(#txgrad)"/>
+        <path d={pathD} fill="none" stroke={isUp?'#00e5a0':'#ff4d6d'} strokeWidth="1.5"/>
+        {xLabels.map((l,i)=>(
+          <text key={i} x={xf(l.i)} y={H-4} textAnchor="middle" fill="#3d4f5e" fontSize="8" fontFamily="IBM Plex Mono">{l.date}</text>
+        ))}
+        {markers.map((m,i)=>(
+          <g key={i}>
+            <line x1={m.cx} x2={m.cx} y1={PAD.t} y2={H-PAD.b} stroke={m.isBuy?'rgba(0,229,160,0.4)':'rgba(255,77,109,0.4)'} strokeWidth="1" strokeDasharray="3,2"/>
+            <circle cx={m.cx} cy={m.cy} r="5" fill={m.isBuy?'#00e5a0':'#ff4d6d'} stroke="#080c10" strokeWidth="1.5"/>
+            <text x={m.cx} y={m.cy+(m.isBuy?14:-8)} textAnchor="middle" fill={m.isBuy?'#00e5a0':'#ff4d6d'} fontSize="7" fontFamily="IBM Plex Mono" fontWeight="700">{m.isBuy?'B':'S'}</text>
+          </g>
+        ))}
+      </svg>
+      <div style={{display:'flex',gap:16,marginTop:4}}>
+        {[['#00e5a0','BUY'],['#ff4d6d','SELL']].map(([c,l])=>(
+          <div key={l} style={{display:'flex',alignItems:'center',gap:5}}>
+            <div style={{width:8,height:8,borderRadius:'50%',background:c}}/>
+            <span className="mono" style={{fontSize:9,color:'var(--text3)'}}>{l}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function StockDetail({ pos, onBack, transactions }) {
   const [data, setData]     = useState(null);
   const [loading, setLoading] = useState(true);
@@ -1183,7 +1325,7 @@ function StockDetail({ pos, onBack, transactions }) {
 
       {/* ── Tabs ── */}
       <div style={{display:'flex',gap:6,marginBottom:20}}>
-        {[['overview','Overview'],['financials','Financials'],['ratios','Ratios'],['buchungen','Buchungen']].map(([id,label])=>(
+        {[['overview','Overview'],['financials','Financials'],['ratios','Ratios'],['transactions','Transactions']].map(([id,label])=>(
           <button key={id} className="btn" onClick={()=>setTab(id)}
             style={{fontSize:11,padding:'5px 14px',
               ...(tab===id?{background:'var(--green-dim)',color:'var(--green)',borderColor:'rgba(0,229,160,0.3)'}:{})}}>
@@ -1366,8 +1508,8 @@ function StockDetail({ pos, onBack, transactions }) {
           </div>
         </>)}
 
-        {/* ══ BUCHUNGEN TAB ══ */}
-        {tab==='buchungen' && (() => {
+        {/* ══ TRANSACTIONS TAB ══ */}
+        {tab==='transactions' && (() => {
           const txs = (transactions||[])
             .filter(t => t.isin === pos.isin)
             .sort((a,b) => b.date.localeCompare(a.date));
@@ -1383,8 +1525,14 @@ function StockDetail({ pos, onBack, transactions }) {
           const totalInvested = txs.filter(t=>t.type==='buy').reduce((s,t)=>s+t.amountEur,0);
           const totalRealized = txs.filter(t=>t.type==='sell').reduce((s,t)=>s+t.amountEur,0);
 
+          // Build chart: fetch 1Y historical prices + overlay buy/sell markers
+          const ticker = pos.fmpTicker || pos.symbol;
+
           return (
             <div>
+              {/* ── Price chart with buy/sell markers ── */}
+              {ticker && <TxPriceChart ticker={ticker} txs={txs} currentPrice={pos.currentPrice}/>}
+
               {/* Summary bar */}
               <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:10,marginBottom:16}}>
                 {[
