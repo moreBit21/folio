@@ -1775,75 +1775,127 @@ function StockDetail({ pos, onBack, transactions }) {
   // ── Scorecard ──
   const SCORE_COLOR = { green:'#00e5a0', gold:'#f0b429', red:'#ff4d6d', gray:'#3d4f5e' };
   const SCORE_BG    = { green:'rgba(0,229,160,0.08)', gold:'rgba(240,180,41,0.08)', red:'rgba(255,77,109,0.08)', gray:'rgba(61,79,94,0.08)' };
+  const SCORE_LABEL = { green:'STRONG', gold:'OK', red:'WEAK', gray:'N/A' };
 
-  // ── Grading helpers ──────────────────────────────────────────────────────────
-  // Sources: Benjamin Graham "The Intelligent Investor" (P/E ≤15, P/B ≤1.5),
-  //          Damodaran (NYU Stern) sector data, CFA Institute ratio analysis,
-  //          Wall Street Prep (ROIC 10-15% threshold), S&P 500 historical avg P/E ~17x
+  // ── Sector-adjusted thresholds (Damodaran NYU Stern sector averages) ──────
+  const sector = (data?.sector || '').toLowerCase();
+  const isTech     = /tech|software|semiconductor|information/i.test(sector);
+  const isFinance  = /financ|bank|insurance|reit/i.test(sector);
+  const isRetail   = /retail|consumer staple|grocery/i.test(sector);
+  const isEnergy   = /energy|oil|gas|util/i.test(sector);
+  const isHealth   = /health|pharma|biotech|medical/i.test(sector);
+
+  // Net margin thresholds: tech ~20%+ strong, retail ~3%+ ok (Damodaran medians)
+  const nmGood = isTech ? 0.15 : isFinance ? 0.20 : isRetail ? 0.04 : isEnergy ? 0.08 : isHealth ? 0.12 : 0.10;
+  const nmOk   = isTech ? 0.05 : isFinance ? 0.08 : isRetail ? 0.01 : isEnergy ? 0.03 : isHealth ? 0.03 : 0.03;
+  // Revenue growth: tech expects more, utilities less
+  const growthGood = isTech ? 0.10 : isFinance ? 0.05 : isRetail ? 0.03 : isEnergy ? 0.05 : 0.05;
+  const growthOk   = isTech ? 0.02 : isFinance ? 0.00 : isRetail ? 0.00 : isEnergy ? 0.00 : 0.00;
+  // D/E: utilities/banks carry more structural debt
+  const deGood = isFinance ? 2.0 : isEnergy || isRetail ? 1.5 : 1.0;
+  const deOk   = isFinance ? 4.0 : isEnergy || isRetail ? 3.0 : 2.0;
+
   const grade    = (val, good, ok) => val==null?'gray': val>=good?'green': val>=ok?'gold':'red';
   const gradeInv = (val, good, ok) => val==null?'gray': val<=good?'green': val<=ok?'gold':'red';
+  const trendGrade = (cur, prv) => {
+    if (cur==null||prv==null||prv===0) return 'gray';
+    const g = cur/prv - 1;
+    return g > growthGood ? 'green' : g > growthOk ? 'gold' : 'red';
+  };
 
-  // Revenue trend: +5% YoY = healthy growth (Damodaran avg US equity growth),
-  //                -5% = concern, flat in between = caution
-  const trendGrade = (cur, prv) => cur==null||prv==null?'gray': cur>prv*1.05?'green': cur<prv*0.95?'red':'gold';
-
-  // Profitability grading: net margin thresholds vary widely by sector.
-  // We use a composite score across margin + ROE + ROIC for a fairer picture.
-  // Net margin: >10% strong (Damodaran S&P 500 median ~11%), >3% acceptable, <3% weak
-  // ROE: >15% strong (Buffett/Graham standard, cost of equity ~10-12%),
-  //       >8% acceptable (above typical cost of equity floor), <8% weak
-  // ROIC: >10% strong (above WACC for most firms, Wall Street Prep),
-  //        >5% acceptable, <5% value-destroying territory
   const profitColor = (() => {
-    const nm   = last.netMargin;
-    const roe  = last.roe;
-    const roic = last.roic;
     const scores = [
-      nm   != null ? (nm   >= 0.10 ? 2 : nm   >= 0.03 ? 1 : 0) : null,
-      roe  != null ? (roe  >= 0.15 ? 2 : roe  >= 0.08 ? 1 : 0) : null,
-      roic != null ? (roic >= 0.10 ? 2 : roic >= 0.05 ? 1 : 0) : null,
+      last.netMargin  != null ? (last.netMargin  >= nmGood ? 2 : last.netMargin  >= nmOk  ? 1 : 0) : null,
+      last.roe        != null ? (last.roe        >= 0.15   ? 2 : last.roe        >= 0.08  ? 1 : 0) : null,
+      last.roic       != null ? (last.roic       >= 0.10   ? 2 : last.roic       >= 0.05  ? 1 : 0) : null,
+      last.grossMargin!= null ? (last.grossMargin>= (isTech?0.50:isRetail?0.25:0.35) ? 2
+                                  : last.grossMargin>=(isTech?0.30:isRetail?0.15:0.20) ? 1 : 0) : null,
     ].filter(s => s !== null);
     if (!scores.length) return 'gray';
     const avg = scores.reduce((a,b)=>a+b,0) / scores.length;
     return avg >= 1.5 ? 'green' : avg >= 0.8 ? 'gold' : 'red';
   })();
 
-  // Balance sheet: D/E thresholds per CFA Institute & BDC research.
-  // D/E < 1.0x = conservative/healthy (below "equal debt/equity" line per CFA)
-  // D/E < 2.0x = acceptable (BDC: 2-2.5x "generally considered good" for most industries)
-  // D/E >= 2.0x = elevated leverage, risk increases
-  const balanceColor = last.debtEquity==null ? 'gray'
-    : last.debtEquity < 1.0 ? 'green'
-    : last.debtEquity < 2.0 ? 'gold' : 'red';
+  const balanceColor = (() => {
+    const de = last.debtEquity;
+    const cr = last.currentRatio;
+    const scores = [
+      de != null ? (de <= deGood ? 2 : de <= deOk ? 1 : 0) : null,
+      cr != null ? (cr >= 2.0 ? 2 : cr >= 1.0 ? 1 : 0) : null,
+    ].filter(s => s !== null);
+    if (!scores.length) return 'gray';
+    const avg = scores.reduce((a,b)=>a+b,0) / scores.length;
+    return avg >= 1.5 ? 'green' : avg >= 0.8 ? 'gold' : 'red';
+  })();
 
-  // Valuation: P/E grading anchored to Benjamin Graham (≤15x = value, The Intelligent
-  // Investor Ch.14), S&P 500 historical avg ~17x, and interest-rate context.
-  // We use EV/EBITDA alongside P/E as a more capital-structure-neutral check.
-  // P/E ≤ 17x = reasonable (S&P avg), ≤ 25x = elevated but not extreme (growth premium),
-  // > 25x = expensive; EV/EBITDA ≤ 10x = value, ≤ 15x = fair
   const peRatio  = data?.peRatio;
   const evEbitda = data?.evEbitda ?? last.evEbitda;
   const pegRatio = data?.pegRatio;
+  // Sector-adjusted P/E: tech trades at premium (Damodaran avg ~30x), value sectors ~15x
+  const peFair = isTech ? 30 : isHealth ? 22 : isFinance ? 15 : 20;
+  const peOk   = isTech ? 45 : isHealth ? 35 : isFinance ? 20 : 30;
   const valuationColor = (() => {
-    // PEG < 1 = undervalued (Peter Lynch), < 2 = fair, > 2 = expensive
-    // P/E ≤ 17x = at/below S&P avg, ≤ 25x = growth premium
-    // EV/EBITDA ≤ 10x = value, ≤ 15x = fair
     const scores = [
-      peRatio  != null ? (peRatio  <= 17 ? 2 : peRatio  <= 25 ? 1 : 0) : null,
-      evEbitda != null ? (evEbitda <= 10 ? 2 : evEbitda <= 15 ? 1 : 0) : null,
-      pegRatio != null ? (pegRatio <=  1 ? 2 : pegRatio <=  2 ? 1 : 0) : null,
+      peRatio  != null ? (peRatio  <= peFair ? 2 : peRatio  <= peOk   ? 1 : 0) : null,
+      evEbitda != null ? (evEbitda <= 10     ? 2 : evEbitda <= 18     ? 1 : 0) : null,
+      pegRatio != null ? (pegRatio <=  1     ? 2 : pegRatio <=  2     ? 1 : 0) : null,
     ].filter(s => s !== null);
     if (!scores.length) return 'gray';
     const avg = scores.reduce((a,b)=>a+b,0) / scores.length;
     return avg >= 1.5 ? 'green' : avg >= 0.8 ? 'gold' : 'red';
   })();
-  // PEG color: < 1 green, < 2 gold, >= 2 red (Peter Lynch standard)
   const pegColor = pegRatio == null ? 'var(--text2)'
     : pegRatio <= 1 ? '#00e5a0' : pegRatio <= 2 ? '#f0b429' : '#ff4d6d';
 
+  // ── Economic Moat (proxy scoring — no AI yet) ─────────────────────────────
+  // Based on Buffett/Morningstar framework: wide moat = durable competitive advantage
+  // Proxy signals: high+stable gross margin (pricing power), high ROIC (capital efficiency),
+  //               consistent ROE (brand/switching costs), revenue growth consistency
+  const moatColor = (() => {
+    const gm    = last.grossMargin;
+    const roic  = last.roic;
+    const roe   = last.roe;
+    const revGrowthYoy = (last.revenue && prev.revenue && prev.revenue>0)
+      ? last.revenue/prev.revenue - 1 : null;
+    const prev2 = yrs[yrs.length - 3] || {};
+    const revGrowthPrev = (prev.revenue && prev2.revenue && prev2.revenue>0)
+      ? prev.revenue/prev2.revenue - 1 : null;
+    const growthConsistent = revGrowthYoy != null && revGrowthPrev != null
+      && revGrowthYoy > 0 && revGrowthPrev > 0;
+
+    const scores = [
+      // High gross margin = pricing power / brand moat
+      gm   != null ? (gm   >= (isTech?0.55:isRetail?0.30:0.40) ? 2
+                       : gm >= (isTech?0.35:isRetail?0.15:0.25) ? 1 : 0) : null,
+      // High ROIC = capital allocation moat (Buffett standard: >15% wide moat)
+      roic != null ? (roic >= 0.15 ? 2 : roic >= 0.08 ? 1 : 0) : null,
+      // Sustained ROE = brand/switching cost moat
+      roe  != null ? (roe  >= 0.20 ? 2 : roe  >= 0.12 ? 1 : 0) : null,
+      // Consistent revenue growth = durable demand
+      growthConsistent ? 2 : (revGrowthYoy != null ? (revGrowthYoy > 0 ? 1 : 0) : null),
+    ].filter(s => s !== null);
+    if (scores.length < 2) return 'gray';
+    const avg = scores.reduce((a,b)=>a+b,0) / scores.length;
+    return avg >= 1.6 ? 'green' : avg >= 0.9 ? 'gold' : 'red';
+  })();
+  const moatLabel = { green:'WIDE', gold:'NARROW', red:'NONE', gray:'N/A' };
+  const moatNote  = { green:'Strong durable advantage', gold:'Some competitive edge', red:'Limited differentiation', gray:'Insufficient data' };
+
+  // ── Cash Generation color ──────────────────────────────────────────────────
+  const cashColor = (() => {
+    const fcf = last.freeCashFlow;
+    const fcfRev = (fcf && last.revenue) ? fcf/last.revenue : null;
+    const scores = [
+      fcf    != null ? (fcf > 0 ? (fcfRev >= 0.10 ? 2 : 1) : 0) : null,
+      last.operatingCF != null ? (last.operatingCF > 0 ? 2 : 0) : null,
+    ].filter(s => s !== null);
+    if (!scores.length) return 'gray';
+    const avg = scores.reduce((a,b)=>a+b,0) / scores.length;
+    return avg >= 1.5 ? 'green' : avg >= 0.8 ? 'gold' : 'red';
+  })();
+
   const scorecard = [
-    { label:'Profitability',   icon:'💰',
-      color: profitColor,
+    { label:'Profitability',   icon:'💰', color: profitColor,
       metrics: [
         { l:'Gross Margin',    v: fmtPct(last.grossMargin) },
         { l:'Operating Margin',v: fmtPct(last.operatingMargin) },
@@ -1852,9 +1904,7 @@ function StockDetail({ pos, onBack, transactions }) {
         { l:'ROIC',            v: fmtPct(last.roic) },
       ]
     },
-    { label:'Revenue Growth',  icon:'📈',
-      // YoY >5% = healthy (Damodaran US equity avg growth), <-5% = declining
-      color: trendGrade(last.revenue, prev.revenue),
+    { label:'Growth',          icon:'📈', color: trendGrade(last.revenue, prev.revenue),
       metrics: [
         { l:'Revenue',         v: fmtB(last.revenue) },
         { l:'YoY Growth',      v: last.revenue&&prev.revenue ? ((last.revenue/prev.revenue-1)*100).toFixed(1)+'%' : '—' },
@@ -1863,11 +1913,26 @@ function StockDetail({ pos, onBack, transactions }) {
         { l:'EPS',             v: fmtN(last.eps) },
       ]
     },
-    { label:'Cash Generation', icon:'🏦',
-      // FCF>0 is minimum bar; FCF/Revenue >5% = strong cash conversion (Old School Value: >15% excellent)
-      color: last.freeCashFlow==null ? 'gray'
-        : last.freeCashFlow <= 0 ? 'red'
-        : (last.revenue && last.freeCashFlow/last.revenue >= 0.05) ? 'green' : 'gold',
+    { label:'Economic Moat',   icon:'🏰', color: moatColor,
+      moatLabel: moatLabel[moatColor],
+      metrics: [
+        { l:'Gross Margin',    v: fmtPct(last.grossMargin) },
+        { l:'ROIC',            v: fmtPct(last.roic) },
+        { l:'ROE',             v: fmtPct(last.roe) },
+        { l:'Rev. Consistency',v: (last.revenue&&prev.revenue&&prev.revenue>0) ? (last.revenue>prev.revenue?'Growing':'Declining') : '—' },
+        { l:'Assessment',      v: moatNote[moatColor], note:true },
+      ]
+    },
+    { label:'Balance Sheet',   icon:'🏛', color: balanceColor,
+      metrics: [
+        { l:'Total Debt',      v: fmtB(last.totalDebt) },
+        { l:'Cash',            v: fmtB(last.cashAndEquiv) },
+        { l:'Equity',          v: fmtB(last.equity) },
+        { l:'Debt / Equity',   v: last.debtEquity!=null ? last.debtEquity.toFixed(2)+'x' : '—' },
+        { l:'Current Ratio',   v: last.currentRatio!=null ? last.currentRatio.toFixed(2)+'x' : '—' },
+      ]
+    },
+    { label:'Cash Generation', icon:'💵', color: cashColor,
       metrics: [
         { l:'Operating CF',    v: fmtB(last.operatingCF) },
         { l:'CapEx',           v: fmtB(last.capex) },
@@ -1876,18 +1941,7 @@ function StockDetail({ pos, onBack, transactions }) {
         { l:'FCF / Revenue',   v: last.freeCashFlow&&last.revenue ? fmtPct(last.freeCashFlow/last.revenue) : '—' },
       ]
     },
-    { label:'Balance Sheet',   icon:'🏛',
-      color: balanceColor,
-      metrics: [
-        { l:'Total Assets',    v: fmtB(last.totalAssets) },
-        { l:'Total Debt',      v: fmtB(last.totalDebt) },
-        { l:'Cash',            v: fmtB(last.cashAndEquiv) },
-        { l:'Equity',          v: fmtB(last.equity) },
-        { l:'Debt / Equity',   v: last.debtEquity!=null ? last.debtEquity.toFixed(2)+'x' : '—' },
-      ]
-    },
-    { label:'Valuation',       icon:'🎯',
-      color: valuationColor,
+    { label:'Valuation',       icon:'🎯', color: valuationColor,
       metrics: [
         { l:'P/E Ratio',       v: fmtX(data?.peRatio) },
         { l:'P/B Ratio',       v: fmtX(data?.pbRatio ?? last.pbRatio) },
@@ -1898,6 +1952,16 @@ function StockDetail({ pos, onBack, transactions }) {
       ]
     },
   ];
+
+  // ── Overall health score ───────────────────────────────────────────────────
+  const colorScore = { green:2, gold:1, red:0, gray:null };
+  const scoreDims = scorecard.map(s => colorScore[s.color]).filter(v => v !== null);
+  const overallScore = scoreDims.length
+    ? Math.round(scoreDims.reduce((a,b)=>a+b,0) / scoreDims.length * 50) : null; // 0-100
+  const overallColor = overallScore == null ? 'gray'
+    : overallScore >= 70 ? 'green' : overallScore >= 40 ? 'gold' : 'red';
+  const overallLabel = overallScore == null ? 'No Data'
+    : overallScore >= 70 ? 'Healthy' : overallScore >= 40 ? 'Mixed' : 'Weak';
 
   // ── Mini bar chart ──
   function BarChart({ data: bdata, getVal, color='#00e5a0', fmtFn=fmtB, labelKey }) {
@@ -1990,27 +2054,74 @@ function StockDetail({ pos, onBack, transactions }) {
           {pos.type === 'etf' ? (
             <EtfOverview pos={pos} />
           ) : (<>
-          {/* Scorecard grid */}
-          <div style={{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:12,marginBottom:16}}>
-            {scorecard.slice(0,4).map(sc => (
+          {/* ── Overall Health Score ── */}
+          {overallScore != null && (
+            <div className="card" style={{padding:'14px 18px',marginBottom:12,
+              borderColor:SCORE_COLOR[overallColor]+'44',background:SCORE_BG[overallColor]}}>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
+                <div style={{display:'flex',alignItems:'center',gap:10}}>
+                  <span style={{fontSize:14}}>⚡</span>
+                  <span className="mono" style={{fontSize:9,letterSpacing:'0.12em',color:'var(--text3)'}}>OVERALL HEALTH</span>
+                </div>
+                <div style={{display:'flex',alignItems:'center',gap:10}}>
+                  <span className="mono" style={{fontSize:9,letterSpacing:'0.1em',color:'var(--text3)'}}>
+                    {data?.sector && `${data.sector} · sector-adjusted`}
+                  </span>
+                  <span className="mono" style={{fontSize:11,fontWeight:700,letterSpacing:'0.08em',
+                    color:SCORE_COLOR[overallColor],background:SCORE_COLOR[overallColor]+'22',
+                    padding:'3px 10px',borderRadius:5}}>{overallLabel.toUpperCase()}</span>
+                </div>
+              </div>
+              <div style={{display:'flex',alignItems:'center',gap:10}}>
+                <div style={{flex:1,height:6,background:'var(--surface2)',borderRadius:3,overflow:'hidden'}}>
+                  <div style={{height:'100%',width:`${overallScore}%`,
+                    background:SCORE_COLOR[overallColor],borderRadius:3,
+                    transition:'width 0.6s ease'}}/>
+                </div>
+                <span className="mono" style={{fontSize:13,fontWeight:700,color:SCORE_COLOR[overallColor],minWidth:36,textAlign:'right'}}>
+                  {overallScore}
+                </span>
+              </div>
+              {/* Dimension pills */}
+              <div style={{display:'flex',gap:6,marginTop:10,flexWrap:'wrap'}}>
+                {scorecard.map(sc => (
+                  <div key={sc.label} style={{display:'flex',alignItems:'center',gap:4,
+                    background:SCORE_COLOR[sc.color]+'18',border:`1px solid ${SCORE_COLOR[sc.color]}33`,
+                    borderRadius:5,padding:'3px 8px'}}>
+                    <span style={{fontSize:10}}>{sc.icon}</span>
+                    <span className="mono" style={{fontSize:8,color:SCORE_COLOR[sc.color],letterSpacing:'0.05em'}}>
+                      {sc.label==='Valuation'?(sc.color==='green'?'CHEAP':sc.color==='gold'?'FAIR':sc.color==='red'?'EXPENSIVE':'N/A')
+                        :sc.label==='Economic Moat'?(sc.moatLabel||SCORE_LABEL[sc.color])
+                        :SCORE_LABEL[sc.color]}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Scorecard grid — 2 cols, 3 rows */}
+          <div style={{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:12,marginBottom:12}}>
+            {scorecard.slice(0,6).filter(sc=>sc.label!=='Valuation').map(sc => (
               <div key={sc.label} className="card" style={{padding:16,borderColor:SCORE_COLOR[sc.color]+'33',background:SCORE_BG[sc.color]}}>
                 <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12}}>
                   <div style={{display:'flex',alignItems:'center',gap:8}}>
-                    <span style={{fontSize:16}}>{sc.icon}</span>
+                    <span style={{fontSize:15}}>{sc.icon}</span>
                     <span style={{fontSize:13,fontWeight:500}}>{sc.label}</span>
                   </div>
                   <span className="mono" style={{fontSize:9,fontWeight:700,letterSpacing:'0.08em',
                     color:SCORE_COLOR[sc.color],background:SCORE_COLOR[sc.color]+'22',padding:'2px 8px',borderRadius:4}}>
-                    {sc.color==='green'?'STRONG':sc.color==='gold'?'OK':sc.color==='red'?'WEAK':'N/A'}
+                    {sc.label==='Economic Moat' ? (sc.moatLabel||SCORE_LABEL[sc.color]) : SCORE_LABEL[sc.color]}
                   </span>
                 </div>
                 <div style={{display:'flex',flexDirection:'column',gap:5}}>
                   {sc.metrics.map(m=>(
                     <div key={m.l} style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:4}}>
                       <span style={{fontSize:11,color:'var(--text2)',flexShrink:0}}>{m.l}</span>
-                      <div style={{textAlign:'right'}}>
-                        <span className="mono" style={{fontSize:11,fontWeight:500,color:m.color||'var(--text)'}}>{m.v}</span>
-                        {m.note && <div className="mono" style={{fontSize:8,color:'var(--text3)',marginTop:1}}>{m.note}</div>}
+                      <div style={{textAlign:'right',maxWidth:'60%'}}>
+                        <span className="mono" style={{fontSize:11,fontWeight:500,color:m.color||'var(--text)',
+                          wordBreak:'break-word'}}>{m.v}</span>
+                        {m.note && typeof m.note === 'string' && <div className="mono" style={{fontSize:8,color:'var(--text3)',marginTop:1}}>{m.note}</div>}
                       </div>
                     </div>
                   ))}
@@ -2019,11 +2130,11 @@ function StockDetail({ pos, onBack, transactions }) {
             ))}
           </div>
           {/* Valuation card full width */}
-          {(() => { const sc = scorecard[4]; return (
+          {(() => { const sc = scorecard.find(s=>s.label==='Valuation'); if(!sc) return null; return (
             <div className="card" style={{padding:16,borderColor:SCORE_COLOR[sc.color]+'33',background:SCORE_BG[sc.color],marginBottom:16}}>
               <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12}}>
                 <div style={{display:'flex',alignItems:'center',gap:8}}>
-                  <span style={{fontSize:16}}>{sc.icon}</span>
+                  <span style={{fontSize:15}}>{sc.icon}</span>
                   <span style={{fontSize:13,fontWeight:500}}>{sc.label}</span>
                 </div>
                 <span className="mono" style={{fontSize:9,fontWeight:700,letterSpacing:'0.08em',
@@ -2031,11 +2142,12 @@ function StockDetail({ pos, onBack, transactions }) {
                   {sc.color==='green'?'CHEAP':sc.color==='gold'?'FAIR':sc.color==='red'?'EXPENSIVE':'N/A'}
                 </span>
               </div>
-              <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:12}}>
+              <div style={{display:'grid',gridTemplateColumns:'repeat(6,1fr)',gap:12}}>
                 {sc.metrics.map(m=>(
                   <div key={m.l} style={{textAlign:'center'}}>
-                    <div className="mono" style={{fontSize:16,fontWeight:600,marginBottom:3,color:m.color||'inherit'}}>{m.v}</div>
+                    <div className="mono" style={{fontSize:15,fontWeight:600,marginBottom:3,color:m.color||'inherit'}}>{m.v}</div>
                     <div className="mono" style={{fontSize:9,color:'var(--text3)'}}>{m.l}</div>
+                    {m.note && <div className="mono" style={{fontSize:7,color:'var(--text3)',marginTop:2}}>{m.note}</div>}
                   </div>
                 ))}
               </div>
@@ -2762,7 +2874,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v47 · Strip .DE suffix for fundamentals + price chart API calls</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v48 · Phase 3d: health scorecard — moat, sector-adjusted, overall score</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
