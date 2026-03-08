@@ -58,21 +58,20 @@ export default async function handler(req, res) {
       }
     }
 
-    // Countries — parse section between "Countries" and "Sectors"
+    // Countries — find the LAST "Countries" heading (after Holdings section), then parse to "Sectors"
     const countries = [];
-    // Use a broader section capture that doesn't stop at "Show more"
-    const allCountrySection = stripped.match(/\bCountries\b([\s\S]*?)\bSectors\b/i)?.[1] || '';
-    // Also try without section boundary (fallback)
-    const countrySource = allCountrySection || stripped;
-    const cStart = countrySource === stripped ? stripped.indexOf('Countries') : 0;
-    const cEnd   = countrySource === stripped ? stripped.indexOf('Sectors') : countrySource.length;
-    const countrySlice = countrySource.slice(cStart, cEnd > cStart ? cEnd : cStart + 600);
-    const countryRe = /([A-Za-z][A-Za-z\s]{1,30}?)\s+([\d]+[.,][\d]+)\s*%/g;
-    let cm;
-    while ((cm = countryRe.exec(countrySlice)) !== null && countries.length < 5) {
-      const n = cm[1].trim(); const w = parseFloat(cm[2].replace(',', '.'));
-      if (n.length >= 2 && n.length <= 35 && w > 0 && !n.match(/^(?:Show|Other|As of|Top|Weight|Below|Composition|Holdings)/i))
-        countries.push({ name: n, weight: w });
+    const lastCountriesIdx = stripped.lastIndexOf(' Countries ');
+    const sectorsAfterIdx  = stripped.indexOf(' Sectors ', lastCountriesIdx);
+    if (lastCountriesIdx !== -1 && sectorsAfterIdx !== -1) {
+      const countrySlice = stripped.slice(lastCountriesIdx, sectorsAfterIdx);
+      const countryRe = /([A-Za-z][A-Za-z\s]{1,30}?)\s+([\d]+[.,][\d]+)\s*%/g;
+      let cm;
+      while ((cm = countryRe.exec(countrySlice)) !== null && countries.length < 5) {
+        const n = cm[1].trim(); const w = parseFloat(cm[2].replace(',', '.'));
+        if (n.length >= 2 && n.length <= 35 && w > 0 && w <= 100
+            && !n.match(/^(?:Show|Other|As of|Top|Weight|Below|Composition|Holdings|TER|Fund|Total|The|This|Index)/i))
+          countries.push({ name: n, weight: w });
+      }
     }
 
     // Sectors
