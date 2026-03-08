@@ -36,13 +36,16 @@ export default async function handler(req, res) {
   const div = (a, b) => (a != null && b != null && b !== 0) ? a / b : null;
 
   try {
-    const [income, cashflow, balance, keyMetrics, profile, analystEstimates] = await Promise.all([
+    const [income, cashflow, balance, keyMetrics, profile, analystEstimates,
+           incomeQ, cashflowQ] = await Promise.all([
       fmp(`/income-statement?symbol=${symbol}&limit=5`),
       fmp(`/cash-flow-statement?symbol=${symbol}&limit=5`),
       fmp(`/balance-sheet-statement?symbol=${symbol}&limit=5`),
       fmp(`/key-metrics?symbol=${symbol}&limit=5`),
       fmp(`/profile?symbol=${symbol}`),
       fmp(`/analyst-estimates?symbol=${symbol}&limit=6&period=annual`),
+      fmp(`/income-statement?symbol=${symbol}&limit=8&period=quarter`),
+      fmp(`/cash-flow-statement?symbol=${symbol}&limit=8&period=quarter`),
     ]);
 
     const p = profile[0] || {};
@@ -90,6 +93,30 @@ export default async function handler(req, res) {
         evEbitda: km.evToEBITDA ?? null, fcfYield: km.freeCashFlowYield ?? null,
         grahamNumber: km.grahamNumber ?? null, currentRatio: km.currentRatio ?? null,
         netDebtEbitda: km.netDebtToEBITDA ?? null,
+      };
+    });
+
+    // ── Quarterly data ──────────────────────────────────────────────────────
+    const byQuarter = [...incomeQ].reverse().map(q => {
+      const period = q.period || '';
+      const yr     = q.calendarYear || q.date?.slice(0,4) || '';
+      const label  = period && yr ? `${period} ${yr.slice(2)}` : q.date?.slice(0,7) || '';
+      const cf     = cashflowQ.find(r => r.date === q.date) || {};
+      return {
+        label,
+        date: q.date,
+        revenue:         q.revenue         ?? null,
+        grossProfit:     q.grossProfit      ?? null,
+        operatingIncome: q.operatingIncome  ?? null,
+        netIncome:       q.netIncome        ?? null,
+        eps:             q.eps              ?? null,
+        ebitda:          q.ebitda           ?? null,
+        operatingCF:     cf.operatingCashFlow  ?? null,
+        freeCashFlow:    cf.freeCashFlow       ?? null,
+        capex:           cf.capitalExpenditure ?? null,
+        grossMargin:     div(q.grossProfit,    q.revenue),
+        operatingMargin: div(q.operatingIncome,q.revenue),
+        netMargin:       div(q.netIncome,      q.revenue),
       };
     });
 
@@ -182,6 +209,7 @@ export default async function handler(req, res) {
       beta: p.beta ?? null, dividendYield: p.lastDividend ?? null,
       description: p.description || null,
       byYear,
+      byQuarter,
     });
   } catch (e) {
     res.status(500).json({ error: e.message, symbol });
