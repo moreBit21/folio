@@ -660,8 +660,11 @@ const BROKER_FORMATS = {
       return rows.reduce((acc, r) => {
         const isin    = (r[iISIN]    || "").trim();
         const kuerzel = (r[iKuerzel] || "").trim();
-        const name    = (r[iName1]   || "").trim();
+        const name1   = (r[iName1]   || "").trim();
+        const name2   = (r[iName2]   || "").trim();
         const klasse  = (r[iKlasse]  || "").toLowerCase().trim();
+        // For derivatives use product description (NAME 2); for others use company name (NAME 1)
+        const name = klasse === "derivate" && name2 ? name2 : (name1 || name2);
         const qty     = parseDE(r[iQty]);
         const avg     = parseDE(r[iAvg]);
         const current = parseDE(r[iCurrent]);
@@ -872,9 +875,12 @@ async function resolveISINs(positions) {
     if (ticker) {
       return {
         ...p,
+        fmpTicker: ticker,
         symbol: ticker,
-        name: TICKER_NAMES[ticker] || ticker,
-        type: guessTypeFromISIN(p.symbol, ticker),
+        // Preserve CSV name; only fallback to TICKER_NAMES if name is missing
+        name: (p.name && p.name !== p.symbol) ? p.name : (TICKER_NAMES[ticker] || ticker),
+        // Preserve CSV type; only re-guess if type is generic 'stock'
+        type: (p.type && p.type !== 'stock') ? p.type : guessTypeFromISIN(p.symbol, ticker),
         isin: p.symbol,
       };
     }
@@ -897,12 +903,16 @@ async function resolveISINs(positions) {
         if (!pick?.symbol) return;
         const idx = resolved.findIndex(q => q.symbol === p.symbol);
         if (idx >= 0) {
+          const orig = resolved[idx];
           resolved[idx] = {
-            ...resolved[idx],
+            ...orig,
             fmpTicker: pick.symbol,
+            // Only update symbol for price lookups; preserve CSV name & type
             symbol: pick.symbol,
-            name: pick.name || resolved[idx].name,
-            type: guessTypeFromISIN(resolved[idx].symbol, pick.symbol),
+            // Keep name from CSV if we have it; fallback to FMP
+            name: (orig.name && orig.name !== orig.symbol) ? orig.name : (pick.name || orig.name),
+            // Preserve type from CSV parser (assetklasse); only guess if unknown
+            type: (orig.type && orig.type !== 'stock') ? orig.type : guessTypeFromISIN(p.symbol, pick.symbol),
             isin: p.symbol,
           };
         }
@@ -2749,7 +2759,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v41 · 1-col financials, 12 quarters</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v42 · Fix CSV import: preserve name+type from Smartbroker CSV</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
