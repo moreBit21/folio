@@ -168,6 +168,7 @@ const ASSET_TYPES   = ["stock","etf","crypto"];
 const NAV_ITEMS     = [
   {id:"dashboard",label:"Dashboard",icon:"⬡"},
   {id:"portfolio",label:"Portfolio", icon:"◈"},
+  {id:"charts",   label:"Charts",    icon:"📈"},
   {id:"screener", label:"Screener",  icon:"⊞"},
   {id:"compare",  label:"Compare",   icon:"⇌"},
   {id:"news",     label:"News Feed", icon:"◎"},
@@ -1359,6 +1360,575 @@ function TVChart({ ticker, txs = [], currentPrice, compact = false }) {
 // ── TxPriceChart: alias to TVChart for backwards compat ──────────────────────
 function TxPriceChart({ ticker, txs, currentPrice }) {
   return <TVChart ticker={ticker} txs={txs} currentPrice={currentPrice} compact={true}/>;
+}
+
+// ── ChartsPage — 3e Full-screen chart with watchlist ──────────────────────────
+// MA helpers (client-side, from OHLCV data already fetched)
+function calcSMA(data, period) {
+  return data.map((_, i) => {
+    if (i < period - 1) return null;
+    const slice = data.slice(i - period + 1, i + 1);
+    return slice.reduce((s, d) => s + d.close, 0) / period;
+  });
+}
+function calcEMA(data, period) {
+  const k = 2 / (period + 1);
+  const result = [];
+  let ema = null;
+  for (let i = 0; i < data.length; i++) {
+    if (ema === null) {
+      if (i >= period - 1) {
+        ema = data.slice(0, period).reduce((s, d) => s + d.close, 0) / period;
+        result.push(ema);
+      } else { result.push(null); }
+    } else {
+      ema = data[i].close * k + ema * (1 - k);
+      result.push(ema);
+    }
+  }
+  return result;
+}
+
+const MA_DEFS = [
+  { key: 'sma20',  label: 'SMA 20',  color: '#f0b429', calc: d => calcSMA(d, 20)  },
+  { key: 'sma50',  label: 'SMA 50',  color: '#4d9fff', calc: d => calcSMA(d, 50)  },
+  { key: 'sma200', label: 'SMA 200', color: '#a78bfa', calc: d => calcSMA(d, 200) },
+  { key: 'ema9',   label: 'EMA 9',   color: '#ff6b9d', calc: d => calcEMA(d, 9)   },
+  { key: 'ema21',  label: 'EMA 21',  color: '#00d4ff', calc: d => calcEMA(d, 21)  },
+];
+
+const DRAW_TOOLS = [
+  { key: 'none',       icon: '↖',  label: 'Pointer'     },
+  { key: 'hline',      icon: '—',  label: 'Horiz. Line' },
+  { key: 'trendline',  icon: '↗',  label: 'Trend Line'  },
+  { key: 'rect',       icon: '▭',  label: 'Rectangle'   },
+];
+
+function ChartsPage({ positions }) {
+  // ── Ticker / search ──
+  const [ticker, setTicker]         = React.useState('');
+  const [searchQ, setSearchQ]       = React.useState('');
+  const [searchRes, setSearchRes]   = React.useState([]);
+  const [searching, setSearching]   = React.useState(false);
+  const searchRef                   = React.useRef(null);
+
+  // ── Chart data ──
+  const [allData, setAllData]       = React.useState(null);
+  const [loading, setLoading]       = React.useState(false);
+  const [error, setError]           = React.useState(null);
+
+  // ── Chart controls ──
+  const [range, setRange]           = React.useState('1Y');
+  const [mode, setMode]             = React.useState('candle');
+  const [activeMAs, setActiveMAs]   = React.useState({ sma20: true, sma50: true, sma200: false, ema9: false, ema21: false });
+  const [drawTool, setDrawTool]     = React.useState('none');
+
+  // ── TV chart refs ──
+  const containerRef  = React.useRef(null);
+  const chartRef      = React.useRef(null);
+  const maSeriesRef   = React.useRef({});
+  const drawingsRef   = React.useRef([]);      // drawn series refs
+  const drawStateRef  = React.useRef({ active: false, firstPoint: null, tempSeries: null });
+
+  // ── Watchlist state ──
+  const [watchlists, setWatchlists]   = React.useState([{ id: 'portfolio', name: 'Portfolio', tickers: [] }]);
+  const [activeWL, setActiveWL]       = React.useState('portfolio');
+  const [addingWL, setAddingWL]       = React.useState(false);
+  const [newWLName, setNewWLName]     = React.useState('');
+  const [addTickerQ, setAddTickerQ]   = React.useState('');
+  const [addTickerRes, setAddTickerRes] = React.useState([]);
+  const [addingTicker, setAddingTicker] = React.useState(false);
+  const [wlPrices, setWlPrices]       = React.useState({});
+
+  const RANGES = [['1W',7],['1M',30],['3M',90],['6M',180],['1Y',365],['2Y',730],['ALL',3650]];
+
+  // ── Sync Portfolio watchlist from positions ──
+  React.useEffect(() => {
+    const portfolioTickers = positions
+      .filter(p => p.type !== 'crypto' && p.type !== 'derivative')
+      .map(p => ({ symbol: p.fmpTicker || p.symbol, name: p.name, change: null }))
+      .filter(t => t.symbol && !isISIN(t.symbol));
+    setWatchlists(prev => prev.map(wl =>
+      wl.id === 'portfolio' ? { ...wl, tickers: portfolioTickers } : wl
+    ));
+    // Set initial ticker to first portfolio stock
+    if (!ticker && portfolioTickers.length) setTicker(portfolioTickers[0].symbol);
+  }, [positions]);
+
+  // ── Fetch price data when ticker changes ──
+  React.useEffect(() => {
+    if (!ticker) return;
+    setLoading(true); setError(null); setAllData(null);
+    const to   = new Date().toISOString().slice(0, 10);
+    const from = new Date(Date.now() - 365 * 3 * 86400000).toISOString().slice(0, 10);
+    fetch(`/api/fmp?path=/historical-price-eod/full?symbol=${ticker}&from=${from}&to=${to}`)
+      .then(r => r.json())
+      .then(data => {
+        const arr = Array.isArray(data) ? data : (data?.historical || []);
+        if (!arr.length) throw new Error('No data for ' + ticker);
+        const sorted = [...arr].filter(p => p.date && p.close != null).sort((a, b) => a.date.localeCompare(b.date));
+        setAllData(sorted);
+      })
+      .catch(e => setError(e.message))
+      .finally(() => setLoading(false));
+  }, [ticker]);
+
+  // ── Fetch live prices for watchlist items ──
+  React.useEffect(() => {
+    const wl = watchlists.find(w => w.id === activeWL);
+    if (!wl?.tickers?.length) return;
+    const syms = wl.tickers.map(t => t.symbol).join(',');
+    fetch(`/api/fmp?path=/quotes?symbols=${syms}`)
+      .then(r => r.json())
+      .then(data => {
+        if (!Array.isArray(data)) return;
+        const pm = {};
+        data.forEach(q => { pm[q.symbol] = { price: q.price, change: q.changesPercentage }; });
+        setWlPrices(pm);
+      })
+      .catch(() => {});
+  }, [watchlists, activeWL]);
+
+  // ── Build TV chart ──
+  React.useEffect(() => {
+    if (!allData || !containerRef.current) return;
+
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - (RANGES.find(r => r[0] === range)?.[1] ?? 365));
+    const cutStr = cutoff.toISOString().slice(0, 10);
+    const filtered = allData.filter(p => p.date >= cutStr);
+    if (!filtered.length) return;
+
+    const isUp = filtered[filtered.length - 1].close >= filtered[0].close;
+    const GREEN = '#00e5a0', RED = '#ff4d6d';
+    const upColor = isUp ? GREEN : RED;
+
+    loadTVLib().then(LW => {
+      if (chartRef.current) { try { chartRef.current.remove(); } catch (e) { } chartRef.current = null; }
+      maSeriesRef.current = {};
+      drawingsRef.current = [];
+      drawStateRef.current = { active: false, firstPoint: null, tempSeries: null };
+
+      const chartHeight = Math.max(400, (containerRef.current?.clientHeight || 500) - 2);
+      const chart = LW.createChart(containerRef.current, {
+        width: containerRef.current.clientWidth,
+        height: chartHeight,
+        layout: { background: { color: 'transparent' }, textColor: '#7a8a98' },
+        grid: { vertLines: { color: '#1c2730' }, horzLines: { color: '#1c2730' } },
+        crosshair: { mode: LW.CrosshairMode.Normal },
+        rightPriceScale: { borderColor: '#1c2730', textColor: '#7a8a98' },
+        timeScale: { borderColor: '#1c2730', timeVisible: true, secondsVisible: false },
+        handleScroll: drawTool === 'none',
+        handleScale:  drawTool === 'none',
+      });
+      chartRef.current = chart;
+
+      // ── Main series ──
+      let mainSeries;
+      if (mode === 'candle') {
+        mainSeries = chart.addCandlestickSeries({ upColor: GREEN, downColor: RED, borderUpColor: GREEN, borderDownColor: RED, wickUpColor: GREEN, wickDownColor: RED });
+        mainSeries.setData(filtered.map(p => ({ time: p.date, open: p.open ?? p.close, high: p.high ?? p.close, low: p.low ?? p.close, close: p.close })));
+      } else if (mode === 'line') {
+        mainSeries = chart.addLineSeries({ color: upColor, lineWidth: 2, priceLineVisible: false });
+        mainSeries.setData(filtered.map(p => ({ time: p.date, value: p.close })));
+      } else {
+        mainSeries = chart.addAreaSeries({ lineColor: upColor, topColor: upColor + '28', bottomColor: upColor + '00', lineWidth: 2, priceLineVisible: false });
+        mainSeries.setData(filtered.map(p => ({ time: p.date, value: p.close })));
+      }
+
+      // ── Moving Averages ──
+      MA_DEFS.forEach(ma => {
+        if (!activeMAs[ma.key]) return;
+        const vals = ma.calc(filtered);
+        const maData = filtered.map((d, i) => vals[i] != null ? { time: d.date, value: vals[i] } : null).filter(Boolean);
+        if (!maData.length) return;
+        const s = chart.addLineSeries({ color: ma.color, lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+        s.setData(maData);
+        maSeriesRef.current[ma.key] = s;
+      });
+
+      chart.timeScale().fitContent();
+
+      // ── Drawing tool handler ──
+      const handleClick = (param) => {
+        if (drawTool === 'none' || !param.time) return;
+        const price = mainSeries.coordinateToPrice(param.point.y);
+        if (!price) return;
+
+        if (drawTool === 'hline') {
+          const hSeries = chart.addLineSeries({ color: 'rgba(255,255,255,0.5)', lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: true });
+          // extend horizontal line across full data range
+          hSeries.setData([
+            { time: filtered[0].date, value: price },
+            { time: filtered[filtered.length - 1].date, value: price },
+          ]);
+          drawingsRef.current.push(hSeries);
+          return;
+        }
+
+        const ds = drawStateRef.current;
+        if (drawTool === 'trendline' || drawTool === 'rect') {
+          if (!ds.active) {
+            ds.active = true;
+            ds.firstPoint = { time: param.time, price };
+          } else {
+            ds.active = false;
+            const p1 = ds.firstPoint;
+            if (drawTool === 'trendline') {
+              const times = filtered.map(d => d.date);
+              const i1 = times.indexOf(p1.time) === -1 ? 0 : times.indexOf(p1.time);
+              const i2 = times.indexOf(param.time) === -1 ? times.length - 1 : times.indexOf(param.time);
+              const slope = i1 === i2 ? 0 : (price - p1.price) / (i2 - i1);
+              const lineData = times.slice(Math.min(i1, i2), Math.max(i1, i2) + 1).map((t, idx) => ({
+                time: t, value: p1.price + slope * (Math.min(i1, i2) === i1 ? idx : idx - (i2 - i1)),
+              }));
+              const tSeries = chart.addLineSeries({ color: 'rgba(255,255,255,0.7)', lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+              if (lineData.length >= 2) tSeries.setData(lineData);
+              drawingsRef.current.push(tSeries);
+            } else {
+              // Rectangle: draw 4 border lines
+              const times = [p1.time, param.time].sort();
+              const prices = [p1.price, price].sort((a, b) => a - b);
+              [[prices[0], prices[1]], [prices[1], prices[0]]].forEach(([y1, y2]) => {
+                const s = chart.addLineSeries({ color: 'rgba(77,159,255,0.5)', lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+                s.setData([{ time: times[0], value: y1 }, { time: times[1], value: y1 }]);
+                drawingsRef.current.push(s);
+              });
+            }
+            ds.firstPoint = null;
+          }
+        }
+      };
+      chart.subscribeClick(handleClick);
+
+      // ── Resize observer ──
+      const ro = new ResizeObserver(() => {
+        if (containerRef.current && chartRef.current) {
+          chartRef.current.applyOptions({ width: containerRef.current.clientWidth, height: Math.max(400, containerRef.current.clientHeight - 2) });
+        }
+      });
+      ro.observe(containerRef.current);
+
+      return () => { ro.disconnect(); chart.unsubscribeClick(handleClick); };
+    }).catch(() => {});
+
+    return () => { if (chartRef.current) { try { chartRef.current.remove(); } catch (e) { } chartRef.current = null; } };
+  }, [allData, range, mode, activeMAs, drawTool]);
+
+  // ── Ticker search ──
+  const doSearch = React.useCallback(async (q) => {
+    if (q.length < 1) { setSearchRes([]); return; }
+    setSearching(true);
+    try {
+      const r = await fetch('/api/fmp?path=' + encodeURIComponent('/search?query=' + q + '&limit=8'));
+      const data = await r.json();
+      setSearchRes(Array.isArray(data) ? data.slice(0, 8) : []);
+    } catch (e) { setSearchRes([]); }
+    finally { setSearching(false); }
+  }, []);
+
+  React.useEffect(() => {
+    const t = setTimeout(() => doSearch(searchQ), 300);
+    return () => clearTimeout(t);
+  }, [searchQ, doSearch]);
+
+  // ── Add ticker search (watchlist) ──
+  const doAddTickerSearch = React.useCallback(async (q) => {
+    if (q.length < 1) { setAddTickerRes([]); return; }
+    try {
+      const r = await fetch('/api/fmp?path=' + encodeURIComponent('/search?query=' + q + '&limit=6'));
+      const data = await r.json();
+      setAddTickerRes(Array.isArray(data) ? data.slice(0, 6) : []);
+    } catch (e) { setAddTickerRes([]); }
+  }, []);
+
+  React.useEffect(() => {
+    const t = setTimeout(() => doAddTickerSearch(addTickerQ), 300);
+    return () => clearTimeout(t);
+  }, [addTickerQ, doAddTickerSearch]);
+
+  const clearDrawings = () => {
+    if (!chartRef.current) return;
+    drawingsRef.current.forEach(s => { try { chartRef.current.removeSeries(s); } catch (e) { } });
+    drawingsRef.current = [];
+    drawStateRef.current = { active: false, firstPoint: null, tempSeries: null };
+  };
+
+  const activeWLData = watchlists.find(w => w.id === activeWL);
+
+  const cursorStyle = drawTool === 'none' ? 'default' : drawTool === 'hline' ? 'crosshair' : 'crosshair';
+
+  return (
+    <div style={{ display: 'flex', height: '100%', gap: 0, overflow: 'hidden' }}>
+
+      {/* ══ LEFT: Chart Area ══ */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden' }}>
+
+        {/* ── Toolbar ── */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', borderBottom: '1px solid var(--border)', flexWrap: 'wrap', flexShrink: 0 }}>
+
+          {/* Ticker search */}
+          <div style={{ position: 'relative', minWidth: 180 }} ref={searchRef}>
+            <input
+              className="inp mono"
+              placeholder="Search ticker…"
+              value={searchQ}
+              onChange={e => { setSearchQ(e.target.value); }}
+              onFocus={() => { if (ticker) setSearchQ(ticker); }}
+              onBlur={() => setTimeout(() => { setSearchRes([]); setSearchQ(''); }, 180)}
+              style={{ fontSize: 12, padding: '5px 10px', width: 180 }}
+            />
+            {(searchRes.length > 0 || searching) && (
+              <div style={{ position: 'absolute', top: '110%', left: 0, zIndex: 50, background: 'var(--surface)', border: '1px solid var(--border2)', borderRadius: 8, minWidth: 260, boxShadow: '0 12px 40px rgba(0,0,0,0.6)', overflow: 'hidden' }}>
+                {searching && <div className="mono" style={{ padding: '10px 12px', fontSize: 11, color: 'var(--text3)' }}>Searching…</div>}
+                {searchRes.map(r => (
+                  <div key={r.symbol} onMouseDown={() => { setTicker(r.symbol); setSearchQ(''); setSearchRes([]); }}
+                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '9px 14px', cursor: 'pointer', borderBottom: '1px solid var(--border)', transition: 'background 0.12s' }}
+                    onMouseEnter={e => e.currentTarget.style.background = 'var(--surface2)'}
+                    onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                    <div>
+                      <div className="mono" style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)' }}>{r.symbol}</div>
+                      <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 1 }}>{r.name?.slice(0, 28)}</div>
+                    </div>
+                    <div className="mono" style={{ fontSize: 10, color: 'var(--text3)' }}>{r.exchangeShortName}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Current ticker badge */}
+          {ticker && (
+            <div className="mono" style={{ fontSize: 14, fontWeight: 700, color: 'var(--green)', padding: '4px 10px', borderRadius: 6, background: 'var(--green-dim)', border: '1px solid rgba(0,229,160,0.2)', letterSpacing: '0.04em' }}>
+              {ticker}
+            </div>
+          )}
+
+          <div style={{ width: 1, height: 20, background: 'var(--border)', margin: '0 2px' }} />
+
+          {/* Chart mode */}
+          {[['area', '▲ Area'], ['line', '― Line'], ['candle', '┤ Candle']].map(([m, lbl]) => (
+            <button key={m} onClick={() => setMode(m)} className="mono"
+              style={{ fontSize: 10, padding: '4px 10px', borderRadius: 5, cursor: 'pointer', border: '1px solid', letterSpacing: '0.05em', transition: 'all 0.15s',
+                borderColor: mode === m ? 'rgba(77,159,255,0.4)' : 'var(--border)',
+                background: mode === m ? 'rgba(77,159,255,0.1)' : 'transparent',
+                color: mode === m ? 'var(--blue)' : 'var(--text3)' }}>
+              {lbl}
+            </button>
+          ))}
+
+          <div style={{ width: 1, height: 20, background: 'var(--border)', margin: '0 2px' }} />
+
+          {/* MA toggles */}
+          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+            {MA_DEFS.map(ma => (
+              <button key={ma.key} onClick={() => setActiveMAs(prev => ({ ...prev, [ma.key]: !prev[ma.key] }))} className="mono"
+                style={{ fontSize: 9, padding: '3px 8px', borderRadius: 4, cursor: 'pointer', border: '1px solid', letterSpacing: '0.05em', transition: 'all 0.15s',
+                  borderColor: activeMAs[ma.key] ? ma.color + '88' : 'var(--border)',
+                  background: activeMAs[ma.key] ? ma.color + '18' : 'transparent',
+                  color: activeMAs[ma.key] ? ma.color : 'var(--text3)' }}>
+                {ma.label}
+              </button>
+            ))}
+          </div>
+
+          <div style={{ width: 1, height: 20, background: 'var(--border)', margin: '0 2px' }} />
+
+          {/* Drawing tools */}
+          <div style={{ display: 'flex', gap: 3 }}>
+            {DRAW_TOOLS.map(dt => (
+              <button key={dt.key} onClick={() => setDrawTool(dt.key === drawTool ? 'none' : dt.key)} title={dt.label} className="mono"
+                style={{ fontSize: 12, width: 28, height: 28, borderRadius: 5, cursor: 'pointer', border: '1px solid', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.15s',
+                  borderColor: drawTool === dt.key ? 'rgba(240,180,41,0.5)' : 'var(--border)',
+                  background: drawTool === dt.key ? 'rgba(240,180,41,0.12)' : 'transparent',
+                  color: drawTool === dt.key ? 'var(--gold)' : 'var(--text3)' }}>
+                {dt.icon}
+              </button>
+            ))}
+            {drawingsRef.current.length > 0 && (
+              <button onClick={clearDrawings} title="Clear drawings" className="mono"
+                style={{ fontSize: 9, padding: '3px 7px', borderRadius: 4, cursor: 'pointer', border: '1px solid var(--border)', background: 'transparent', color: 'var(--red)', letterSpacing: '0.05em' }}>
+                ✕ Clear
+              </button>
+            )}
+          </div>
+
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+            {/* Range */}
+            {RANGES.map(([lbl]) => (
+              <button key={lbl} onClick={() => setRange(lbl)} className="mono"
+                style={{ fontSize: 9, padding: '3px 7px', borderRadius: 4, cursor: 'pointer', border: '1px solid', letterSpacing: '0.06em', transition: 'all 0.15s',
+                  borderColor: range === lbl ? 'rgba(0,229,160,0.4)' : 'var(--border)',
+                  background: range === lbl ? 'rgba(0,229,160,0.1)' : 'transparent',
+                  color: range === lbl ? 'var(--green)' : 'var(--text3)', fontWeight: range === lbl ? 700 : 400 }}>
+                {lbl}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* ── Draw mode hint ── */}
+        {drawTool !== 'none' && (
+          <div className="mono" style={{ padding: '5px 14px', fontSize: 10, color: 'var(--gold)', background: 'rgba(240,180,41,0.06)', borderBottom: '1px solid rgba(240,180,41,0.15)', flexShrink: 0 }}>
+            {drawTool === 'hline' ? '⊕ Click on chart to place a horizontal line' :
+              drawTool === 'trendline' ? (drawStateRef.current?.active ? '⊕ Click second point to complete trend line' : '⊕ Click first point of trend line') :
+              drawTool === 'rect' ? (drawStateRef.current?.active ? '⊕ Click second corner to complete rectangle' : '⊕ Click first corner of rectangle') : ''}
+          </div>
+        )}
+
+        {/* ── Chart container ── */}
+        <div style={{ flex: 1, position: 'relative', overflow: 'hidden', cursor: cursorStyle }}>
+          {loading && (
+            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 10 }}>
+              <div className="mono shimmer" style={{ fontSize: 12, color: 'var(--text3)' }}>⟳ Loading {ticker}…</div>
+            </div>
+          )}
+          {error && (
+            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 8 }}>
+              <div style={{ fontSize: 24 }}>📊</div>
+              <div className="mono" style={{ fontSize: 12, color: 'var(--text3)' }}>No chart data for {ticker}</div>
+            </div>
+          )}
+          {!ticker && !loading && (
+            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 12 }}>
+              <div style={{ fontSize: 40 }}>📈</div>
+              <div className="serif" style={{ fontSize: 18, color: 'var(--text2)' }}>Select a stock to start charting</div>
+              <div className="mono" style={{ fontSize: 11, color: 'var(--text3)' }}>Search above or pick from your watchlist →</div>
+            </div>
+          )}
+          <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
+        </div>
+      </div>
+
+      {/* ══ RIGHT: Watchlist Panel ══ */}
+      <div style={{ width: 260, flexShrink: 0, borderLeft: '1px solid var(--border)', display: 'flex', flexDirection: 'column', background: 'var(--surface)', overflow: 'hidden' }}>
+
+        {/* Watchlist tabs */}
+        <div style={{ borderBottom: '1px solid var(--border)', padding: '10px 10px 0', flexShrink: 0 }}>
+          <div className="mono" style={{ fontSize: 8, color: 'var(--text3)', letterSpacing: '0.12em', marginBottom: 8, paddingLeft: 4 }}>WATCHLISTS</div>
+          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', paddingBottom: 10 }}>
+            {watchlists.map(wl => (
+              <button key={wl.id} onClick={() => setActiveWL(wl.id)} className="mono"
+                style={{ fontSize: 10, padding: '4px 9px', borderRadius: 4, cursor: 'pointer', border: '1px solid', letterSpacing: '0.04em', transition: 'all 0.15s',
+                  borderColor: activeWL === wl.id ? 'rgba(0,229,160,0.35)' : 'var(--border)',
+                  background: activeWL === wl.id ? 'var(--green-dim)' : 'transparent',
+                  color: activeWL === wl.id ? 'var(--green)' : 'var(--text3)' }}>
+                {wl.name}
+              </button>
+            ))}
+            {/* Add watchlist */}
+            {!addingWL ? (
+              <button onClick={() => setAddingWL(true)} className="mono"
+                style={{ fontSize: 10, padding: '4px 8px', borderRadius: 4, cursor: 'pointer', border: '1px dashed var(--border)', background: 'transparent', color: 'var(--text3)', letterSpacing: '0.04em' }}>
+                + List
+              </button>
+            ) : (
+              <div style={{ display: 'flex', gap: 4, width: '100%', marginTop: 4 }}>
+                <input className="inp mono" autoFocus placeholder="List name…" value={newWLName} onChange={e => setNewWLName(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && newWLName.trim()) {
+                      const id = 'wl_' + Date.now();
+                      setWatchlists(prev => [...prev, { id, name: newWLName.trim(), tickers: [] }]);
+                      setActiveWL(id); setNewWLName(''); setAddingWL(false);
+                    }
+                    if (e.key === 'Escape') { setAddingWL(false); setNewWLName(''); }
+                  }}
+                  style={{ flex: 1, fontSize: 11, padding: '4px 8px' }} />
+                <button onClick={() => { setAddingWL(false); setNewWLName(''); }}
+                  style={{ background: 'none', border: 'none', color: 'var(--text3)', cursor: 'pointer', fontSize: 14 }}>✕</button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Watchlist items */}
+        <div style={{ flex: 1, overflow: 'auto' }}>
+          {activeWLData?.tickers?.length === 0 && (
+            <div style={{ padding: '30px 16px', textAlign: 'center' }}>
+              <div style={{ fontSize: 24, marginBottom: 8 }}>📋</div>
+              <div className="mono" style={{ fontSize: 10, color: 'var(--text3)' }}>
+                {activeWL === 'portfolio' ? 'Import your portfolio to auto-populate' : 'Add tickers to this watchlist'}
+              </div>
+            </div>
+          )}
+          {activeWLData?.tickers?.map((item, i) => {
+            const q = wlPrices[item.symbol];
+            const isActive = ticker === item.symbol;
+            const up = q?.change >= 0;
+            return (
+              <div key={item.symbol + i} onClick={() => setTicker(item.symbol)}
+                style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderBottom: '1px solid var(--border)', cursor: 'pointer', transition: 'background 0.12s',
+                  background: isActive ? 'var(--green-dim)' : 'transparent', borderLeft: isActive ? '2px solid var(--green)' : '2px solid transparent' }}
+                onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = 'var(--surface2)'; }}
+                onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = 'transparent'; }}>
+                <div style={{ minWidth: 0 }}>
+                  <div className="mono" style={{ fontSize: 12, fontWeight: 600, color: isActive ? 'var(--green)' : 'var(--text)' }}>{item.symbol}</div>
+                  <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 130 }}>{item.name}</div>
+                </div>
+                <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                  {q ? (<>
+                    <div className="mono" style={{ fontSize: 11, fontWeight: 600, color: 'var(--text)' }}>{q.price?.toFixed(2)}</div>
+                    <div className="mono" style={{ fontSize: 10, color: up ? 'var(--green)' : 'var(--red)' }}>{up ? '+' : ''}{q.change?.toFixed(2)}%</div>
+                  </>) : (
+                    <div className="mono" style={{ fontSize: 10, color: 'var(--text3)' }}>—</div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Add ticker to watchlist */}
+        {activeWL !== 'portfolio' && (
+          <div style={{ borderTop: '1px solid var(--border)', padding: 10, flexShrink: 0 }}>
+            {!addingTicker ? (
+              <button onClick={() => setAddingTicker(true)} className="mono"
+                style={{ width: '100%', padding: '7px', borderRadius: 6, border: '1px dashed var(--border2)', background: 'transparent', color: 'var(--text3)', cursor: 'pointer', fontSize: 10, letterSpacing: '0.06em' }}>
+                + Add ticker
+              </button>
+            ) : (
+              <div style={{ position: 'relative' }}>
+                <input className="inp mono" autoFocus placeholder="Search symbol…" value={addTickerQ} onChange={e => setAddTickerQ(e.target.value)}
+                  onBlur={() => setTimeout(() => { setAddTickerRes([]); setAddTickerQ(''); setAddingTicker(false); }, 200)}
+                  style={{ fontSize: 11, padding: '6px 10px', width: '100%' }} />
+                {addTickerRes.length > 0 && (
+                  <div style={{ position: 'absolute', bottom: '110%', left: 0, right: 0, background: 'var(--surface)', border: '1px solid var(--border2)', borderRadius: 8, boxShadow: '0 -12px 40px rgba(0,0,0,0.6)', overflow: 'hidden', zIndex: 60 }}>
+                    {addTickerRes.map(r => (
+                      <div key={r.symbol} onMouseDown={() => {
+                        setWatchlists(prev => prev.map(wl => wl.id === activeWL ? { ...wl, tickers: [...wl.tickers.filter(t => t.symbol !== r.symbol), { symbol: r.symbol, name: r.name }] } : wl));
+                        setAddTickerQ(''); setAddTickerRes([]); setAddingTicker(false);
+                      }}
+                        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', cursor: 'pointer', borderBottom: '1px solid var(--border)' }}
+                        onMouseEnter={e => e.currentTarget.style.background = 'var(--surface2)'}
+                        onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                        <div>
+                          <div className="mono" style={{ fontSize: 11, fontWeight: 600 }}>{r.symbol}</div>
+                          <div style={{ fontSize: 10, color: 'var(--text3)' }}>{r.name?.slice(0, 22)}</div>
+                        </div>
+                        <div className="mono" style={{ fontSize: 9, color: 'var(--text3)' }}>{r.exchangeShortName}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Delete watchlist (not portfolio) */}
+        {activeWL !== 'portfolio' && activeWLData && (
+          <div style={{ padding: '0 10px 10px', flexShrink: 0 }}>
+            <button onClick={() => {
+              setWatchlists(prev => prev.filter(w => w.id !== activeWL));
+              setActiveWL('portfolio');
+            }} className="mono" style={{ width: '100%', padding: '5px', borderRadius: 5, border: '1px solid var(--red-dim)', background: 'transparent', color: 'var(--red)', cursor: 'pointer', fontSize: 9, letterSpacing: '0.06em', opacity: 0.6 }}>
+              Delete "{activeWLData.name}"
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 // ── CompareView — 3c Stock Comparison ─────────────────────────────────────────
@@ -3078,7 +3648,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v50 · Fix ISIN resolution: batched API calls (3 at a time) to avoid FMP rate limits</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v51 · Phase 3e Charts page — full-screen TV chart, MAs, drawing tools, watchlists</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
@@ -3105,13 +3675,18 @@ export default function App() {
         </div>
 
         {/* ── Main ── */}
-        <div className="main-scroll" style={{flex:1,overflow:"auto",padding:"26px 30px"}}>
+        {nav==="charts" && (
+          <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",minWidth:0}}>
+            <ChartsPage positions={positions}/>
+          </div>
+        )}
+        <div className="main-scroll" style={{flex:1,overflow:"auto",padding:"26px 30px",display:nav==="charts"?"none":"block"}}>
 
           {/* Header */}
           <div className="fu" style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:22}}>
             <div>
               <div className="serif" style={{fontSize:24,letterSpacing:"-0.02em"}}>
-                {nav==="dashboard"?"Overview":nav==="portfolio"?"Portfolio":nav==="stock"&&selectedPos?selectedPos.symbol:nav==="screener"?"Screener":nav==="news"?"News Feed":"Settings"}
+                {nav==="dashboard"?"Overview":nav==="portfolio"?"Portfolio":nav==="charts"?"Charts":nav==="stock"&&selectedPos?selectedPos.symbol:nav==="screener"?"Screener":nav==="news"?"News Feed":"Settings"}
               </div>
               <div style={{display:"flex",alignItems:"center",gap:8,marginTop:3}}>
                 <span className="ldot"/>
