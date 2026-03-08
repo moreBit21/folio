@@ -2236,8 +2236,7 @@ export default function App() {
               </div>
             </div>
           )}
-        </div>{/* end settings */}
-        </div>{/* end page content */}
+
         </div>{/* end main-scroll */}
 
         {/* ── Mobile Bottom Nav ── */}
@@ -2253,35 +2252,32 @@ export default function App() {
       </div>{/* end outer flex */}
 
       {showImport&&<ImportModal onClose={()=>setShowImport(false)} onImport={(imported)=>{
-    if(imported?.type==="transactions"){
-      const txs = imported.data;
-      // Validate: check if transaction history is complete enough to trust qty reconstruction
-      if(positions.length > 0) {
-        // For each held position, compute final qty from transactions
-        const txQty = {};
-        txs.forEach(t=>{ if(!t.isin) return; txQty[t.isin]=(txQty[t.isin]||0)+(t.type==='buy'?t.qty:-t.qty); });
-        const mismatches = positions.filter(p=>{
-          if(!p.isin||p.qty<=0) return false;
-          const computed = Math.max(0, txQty[p.isin]||0);
-          const actual = p.qty;
-          // Flag if tx history gives 0 but depot shows qty > 0 (missing history)
-          // or if difference is >20% (incomplete history)
-          if(computed===0 && actual>0) return true;
-          if(actual>0 && Math.abs(computed-actual)/actual > 0.2) return true;
-          return false;
-        });
-        if(mismatches.length > positions.length * 0.3) {
-          const names = mismatches.slice(0,3).map(p=>p.name||p.symbol).join(', ');
-          const msg = "\u26a0 Incomplete transaction history\n\n" + mismatches.length + " of your " + positions.length + " positions have missing buy records\n(e.g. " + names + "...)\n\nSmartbroker+ only exported partial history. Please re-export going back to your first purchase.\n\nImport anyway?";
-          if(!window.confirm(msg)) return;
+        if(imported?.type==="transactions"){
+          const txs = imported.data;
+          if(positions.length > 0) {
+            const txQty = {};
+            txs.forEach(t=>{ if(!t.isin) return; txQty[t.isin]=(txQty[t.isin]||0)+(t.type==='buy'?t.qty:-t.qty); });
+            const mismatches = positions.filter(p=>{
+              if(!p.isin||p.qty<=0) return false;
+              const computed = Math.max(0, txQty[p.isin]||0);
+              const actual = p.qty;
+              if(computed===0 && actual>0) return true;
+              if(actual>0 && Math.abs(computed-actual)/actual > 0.2) return true;
+              return false;
+            });
+            if(mismatches.length > positions.length * 0.3) {
+              const names = mismatches.slice(0,3).map(p=>p.name||p.symbol).join(', ');
+              const msg = "\u26a0 Incomplete transaction history\n\n" + mismatches.length + " of your " + positions.length + " positions have missing buy records\n(e.g. " + names + "...)\n\nSmartbroker+ only exported partial history. Please re-export going back to your first purchase.\n\nImport anyway?";
+              if(!window.confirm(msg)) return;
+            }
+          }
+          setTransactions(txs);
         }
-      }
-      setTransactions(txs);
-    }
-    else{setPositions(prev=>[...prev,...imported]);}
-    setShowImport(false); setNav("dashboard");
-  }}/>}
-      {showModal && (
+        else{setPositions(prev=>[...prev,...imported]);}
+        setShowImport(false); setNav("dashboard");
+      }}/>}
+
+      {showModal&&(
         <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&setShowModal(false)}>
           <div className="modal">
             <div className="serif" style={{fontSize:20,marginBottom:5}}>Add Position</div>
@@ -2295,7 +2291,7 @@ export default function App() {
               ))}
             </div>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,marginBottom:12}}>
-              {[{k:"qty",l:"QUANTITY",p:"0.00"},{k:"avgPrice",l:"AVG PRICE (€)",p:"0.00"},{k:"currentPrice",l:"CURRENT (€)",p:"0.00"}].map(f=>(
+              {[{k:"qty",l:"QUANTITY",p:"0.00"},{k:"avgPrice",l:"AVG PRICE (\u20ac)",p:"0.00"},{k:"currentPrice",l:"CURRENT (\u20ac)",p:"0.00"}].map(f=>(
                 <div key={f.k}>
                   <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.1em",marginBottom:5}}>{f.l}</div>
                   <input className="inp" type="number" placeholder={f.p} value={newPos[f.k]} onChange={e=>setNewPos(p=>({...p,[f.k]:e.target.value}))}/>
@@ -2319,17 +2315,6 @@ export default function App() {
           </div>
         </div>
       )}
-
-        {/* ── Mobile Bottom Nav ── */}
-        <nav className="mobile-bottom-nav">
-          {NAV_ITEMS.map(item=>(
-            <button key={item.id} className={`mob-nav-btn${nav===item.id?" active":""}`}
-              onClick={()=>setNav(item.id)}>
-              <span className="icon">{item.icon}</span>
-              {item.label==="Dashboard"?"Home":item.label==="News Feed"?"News":item.label}
-            </button>
-          ))}
-        </nav>
     </>
   );
 }
