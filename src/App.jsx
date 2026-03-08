@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback } from "react"; // v20-margins-fix-peg
+import React, { useState, useMemo, useEffect, useCallback } from "react"; // v22-peg-forward-consensus
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, AreaChart, ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid } from "recharts";
 
 const FONTS = `@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=IBM+Plex+Mono:wght@300;400;500;600&family=DM+Sans:wght@300;400;500&display=swap');`;
@@ -1304,15 +1304,23 @@ function StockDetail({ pos, onBack, transactions }) {
   // > 25x = expensive; EV/EBITDA ≤ 10x = value, ≤ 15x = fair
   const peRatio  = data?.peRatio;
   const evEbitda = data?.evEbitda ?? last.evEbitda;
+  const pegRatio = data?.pegRatio;
   const valuationColor = (() => {
+    // PEG < 1 = undervalued (Peter Lynch), < 2 = fair, > 2 = expensive
+    // P/E ≤ 17x = at/below S&P avg, ≤ 25x = growth premium
+    // EV/EBITDA ≤ 10x = value, ≤ 15x = fair
     const scores = [
       peRatio  != null ? (peRatio  <= 17 ? 2 : peRatio  <= 25 ? 1 : 0) : null,
       evEbitda != null ? (evEbitda <= 10 ? 2 : evEbitda <= 15 ? 1 : 0) : null,
+      pegRatio != null ? (pegRatio <=  1 ? 2 : pegRatio <=  2 ? 1 : 0) : null,
     ].filter(s => s !== null);
     if (!scores.length) return 'gray';
     const avg = scores.reduce((a,b)=>a+b,0) / scores.length;
     return avg >= 1.5 ? 'green' : avg >= 0.8 ? 'gold' : 'red';
   })();
+  // PEG color: < 1 green, < 2 gold, >= 2 red (Peter Lynch standard)
+  const pegColor = pegRatio == null ? 'var(--text2)'
+    : pegRatio <= 1 ? '#00e5a0' : pegRatio <= 2 ? '#f0b429' : '#ff4d6d';
 
   const scorecard = [
     { label:'Profitability',   icon:'💰',
@@ -1364,7 +1372,7 @@ function StockDetail({ pos, onBack, transactions }) {
       metrics: [
         { l:'P/E Ratio',       v: fmtX(data?.peRatio) },
         { l:'P/B Ratio',       v: fmtX(data?.pbRatio ?? last.pbRatio) },
-        { l:'PEG Ratio',       v: data?.pegRatio != null ? data.pegRatio.toFixed(2) : '—' },
+        { l:'PEG Ratio',       v: pegRatio != null ? pegRatio.toFixed(2) : '—', color: pegColor, note: data?.pegNote },
         { l:'EV/EBITDA',       v: fmtX(data?.evEbitda ?? last.evEbitda) },
         { l:'Beta',            v: fmtN(data?.beta) },
         { l:'Mkt Cap',         v: fmtB(data?.marketCap) },
@@ -1474,9 +1482,12 @@ function StockDetail({ pos, onBack, transactions }) {
                 </div>
                 <div style={{display:'flex',flexDirection:'column',gap:5}}>
                   {sc.metrics.map(m=>(
-                    <div key={m.l} style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                      <span style={{fontSize:11,color:'var(--text2)'}}>{m.l}</span>
-                      <span className="mono" style={{fontSize:11,fontWeight:500,color:'var(--text)'}}>{m.v}</span>
+                    <div key={m.l} style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:4}}>
+                      <span style={{fontSize:11,color:'var(--text2)',flexShrink:0}}>{m.l}</span>
+                      <div style={{textAlign:'right'}}>
+                        <span className="mono" style={{fontSize:11,fontWeight:500,color:m.color||'var(--text)'}}>{m.v}</span>
+                        {m.note && <div className="mono" style={{fontSize:8,color:'var(--text3)',marginTop:1}}>{m.note}</div>}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -1499,7 +1510,7 @@ function StockDetail({ pos, onBack, transactions }) {
               <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:12}}>
                 {sc.metrics.map(m=>(
                   <div key={m.l} style={{textAlign:'center'}}>
-                    <div className="mono" style={{fontSize:16,fontWeight:600,marginBottom:3}}>{m.v}</div>
+                    <div className="mono" style={{fontSize:16,fontWeight:600,marginBottom:3,color:m.color||'inherit'}}>{m.v}</div>
                     <div className="mono" style={{fontSize:9,color:'var(--text3)'}}>{m.l}</div>
                   </div>
                 ))}
@@ -2208,7 +2219,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v20 · margins + PEG</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v22 · fwd PEG</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
