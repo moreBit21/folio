@@ -1519,31 +1519,59 @@ function CompareView() {
             </thead>
             <tbody>
               {[
-                {label:'P/E (TTM)',    key:'peRatio',      fmt:v=>v!=null?v.toFixed(1)+'x':'—'},
-                {label:'P/E (FY1)',   key:'forwardPE',    fmt:v=>v!=null?v.toFixed(1)+'x':'—'},
-                {label:'P/E (FY2)',   key:'forward2PE',   fmt:v=>v!=null?v.toFixed(1)+'x':'—'},
-                {label:'P/B',         key:'pbRatio',      fmt:v=>v!=null?v.toFixed(1)+'x':'—'},
-                {label:'PEG',         key:'pegRatio',     fmt:v=>v!=null?v.toFixed(2):'—'},
-                {label:'EV/EBITDA',   key:'evEbitda',     fmt:v=>v!=null?v.toFixed(1)+'x':'—'},
-                {label:'Gross Margin',key:'grossMargin',  fmt:v=>v!=null?(v*100).toFixed(1)+'%':'—'},
-                {label:'Net Margin',  key:'netMargin',    fmt:v=>v!=null?(v*100).toFixed(1)+'%':'—'},
-                {label:'ROE',         key:'roe',          fmt:v=>v!=null?(v*100).toFixed(1)+'%':'—'},
-                {label:'ROIC',        key:'roic',         fmt:v=>v!=null?(v*100).toFixed(1)+'%':'—'},
-                {label:'Rev Growth',  key:'revGrowth',    fmt:v=>v!=null?(v*100).toFixed(1)+'%':'—'},
-                {label:'EPS Grw TTM', key:'ttmEpsGrowth', fmt:v=>v!=null?(v*100).toFixed(1)+'%':'—'},
-                {label:'EPS Grw FY1', key:'fy1EpsGrowth', fmt:v=>v!=null?(v*100).toFixed(1)+'%':'—'},
-                {label:'EPS Grw FY2', key:'fy2EpsGrowth', fmt:v=>v!=null?(v*100).toFixed(1)+'%':'—'},
-                {label:'D/E',         key:'debtEquity',   fmt:v=>v!=null?v.toFixed(2)+'x':'—'},
-              ].map(row => (
-                <tr key={row.label} style={{borderTop:'1px solid var(--border)'}}>
-                  <td className="mono" style={{fontSize:10,color:'var(--text3)',padding:'7px 16px 7px 0',letterSpacing:'0.04em'}}>{row.label}</td>
-                  {stocksWithMetrics.filter(s=>s.data).map((s,i) => (
-                    <td key={s.ticker} className="mono" style={{fontSize:11,color:'var(--text)',padding:'7px 12px 7px 0',textAlign:'right',fontWeight:500}}>
-                      {row.fmt(s.data[row.key])}
-                    </td>
-                  ))}
-                </tr>
-              ))}
+                {label:'P/E (TTM)',    key:'peRatio',      fmt:v=>v!=null?v.toFixed(1)+'x':'—', lowerBetter:true},
+                {label:'P/E (FY1)',   key:'forwardPE',    fmt:v=>v!=null?v.toFixed(1)+'x':'—', lowerBetter:true},
+                {label:'P/E (FY2)',   key:'forward2PE',   fmt:v=>v!=null?v.toFixed(1)+'x':'—', lowerBetter:true},
+                {label:'P/B',         key:'pbRatio',      fmt:v=>v!=null?v.toFixed(1)+'x':'—', lowerBetter:true},
+                {label:'PEG',         key:'pegRatio',     fmt:v=>v!=null?v.toFixed(2):'—',     lowerBetter:true},
+                {label:'EV/EBITDA',   key:'evEbitda',     fmt:v=>v!=null?v.toFixed(1)+'x':'—', lowerBetter:true},
+                {label:'Gross Margin',key:'grossMargin',  fmt:v=>v!=null?(v*100).toFixed(1)+'%':'—', lowerBetter:false},
+                {label:'Net Margin',  key:'netMargin',    fmt:v=>v!=null?(v*100).toFixed(1)+'%':'—', lowerBetter:false},
+                {label:'ROE',         key:'roe',          fmt:v=>v!=null?(v*100).toFixed(1)+'%':'—', lowerBetter:false},
+                {label:'ROIC',        key:'roic',         fmt:v=>v!=null?(v*100).toFixed(1)+'%':'—', lowerBetter:false},
+                {label:'Rev Growth',  key:'revGrowth',    fmt:v=>v!=null?(v*100).toFixed(1)+'%':'—', lowerBetter:false},
+                {label:'EPS Grw TTM', key:'ttmEpsGrowth', fmt:v=>v!=null?(v*100).toFixed(1)+'%':'—', lowerBetter:false},
+                {label:'EPS Grw FY1', key:'fy1EpsGrowth', fmt:v=>v!=null?(v*100).toFixed(1)+'%':'—', lowerBetter:false},
+                {label:'EPS Grw FY2', key:'fy2EpsGrowth', fmt:v=>v!=null?(v*100).toFixed(1)+'%':'—', lowerBetter:false},
+                {label:'D/E',         key:'debtEquity',   fmt:v=>v!=null?v.toFixed(2)+'x':'—', lowerBetter:true},
+              ].map(row => {
+                const activeStocks = stocksWithMetrics.filter(s=>s.data);
+                const vals = activeStocks.map(s => s.data[row.key]);
+                const defined = vals.filter(v => v != null);
+                // Find best value index
+                let bestIdx = -1;
+                if (defined.length > 1) {
+                  const best = row.lowerBetter
+                    ? Math.min(...defined)
+                    : Math.max(...defined);
+                  bestIdx = vals.indexOf(best);
+                }
+                return (
+                  <tr key={row.label} style={{borderTop:'1px solid var(--border)'}}>
+                    <td className="mono" style={{fontSize:10,color:'var(--text3)',padding:'7px 16px 7px 0',letterSpacing:'0.04em'}}>{row.label}</td>
+                    {activeStocks.map((s, i) => {
+                      const v = s.data[row.key];
+                      const isBest = bestIdx === i && v != null;
+                      return (
+                        <td key={s.ticker} style={{padding:'5px 12px 5px 0',textAlign:'right'}}>
+                          <span className="mono" style={{
+                            fontSize:11,
+                            fontWeight: isBest ? 700 : 400,
+                            color: isBest ? COMPARE_COLORS[i] : 'var(--text2)',
+                            background: isBest ? `${COMPARE_COLORS[i]}18` : 'transparent',
+                            padding: isBest ? '2px 7px' : '2px 7px',
+                            borderRadius: 4,
+                            border: isBest ? `1px solid ${COMPARE_COLORS[i]}40` : '1px solid transparent',
+                            display:'inline-block',
+                          }}>
+                            {isBest ? '▲ ' : ''}{row.fmt(v)}
+                          </span>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -2551,7 +2579,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v25 · fwd PE + EPS growth</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v26 · table winner highlight</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
