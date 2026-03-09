@@ -4897,6 +4897,8 @@ export default function App() {
         return p.symbol;
       };
       // Resolve any unresolved ISINs via FMP search
+      // Build a local isin→ticker map so we don't rely on stale React state later
+      const resolvedTickerMap = {}; // isin → fmpTicker
       const needsResolution = stockPos.filter(p => !getT(p) && p.isin);
       if(needsResolution.length) {
         const pickFromResults = (res, isin) => {
@@ -4920,30 +4922,40 @@ export default function App() {
               if(pick?.symbol) {
                 const resolvedTk = pick.symbol.split('.')[0].toUpperCase();
                 const correctedType = inferType(resolvedTk, p.isin, p.name, p.type);
+                resolvedTickerMap[p.isin] = { ticker: pick.symbol, type: correctedType };
                 setPositions(prev=>prev.map(q=>q.isin===p.isin?{...q,fmpTicker:pick.symbol,type:correctedType}:q));
-                p.fmpTicker = pick.symbol;
+                p.fmpTicker = pick.symbol; // mutate local obj for tickerList below
               }
             } catch(e){}
           }));
           if(i+BATCH2 < needsResolution.length) await delay2(300);
         }
       }
-      // Build ticker list: try full ticker (SAP.DE) AND base ticker (SAP) for better FMP coverage
+      // Build ticker list using local objects (already mutated above, no stale state issue)
       const rawTickers = stockPos.map(getT).filter(Boolean);
       const baseTickers = rawTickers.map(t => t.split('.')[0]).filter(t => !rawTickers.includes(t));
       const tickerList = [...new Set([...rawTickers, ...baseTickers])];
       if(!tickerList.length){ setLastUpdated(new Date()); return; }
       const qmap = await fetchQuotes(tickerList);
+      console.log('[folio] tickerList:', tickerList.slice(0,10).join(','));
+      console.log('[folio] qmap sample:', Object.entries(qmap).slice(0,5).map(([k,v])=>`${k}:price=${v.price},chg=${v.change}`).join(' | '));
       setPositions(prev=>prev.map(p=>{
         if(p.type==='crypto'||p.type==='derivative') return p;
-        const t=getT(p);
-        // Try full ticker (SAP.DE), then base ticker (SAP), then raw symbol
-        const q=qmap[t] || qmap[t?.split('.')[0]] || qmap[p.symbol];
+        // Use resolvedTickerMap for newly-resolved positions (avoids stale React state),
+        // fall back to p.fmpTicker (already-resolved from previous runs) then getT
+        const resolvedTicker = resolvedTickerMap[p.isin]?.ticker;
+        const t = resolvedTicker || p.fmpTicker || getT(p);
+        // Try full ticker, base ticker, raw symbol
+        const q = qmap[t] || qmap[t?.split('.')[0]] || qmap[p.symbol];
         if(!q?.price) return p;
         const price = (p.isin?.startsWith('US') || (!t?.includes('.') && p.type!=='etf'))
           ? q.price / eurUsd  // USD stocks → EUR
           : q.price;          // EUR/other stocks already in local currency
-        return {...p, currentPrice: price, dailyChange: q.change ?? null};
+        // Also apply any resolved ticker/type from this run
+        const extra = resolvedTickerMap[p.isin]
+          ? { fmpTicker: resolvedTickerMap[p.isin].ticker, type: resolvedTickerMap[p.isin].type }
+          : {};
+        return {...p, ...extra, currentPrice: price, dailyChange: q.change ?? null};
       }));
       setLastUpdated(new Date());
     } catch(e){ console.warn('fetchPrices error:',e); }
