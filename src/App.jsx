@@ -1672,7 +1672,7 @@ function WatchlistPage({ watchlists, setWatchlists, activeWLId, setActiveWLId, o
           const map = {};
           arr.forEach(q => {
             if (!q?.symbol) return;
-            let chg = q.changesPercentage ?? q.changePercent ?? q.change_percent ?? null;
+            let chg = q.changePercentage ?? q.changesPercentage ?? q.changePercent ?? null;
             if (chg == null && q.previousClose > 0 && q.price != null) {
               chg = (q.price - q.previousClose) / q.previousClose * 100;
             }
@@ -1796,7 +1796,7 @@ function WatchlistPage({ watchlists, setWatchlists, activeWLId, setActiveWLId, o
       .then(data => {
         if (!Array.isArray(data)) return;
         const pm = {};
-        data.forEach(q => { pm[q.symbol] = { price: q.price, change: q.changesPercentage }; });
+        data.forEach(q => { const chg = q.changePercentage ?? q.changesPercentage ?? null; pm[q.symbol] = { price: q.price, change: chg }; });
         setWlLivePrices(pm);
       })
       .catch(() => {});
@@ -2355,7 +2355,7 @@ function ChartsPage({ positions, watchlists, setWatchlists, activeWLId, setActiv
       .then(data => {
         if (!Array.isArray(data)) return;
         const pm = {};
-        data.forEach(q => { pm[q.symbol] = { price: q.price, change: q.changesPercentage }; });
+        data.forEach(q => { const chg = q.changePercentage ?? q.changesPercentage ?? null; pm[q.symbol] = { price: q.price, change: chg }; });
         setWlPrices(pm);
       })
       .catch(() => {});
@@ -4818,7 +4818,7 @@ export default function App() {
   }, []);
 
   // Fetch quotes for a list of tickers — returns map { symbol: {price, change, prevClose} }
-  // Uses changesPercentage from FMP stable API; falls back to computing from previousClose
+  // Uses changePercentage from FMP stable API (v3 used changesPercentage); falls back to previousClose
   const fetchQuotes = useCallback(async (tickers) => {
     if (!tickers.length) return {};
     const BATCH = 20;
@@ -4832,11 +4832,12 @@ export default function App() {
           // Debug: log actual field names returned by FMP to help diagnose missing chg%
           const sample = arr[0];
           console.log('[folio] FMP quote fields:', Object.keys(sample).join(', '));
-          console.log('[folio] Sample changesPercentage:', sample.changesPercentage, '| changePercent:', sample.changePercent, '| change:', sample.change);
+          console.log('[folio] Sample changePercentage:', sample.changePercentage, '| changesPercentage:', sample.changesPercentage, '| change:', sample.change, '| previousClose:', sample.previousClose);
         }
         arr.forEach(q => {
           if (!q?.symbol) return;
-          let chg = q.changesPercentage ?? q.changePercent ?? q.change_percent ?? null;
+          // FMP stable API uses 'changePercentage' (no 's'), v3 used 'changesPercentage'
+          let chg = q.changePercentage ?? q.changesPercentage ?? q.changePercent ?? null;
           if (chg == null && q.previousClose > 0 && q.price != null) {
             chg = (q.price - q.previousClose) / q.previousClose * 100;
           }
@@ -5295,7 +5296,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v57 · right-click overview fix, resilient quote parsing, debug logging</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v57 · changePercentage field fix, right-click overview, resilient quotes</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
