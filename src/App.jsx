@@ -4265,7 +4265,7 @@ function GroupAllocBadge({ groupVal, positions }) {
   return <span className="mono" style={{fontSize:9,color:'var(--green)',marginLeft:6,background:'rgba(0,229,160,0.1)',padding:'1px 6px',borderRadius:3}}>{alloc.toFixed(1)}%</span>;
 }
 
-function PortfolioPage({ positions, transactions, onOpenStock, priceLoading, chartData, investedChartData, chartLoading, chartError, activeBM, setActiveBM, range, setRange, BENCHMARKS, perfStats }) {
+function PortfolioPage({ positions, transactions, onOpenStock, priceLoading, chartData, investedChartData, chartLoading, chartError, chartProgress, activeBM, setActiveBM, range, setRange, BENCHMARKS, perfStats }) {
   const [collapsedGroups, setCollapsedGroups] = useState(new Set(['stock','etf','crypto','derivative'])); // all collapsed by default
   const [tab, setTab] = React.useState('positions'); // positions | analysis
   const [analysisView, setAnalysisView] = React.useState('asset'); // asset|sector|region|cagr|volatility|alloc
@@ -4581,8 +4581,9 @@ function PortfolioPage({ positions, transactions, onOpenStock, priceLoading, cha
             </div>
           </div>
           {chartLoading ? (
-            <div style={{height:200,display:'flex',alignItems:'center',justifyContent:'center'}}>
-              <span className="mono shimmer" style={{fontSize:11,color:'var(--text3)'}}>⟳ Loading…</span>
+            <div style={{height:200,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:8}}>
+              <span className="mono shimmer" style={{fontSize:11,color:'var(--text3)'}}>⟳ Loading chart data…</span>
+              {chartProgress && <span className="mono" style={{fontSize:9,color:'var(--text3)',opacity:0.7,maxWidth:400,textAlign:'center'}}>{chartProgress}</span>}
             </div>
           ) : (
             <ResponsiveContainer width="100%" height={200}>
@@ -4966,6 +4967,7 @@ export default function App() {
   // FMP key is server-side only (Vercel env var FMP_KEY)
   const [transactions, setTransactions] = useState([]);
   const [priceLoading,setPriceLoading]= useState(true);
+  const [priceStatus, setPriceStatus]  = useState(null); // live status while loading
   const [lastUpdated, setLastUpdated] = useState(null);
   const [nav,         setNav]         = useState("dashboard");
   const [showModal,   setShowModal]   = useState(false);
@@ -5041,6 +5043,7 @@ export default function App() {
     const CONCURRENCY = 5;
     for (let i = 0; i < tickers.length; i += CONCURRENCY) {
       const slice = tickers.slice(i, i + CONCURRENCY);
+      setPriceStatus(`Fetching ${slice.join(', ')} (${i+1}–${Math.min(i+CONCURRENCY,tickers.length)} of ${tickers.length})`);
       await Promise.all(slice.map(async ticker => {
         try {
           const data = await fmpGet('/quote?symbol=' + encodeURIComponent(ticker));
@@ -5180,7 +5183,7 @@ export default function App() {
       }));
       setLastUpdated(new Date());
     } catch(e){ console.warn('fetchPrices error:',e); }
-    finally{ setPriceLoading(false); }
+    finally{ setPriceLoading(false); setPriceStatus(null); }
   }, [fmpGet]);
 
   useEffect(() => { fetchPrices(); }, [fetchPrices]);
@@ -5204,6 +5207,7 @@ export default function App() {
   const [chartData,    setChartData]    = useState([]);
   const [chartLoading, setChartLoading] = useState(false);
   const [chartError,   setChartError]   = useState(null);
+  const [chartProgress, setChartProgress] = useState(null); // e.g. "Loading AAPL (3/18)..."
 
   // Benchmark ticker map for FMP
   const BM_TICKERS = {sp500:'SPY',nasdaq:'QQQ',dax:'DAX',btc:'BTCUSD'};
@@ -5249,7 +5253,7 @@ export default function App() {
 
   const fetchChart = useCallback(async () => {
     if(!transactions.length || !positions.length) return;
-    setChartLoading(true); setChartError(null);
+    setChartLoading(true); setChartError(null); setChartProgress(null);
     try {
       const months = RANGE_MONTHS[range] ?? 12;
       const now    = new Date(2026,2,7);
@@ -5357,7 +5361,13 @@ export default function App() {
       const priceByIsin={};
       const skippedTickers=[];
       const uniqueTickers = [...new Set(Object.values(isinToTicker))];
-      await Promise.all(uniqueTickers.map(async ticker=>{
+      // Sequential batches (FMP free plan rate-limits concurrent requests)
+      const CHART_CONCURRENCY = 3;
+      let chartDoneCount = 0;
+      for (let ci = 0; ci < uniqueTickers.length; ci += CHART_CONCURRENCY) {
+        const batch = uniqueTickers.slice(ci, ci + CHART_CONCURRENCY);
+        setChartProgress(`Loading ${batch.join(', ')} (${ci+1}–${Math.min(ci+CHART_CONCURRENCY, uniqueTickers.length)} of ${uniqueTickers.length})…`);
+        await Promise.all(batch.map(async ticker=>{
         try{
           const data = await fmpGet('/historical-price-eod/full?symbol='+ticker+'&from='+fromStr+'&to='+toStr);
           // premium check now handled in fmpGet via throw
@@ -5371,7 +5381,8 @@ export default function App() {
             hist.forEach(h=>{ priceByIsin[isin][h.date]=isUsd?h.close/eurUsd:h.close; });
           });
         }catch(e){ if(e.message==='Premium') skippedTickers.push(ticker+'(premium)'); else { skippedTickers.push(ticker+'(err)'); console.warn('hist fail:',ticker,e.message); } }
-      }));
+        }));
+      } // end batch loop
 
       // ── Crypto via CoinGecko ──
       const cryptoPos = positions.filter(p=>p.type==='crypto'&&p.coinId&&p.qty>0);
@@ -5521,6 +5532,7 @@ export default function App() {
       if(sortBy==="pnlpct") return mul*(((a.currentPrice-a.avgPrice)/a.avgPrice)-((b.currentPrice-b.avgPrice)/b.avgPrice));
       if(sortBy==="qty")    return mul*(a.qty-b.qty);
       if(sortBy==="price")  return mul*(a.currentPrice-b.currentPrice);
+      if(sortBy==="daily")  return mul*((a.dailyChange??-Infinity)-(b.dailyChange??-Infinity));
       return 0;
     });
   },[positions,fBroker,fType,sortBy,sortDir]);
@@ -5545,7 +5557,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v59 · fix chg% (v3 free endpoint), score 0-100, groups collapsed, alloc%, GS D/E threshold</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v61 · DAY% sort fix, chart progress, EU ETF price fix, crash fix</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
@@ -5602,7 +5614,7 @@ export default function App() {
               <div style={{display:"flex",alignItems:"center",gap:8,marginTop:3}}>
                 <span className="ldot"/>
                 <span className="mono" style={{fontSize:10,color:"var(--text2)"}}>
-                  {priceLoading ? "Fetching live prices…" : `Updated ${lastUpdated?.toLocaleTimeString("de-DE",{hour:"2-digit",minute:"2-digit"})}`}
+                  {priceLoading ? `Fetching live prices${priceStatus ? ` — ${priceStatus}` : '…'}` : `Updated ${lastUpdated?.toLocaleTimeString("de-DE",{hour:"2-digit",minute:"2-digit"})}`}
                 </span>
                 {!priceLoading && (
                   <button onClick={fetchPrices} style={{background:"none",border:"none",cursor:"pointer",color:"var(--text3)",fontSize:11,padding:"0 4px"}} title="Refresh prices">↻</button>
@@ -5822,7 +5834,7 @@ export default function App() {
             onOpenStock={pos=>{setSelectedPos(pos);setNav("stock")}}
             priceLoading={priceLoading}
             chartData={chartData} investedChartData={investedChartData}
-            chartLoading={chartLoading} chartError={chartError}
+            chartLoading={chartLoading} chartError={chartError} chartProgress={chartProgress}
             activeBM={activeBM} setActiveBM={setActiveBM}
             range={range} setRange={setRange}
             BENCHMARKS={BENCHMARKS} perfStats={perfStats}/>}
