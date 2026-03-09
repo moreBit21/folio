@@ -1830,7 +1830,7 @@ function WatchlistPage({ watchlists, setWatchlists, activeWLId, setActiveWLId, o
     const fund = fundamentals[sym];
     const pd = getItemPrice(sym);
     if (col === 'price')  return pd?.price ?? -Infinity;
-    if (col === 'change') return pd?.change ?? -Infinity;
+    if (col === 'change' || col === 'daily') return pd?.change ?? -Infinity;
     if (col === 'mktcap') return fund?.marketCap ?? -Infinity;
     if (col === 'eps')    return getEPSGrowth(sym) ?? -Infinity;
     if (col === 'health') return getHealthScore(sym) ?? -Infinity;
@@ -4644,8 +4644,7 @@ function PortfolioPage({ positions, transactions, onOpenStock, priceLoading, cha
           </div>
 
           {/* Asset-class grouped rows */}
-          {(() => {
-            const typeLabel = t => t==='etf'?'ETF':t==='crypto'?'Crypto':t==='derivative'?'Derivative':'Stock';
+          {(()=> { const typeLabel = t => t==='etf'?'ETF':t==='crypto'?'Crypto':t==='derivative'?'Derivative':'Stock';
             const typeOrder = ['stock','etf','crypto','derivative'];
             const groups = typeOrder.map(type => ({
               type, label: typeLabel(type),
@@ -4689,15 +4688,15 @@ function PortfolioPage({ positions, transactions, onOpenStock, priceLoading, cha
                   </div>
                   {/* Position rows */}
                   {expanded && rows.map(pos => {
-            const val = pos.qty * pos.currentPrice;
-            const pnl = pos.qty * (pos.currentPrice - pos.avgPrice);
-            const pnlpct = pos.avgPrice > 0 ? ((pos.currentPrice - pos.avgPrice) / pos.avgPrice * 100) : 0;
-            const up = pnl >= 0;
-            const cagr = calcCAGR(pos);
-            const score = getScore(pos);
-            const dims = getScoreDims(pos);
-            const loading = loadingFund[pos.fmpTicker || pos.symbol];
-            return (
+                    const val = pos.qty * pos.currentPrice;
+                    const pnl = pos.qty * (pos.currentPrice - pos.avgPrice);
+                    const pnlpct = pos.avgPrice > 0 ? ((pos.currentPrice - pos.avgPrice) / pos.avgPrice * 100) : 0;
+                    const up = pnl >= 0;
+                    const cagr = calcCAGR(pos);
+                    const score = getScore(pos);
+                    const dims = getScoreDims(pos);
+                    const loading = loadingFund[pos.fmpTicker || pos.symbol];
+                    return (
               <div key={pos.id} onClick={()=>onOpenStock(pos)}
                 style={{display:'grid',
                   gridTemplateColumns:'2fr 0.7fr 0.9fr 0.9fr 0.7fr 0.9fr 0.9fr 0.9fr 1.8fr',
@@ -4771,9 +4770,7 @@ function PortfolioPage({ positions, transactions, onOpenStock, priceLoading, cha
                 </div>
               </div>
             );
-          })}
-
-                })}
+                  })}
                 </React.Fragment>
               );
             });
@@ -5054,7 +5051,7 @@ export default function App() {
             if (chg == null && q.previousClose > 0 && q.price != null) {
               chg = (q.price - q.previousClose) / q.previousClose * 100;
             }
-            map[q.symbol] = { price: q.price, change: chg, mktcap: q.marketCap, prevClose: q.previousClose };
+            map[q.symbol] = { price: q.price, change: chg, mktcap: q.marketCap, prevClose: q.previousClose, exchange: q.exchange };
           });
         } catch(e) { /* silent fail per ticker */ }
       }));
@@ -5164,9 +5161,17 @@ export default function App() {
         // Try full ticker, base ticker, raw symbol
         const q = qmap[t] || qmap[t?.split('.')[0]] || qmap[p.symbol];
         if(!q?.price) return p;
-        const price = (p.isin?.startsWith('US') || (!t?.includes('.') && p.type!=='etf'))
+        const rawPrice = (p.isin?.startsWith('US') || (!t?.includes('.') && p.type!=='etf'))
           ? q.price / eurUsd  // USD stocks → EUR
-          : q.price;          // EUR/other stocks already in local currency
+          : (q.exchange === 'NYSE' || q.exchange === 'NASDAQ' || q.exchange === 'AMEX')
+            ? q.price / eurUsd  // US-listed ETF resolved from non-US ISIN → convert USD
+            : q.price;          // EUR/other already in local currency
+        // Sanity check: if we have a prior CSV price and the FMP price is >5× different,
+        // the ISIN resolved to the wrong (e.g. US) ticker — keep the CSV price but take the % change
+        const priorPrice = p.currentPrice;
+        const price = (priorPrice > 0 && rawPrice > 0 && (rawPrice / priorPrice > 5 || priorPrice / rawPrice > 5))
+          ? priorPrice  // FMP price looks wrong — keep CSV price, still show daily change
+          : rawPrice;
         // Also apply any resolved ticker/type from this run
         const extra = resolvedTickerMap[p.isin]
           ? { fmpTicker: resolvedTickerMap[p.isin].ticker, type: resolvedTickerMap[p.isin].type }
