@@ -1663,7 +1663,7 @@ function WatchlistPage({ watchlists, setWatchlists, activeWLId, setActiveWLId, o
         for (let i = 0; i < syms.length; i += BATCH) {
           if (cancelled) return;
           const batch = syms.slice(i, i + BATCH).join(',');
-          const r = await fetch('/api/fmp?path=' + encodeURIComponent('/quotes?symbols=' + batch));
+          const r = await fetch('/api/fmp?path=' + encodeURIComponent('/quote?symbol=' + batch));
           if (!r.ok) continue;
           const data = await r.json().catch(() => null);
           if (!data || cancelled) continue;
@@ -1791,7 +1791,7 @@ function WatchlistPage({ watchlists, setWatchlists, activeWLId, setActiveWLId, o
     if (!wl || !allItems.length) return;
     const syms = [...new Set(allItems.map(i=>i.symbol).filter(s=>s&&!isISIN(s)))];
     if (!syms.length) return;
-    fetch('/api/fmp?path=' + encodeURIComponent('/quotes?symbols=' + syms.join(',')))
+    fetch('/api/fmp?path=' + encodeURIComponent('/quote?symbol=' + syms.join(',')))
       .then(r=>r.json())
       .then(data => {
         if (!Array.isArray(data)) return;
@@ -2350,7 +2350,7 @@ function ChartsPage({ positions, watchlists, setWatchlists, activeWLId, setActiv
     if (!items.length) return;
     const syms = [...new Set(items.map(i => i.symbol))].filter(Boolean).join(',');
     if (!syms) return;
-    fetch('/api/fmp?path=' + encodeURIComponent('/quotes?symbols=' + syms))
+    fetch('/api/fmp?path=' + encodeURIComponent('/quote?symbol=' + syms))
       .then(r => r.json())
       .then(data => {
         if (!Array.isArray(data)) return;
@@ -4826,7 +4826,7 @@ export default function App() {
     for (let i = 0; i < tickers.length; i += BATCH) {
       const batch = tickers.slice(i, i + BATCH);
       try {
-        const data = await fmpGet('/quotes?symbols=' + batch.join(','));
+        const data = await fmpGet('/quote?symbol=' + batch.join(','));
         const arr = Array.isArray(data) ? data : (data ? [data] : []);
         if (arr.length > 0) {
           // Debug: log actual field names returned by FMP to help diagnose missing chg%
@@ -5296,7 +5296,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v57 · changePercentage field fix, right-click overview, resilient quotes</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v57 · correct FMP endpoint /quote?symbol=, changePercentage field, right-click overview</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
