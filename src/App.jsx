@@ -1663,7 +1663,7 @@ function WatchlistPage({ watchlists, setWatchlists, activeWLId, setActiveWLId, o
         for (let i = 0; i < syms.length; i += BATCH) {
           if (cancelled) return;
           const batch = syms.slice(i, i + BATCH).join(',');
-          const r = await fetch('/api/fmp?path=/quotes?symbols=' + encodeURIComponent(batch));
+          const r = await fetch('/api/fmp?path=' + encodeURIComponent('/quotes?symbols=' + batch));
           const data = await r.json();
           if (!Array.isArray(data) || cancelled) continue;
           const map = {};
@@ -2340,7 +2340,7 @@ function ChartsPage({ positions, watchlists, setWatchlists, activeWLId, setActiv
     if (!items.length) return;
     const syms = [...new Set(items.map(i => i.symbol))].filter(Boolean).join(',');
     if (!syms) return;
-    fetch(`/api/fmp?path=/quotes?symbols=${syms}`)
+    fetch('/api/fmp?path=' + encodeURIComponent('/quotes?symbols=' + syms))
       .then(r => r.json())
       .then(data => {
         if (!Array.isArray(data)) return;
@@ -4133,6 +4133,16 @@ function PortfolioPage({ positions, transactions, onOpenStock, priceLoading, cha
   };
 
   const getFund = (pos) => fundamentals[pos.fmpTicker || pos.symbol];
+  const getCurrency = (pos) => {
+    const sym = pos.fmpTicker || pos.symbol || '';
+    if (pos.type === 'crypto') return 'USD/Crypto';
+    if (sym.endsWith('.DE') || sym.endsWith('.F')) return 'EUR';
+    if (sym.endsWith('.AS') || sym.endsWith('.PA') || sym.endsWith('.MI')) return 'EUR';
+    if (sym.endsWith('.L')) return 'GBP';
+    if (sym.endsWith('.T')) return 'JPY';
+    if (sym.endsWith('.HK')) return 'HKD';
+    return 'USD';
+  };
   const getScore = (pos) => calcCanonicalHealthScore(getFund(pos));
   const getSector = (pos) => getFund(pos)?.sector || (pos.type === 'crypto' ? 'Crypto' : pos.type === 'etf' ? 'ETF' : null);
   const getRegion = (pos) => {
@@ -4212,17 +4222,7 @@ function PortfolioPage({ positions, transactions, onOpenStock, priceLoading, cha
   const sectorPie = makePie(getSector, {});
   const regionPie = makePie(getRegion, REGION_COLORS);
   const allocPie  = makePie(p => p.symbol || p.name, {});
-  const getCurrency = (pos) => {
-    const sym = pos.fmpTicker || pos.symbol || '';
-    if (pos.type === 'crypto') return 'USD/Crypto';
-    if (sym.endsWith('.DE') || sym.endsWith('.F')) return 'EUR';
-    if (sym.endsWith('.AS') || sym.endsWith('.PA') || sym.endsWith('.MI')) return 'EUR';
-    if (sym.endsWith('.L')) return 'GBP';
-    if (sym.endsWith('.T')) return 'JPY';
-    if (sym.endsWith('.HK')) return 'HKD';
-    return 'USD';
-  };
-  const currencyPie = makePie(getCurrency, {'USD':'#4d9fff','EUR':'#00e5a0','GBP':'#a78bfa','JPY':'#f0b429','USD/Crypto':'#ff9f43','HKD':'#ff6b9d'});
+
 
   const cagrPie = (() => {
     const groups = { high: 0, medium: 0, low: 0, 'n/a': 0 };
@@ -4424,13 +4424,13 @@ function PortfolioPage({ positions, transactions, onOpenStock, priceLoading, cha
         <div className="card" style={{padding:0,overflow:'hidden'}}>
           {/* Table header */}
           <div style={{display:'grid',
-            gridTemplateColumns:'2fr 0.7fr 0.9fr 0.9fr 0.7fr 0.9fr 0.9fr 0.9fr 1.4fr 0.8fr',
+            gridTemplateColumns:'2fr 0.7fr 0.9fr 0.9fr 0.7fr 0.9fr 0.9fr 0.9fr 1.8fr',
             padding:'9px 18px',background:'var(--surface2)',borderBottom:'1px solid var(--border2)',gap:8}}>
             {[
               ['name','ASSET'],['qty','QTY'],['price','AVG €'],['value','VALUE'],
               ['daily','DAY%'],['pnl','P&L'],['pnlpct','P&L%'],
               ['breakeven','BREAK-EVEN'],
-              ['health','HEALTH SCORECARD'],['score','SCORE'],
+              ['health','HEALTH'],
             ].map(([col,label])=>(
               <div key={col} className="mono" onClick={()=>toggleSort(col)}
                 style={{fontSize:9,color:sortBy===col?'var(--green)':'var(--text3)',letterSpacing:'0.1em',
@@ -4454,7 +4454,7 @@ function PortfolioPage({ positions, transactions, onOpenStock, priceLoading, cha
             return (
               <div key={pos.id} onClick={()=>onOpenStock(pos)}
                 style={{display:'grid',
-                  gridTemplateColumns:'2fr 0.7fr 0.9fr 0.9fr 0.7fr 0.9fr 0.9fr 0.9fr 1.4fr 0.8fr',
+                  gridTemplateColumns:'2fr 0.7fr 0.9fr 0.9fr 0.7fr 0.9fr 0.9fr 0.9fr 1.8fr',
                   padding:'11px 18px',borderBottom:'1px solid var(--border)',
                   cursor:'pointer',transition:'background 0.12s',gap:8,alignItems:'center'}}
                 onMouseEnter={e=>e.currentTarget.style.background='var(--surface2)'}
@@ -4518,30 +4518,27 @@ function PortfolioPage({ positions, transactions, onOpenStock, priceLoading, cha
                   );
                 })()}
 
-                {/* Scorecard dots */}
-                <div style={{display:'flex',gap:3,alignItems:'center'}}>
-                  {dims ? dims.map((col,i)=>(
-                    <div key={i} title={SCORECARD_LABELS[i]}
-                      style={{width:10,height:10,borderRadius:'50%',flexShrink:0,
-                        background:col==='green'?'var(--green)':col==='gold'?'var(--gold)':col==='red'?'var(--red)':'var(--surface2)',
-                        border:col==='gray'?'1px solid var(--border)':'none'}}/>
-                  )) : loading ? <span className="mono shimmer" style={{fontSize:9,color:'var(--text3)'}}>…</span>
-                  : <span className="mono" style={{fontSize:9,color:'var(--text3)'}}>—</span>}
-                </div>
-
-                {/* Overall score */}
-                <div style={{display:'flex',alignItems:'center',gap:5}}>
-                  {score!=null?(<>
-                    <div style={{width:28,height:4,borderRadius:2,background:'var(--surface2)',overflow:'hidden'}}>
+                {/* HEALTH — scorecard dots + score bar in one cell */}
+                <div style={{display:'flex',flexDirection:'column',gap:4}}>
+                  <div style={{display:'flex',gap:3,alignItems:'center'}}>
+                    {dims ? dims.map((col,i)=>(
+                      <div key={i} title={SCORECARD_LABELS[i]}
+                        style={{width:10,height:10,borderRadius:'50%',flexShrink:0,
+                          background:col==='green'?'var(--green)':col==='gold'?'var(--gold)':col==='red'?'var(--red)':'var(--surface2)',
+                          border:col==='gray'?'1px solid var(--border)':'none'}}/>
+                    )) : loading ? <span className="mono shimmer" style={{fontSize:9,color:'var(--text3)'}}>…</span>
+                    : <span className="mono" style={{fontSize:9,color:'var(--text3)'}}>—</span>}
+                    {score!=null && <span className="mono" style={{fontSize:10,fontWeight:700,marginLeft:4,
+                      color:score>=70?'var(--green)':score>=40?'var(--gold)':'var(--red)'}}>
+                      {score}
+                    </span>}
+                  </div>
+                  {score!=null && (
+                    <div style={{width:'100%',maxWidth:80,height:3,borderRadius:2,background:'var(--surface2)',overflow:'hidden'}}>
                       <div style={{height:'100%',width:score+'%',borderRadius:2,
                         background:score>=70?'var(--green)':score>=40?'var(--gold)':'var(--red)'}}/>
                     </div>
-                    <span className="mono" style={{fontSize:10,fontWeight:700,
-                      color:score>=70?'var(--green)':score>=40?'var(--gold)':'var(--red)'}}>
-                      {score}
-                    </span>
-                  </>):loading?<span className="mono shimmer" style={{fontSize:10,color:'var(--text3)'}}>…</span>
-                  :<span className="mono" style={{fontSize:10,color:'var(--text3)'}}>—</span>}
+                  )}
                 </div>
               </div>
             );
@@ -5260,7 +5257,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v56 · single-view analysis, pie drill-down, CAGR+real return cards, no CAGR col</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v57 · fix daily chg% URL encoding, currency pie crash, health sort, watchlist prices</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
