@@ -44,7 +44,7 @@ const CSS = `
   .modal{background:var(--surface);border:1px solid var(--border2);border-radius:12px;padding:28px;width:440px;box-shadow:0 24px 80px rgba(0,0,0,0.6)}
   .inp{width:100%;background:var(--bg);border:1px solid var(--border2);border-radius:6px;color:var(--text);font-family:'IBM Plex Mono',monospace;font-size:13px;padding:10px 12px;outline:none;transition:border 0.15s}
   .inp:focus{border-color:var(--green)} .inp::placeholder{color:var(--text3)}
-  .trow{display:grid;grid-template-columns:2.2fr 0.8fr 1fr 1fr 1fr 0.8fr;align-items:center;padding:13px 18px;border-bottom:1px solid var(--border);transition:background 0.12s;cursor:pointer}
+  .trow{display:grid;grid-template-columns:2.2fr 0.8fr 1fr 1fr 0.8fr 1fr 0.8fr;align-items:center;padding:13px 18px;border-bottom:1px solid var(--border);transition:background 0.12s;cursor:pointer}
   .trow:hover{background:var(--surface2)} .trow:last-child{border-bottom:none}
   .btog{display:flex;align-items:center;gap:7px;padding:6px 12px;border-radius:6px;border:1px solid var(--border);background:transparent;cursor:pointer;transition:all 0.15s;font-family:'IBM Plex Mono',monospace;font-size:10px}
   .btog.on{border-color:rgba(0,229,160,0.3);background:var(--green-dim)} .btog.off{opacity:0.4}
@@ -1390,13 +1390,21 @@ function dedupeSearchResults(results) {
 }
 async function fetchTickerSearch(query, limit = 12) {
   if (!query || query.length < 1) return [];
-  // Use search-name for both name queries and ticker queries
-  // Fetch more results so deduplication still leaves enough
-  const r = await fetch('/api/fmp?path=' + encodeURIComponent('/search-name?query=' + query + '&limit=' + limit));
-  if (!r.ok) return [];
-  const data = await r.json();
-  if (!Array.isArray(data)) return [];
-  return dedupeSearchResults(data);
+  // Run name search always; run symbol search in parallel for short queries
+  const nameUrl = '/api/fmp?path=' + encodeURIComponent('/search-name?query=' + query + '&limit=' + limit);
+  const looksLikeTicker = query.length <= 6 && !/\s/.test(query);
+  const symUrl = '/api/fmp?path=' + encodeURIComponent('/search?query=' + query.toUpperCase() + '&limit=8&exchange=NASDAQ,NYSE,XETRA');
+  try {
+    const [nameRes, symRes] = await Promise.allSettled([
+      fetch(nameUrl).then(r=>r.ok?r.json():[]).catch(()=>[]),
+      looksLikeTicker ? fetch(symUrl).then(r=>r.ok?r.json():[]).catch(()=>[]) : Promise.resolve([]),
+    ]);
+    const nameData = Array.isArray(nameRes.value) ? nameRes.value : [];
+    const symData  = Array.isArray(symRes.value)  ? symRes.value  : [];
+    // Merge: symbol-exact matches at top, then name results
+    const combined = [...symData, ...nameData];
+    return dedupeSearchResults(combined.filter(r=>r&&r.symbol));
+  } catch { return []; }
 }
 
 function TickerDropdown({ results, searching, onSelect }) {
@@ -1495,6 +1503,101 @@ function WLContextMenu({ x, y, item, onFlag, onOpenStock, onRemove, onClose }) {
   );
 }
 
+
+// ── Canonical health score — MUST match StockDetail scorecard logic exactly ──
+// Input: d = fundamentals API response ({ byYear, sector, peRatio, evEbitda, pegRatio, marketCap })
+// Returns: 0-100 integer or null
+function calcCanonicalHealthScore(d) {
+  if (!d) return null;
+  const yrs  = d.byYear?.slice(-3) || [];
+  const last = yrs[yrs.length - 1] || {};
+  const prev = yrs[yrs.length - 2] || {};
+  const prev2= yrs[yrs.length - 3] || {};
+  const sector = (d.sector || '').toLowerCase();
+  const isTech    = /tech|software|semi|information/i.test(sector);
+  const isFinance = /financ|bank|insurance|reit/i.test(sector);
+  const isRetail  = /retail|consumer staple|grocery/i.test(sector);
+  const isHealth2 = /health|pharma|biotech|medical/i.test(sector);
+  const isEnergy  = /energy|oil|gas|util/i.test(sector);
+
+  const nmGood = isTech?0.15:isRetail?0.04:isEnergy?0.06:0.08;
+  const nmOk   = isTech?0.06:isRetail?0.01:isEnergy?0.02:0.03;
+  const deGood = isFinance?2:isTech?0.5:1;
+  const deOk   = isFinance?4:isTech?1.5:2;
+
+  // Profitability
+  const profitScores = [
+    last.netMargin  !=null?(last.netMargin >=nmGood?2:last.netMargin >=nmOk?1:0):null,
+    last.roe        !=null?(last.roe       >=0.15  ?2:last.roe       >=0.08?1:0):null,
+    last.roic       !=null?(last.roic      >=0.10  ?2:last.roic      >=0.05?1:0):null,
+    last.grossMargin!=null?(last.grossMargin>=(isTech?0.50:isRetail?0.25:0.35)?2
+                            :last.grossMargin>=(isTech?0.30:isRetail?0.15:0.20)?1:0):null,
+  ].filter(s=>s!==null);
+  const profitColor = profitScores.length?
+    (profitScores.reduce((a,b)=>a+b)/profitScores.length>=1.5?'green':
+     profitScores.reduce((a,b)=>a+b)/profitScores.length>=0.8?'gold':'red'):'gray';
+
+  // Growth
+  const g = (last.revenue&&prev.revenue&&prev.revenue>0)?(last.revenue/prev.revenue-1):null;
+  const growthGood=isTech?0.15:0.07, growthOk=isTech?0.05:0.02;
+  const growthColor = g==null?'gray':g>growthGood?'green':g>growthOk?'gold':'red';
+
+  // Moat
+  const revGrowthYoy =(last.revenue&&prev.revenue&&prev.revenue>0)?last.revenue/prev.revenue-1:null;
+  const revGrowthPrev=(prev.revenue&&prev2.revenue&&prev2.revenue>0)?prev.revenue/prev2.revenue-1:null;
+  const growthConsistent=revGrowthYoy!=null&&revGrowthPrev!=null&&revGrowthYoy>0&&revGrowthPrev>0;
+  const moatScores=[
+    last.grossMargin!=null?(last.grossMargin>=(isTech?0.55:isRetail?0.30:0.40)?2
+                            :last.grossMargin>=(isTech?0.35:isRetail?0.15:0.25)?1:0):null,
+    last.roic!=null?(last.roic>=0.15?2:last.roic>=0.08?1:0):null,
+    last.roe !=null?(last.roe >=0.20?2:last.roe >=0.12?1:0):null,
+    growthConsistent?2:(revGrowthYoy!=null?(revGrowthYoy>0?1:0):null),
+  ].filter(s=>s!==null);
+  const moatColor=moatScores.length<2?'gray':
+    (moatScores.reduce((a,b)=>a+b)/moatScores.length>=1.6?'green':
+     moatScores.reduce((a,b)=>a+b)/moatScores.length>=0.9?'gold':'red');
+
+  // Balance
+  const de=last.debtEquity, cr=last.currentRatio;
+  const balScores=[
+    de!=null?(de<=deGood?2:de<=deOk?1:0):null,
+    cr!=null?(cr>=2.0?2:cr>=1.0?1:0):null,
+  ].filter(s=>s!==null);
+  const balanceColor=balScores.length?
+    (balScores.reduce((a,b)=>a+b)/balScores.length>=1.5?'green':
+     balScores.reduce((a,b)=>a+b)/balScores.length>=0.8?'gold':'red'):'gray';
+
+  // Cash Generation
+  const fcf=last.freeCashFlow, fcfRev=(fcf&&last.revenue)?fcf/last.revenue:null;
+  const cashScores=[
+    fcf!=null?(fcf>0?(fcfRev>=0.10?2:1):0):null,
+    last.operatingCF!=null?(last.operatingCF>0?2:0):null,
+  ].filter(s=>s!==null);
+  const cashColor=cashScores.length?
+    (cashScores.reduce((a,b)=>a+b)/cashScores.length>=1.5?'green':
+     cashScores.reduce((a,b)=>a+b)/cashScores.length>=0.8?'gold':'red'):'gray';
+
+  // Valuation
+  const peFair=isTech?30:isHealth2?22:isFinance?15:20;
+  const peOk  =isTech?45:isHealth2?35:isFinance?20:30;
+  const pe=d.peRatio, ev=d.evEbitda, peg=d.pegRatio;
+  const valScores=[
+    pe !=null?(pe <=peFair?2:pe <=peOk?1:0):null,
+    ev !=null?(ev <=10   ?2:ev <=18  ?1:0):null,
+    peg!=null?(peg<=1    ?2:peg<=2   ?1:0):null,
+  ].filter(s=>s!==null);
+  const valuationColor=valScores.length?
+    (valScores.reduce((a,b)=>a+b)/valScores.length>=1.5?'green':
+     valScores.reduce((a,b)=>a+b)/valScores.length>=0.8?'gold':'red'):'gray';
+
+  // Aggregate (same formula as StockDetail)
+  const colorScore={green:2,gold:1,red:0,gray:null};
+  const dims=[profitColor,growthColor,moatColor,balanceColor,cashColor,valuationColor]
+    .map(col=>colorScore[col]).filter(v=>v!==null);
+  if(!dims.length) return null;
+  return Math.round(dims.reduce((a,b)=>a+b)/dims.length*50);
+}
+
 // ── WatchlistPage ────────────────────────────────────────────────────────────
 function WatchlistPage({ watchlists, setWatchlists, activeWLId, setActiveWLId, onOpenStock, onOpenChart, positions }) {
   const [ctxMenu, setCtxMenu]         = React.useState(null);
@@ -1510,11 +1613,36 @@ function WatchlistPage({ watchlists, setWatchlists, activeWLId, setActiveWLId, o
   const [dragState, setDragState]     = React.useState(null);
   const [dragOverCat, setDragOverCat] = React.useState(null);
   const [dragOverSym, setDragOverSym] = React.useState(null);
-  const [sortCol, setSortCol]         = React.useState(null); // 'price'|'change'|'mktcap'|'eps'|'health'
+  const [sortCol, setSortCol]         = React.useState(null);
   const [sortDir, setSortDir]         = React.useState('desc');
+  const [livePrices, setLivePrices]   = React.useState({}); // symbol → {price, change, mktcap}
 
   const wl = watchlists.find(w => w.id === activeWLId);
   const allItems = wl ? wl.categories.flatMap(cat => cat.items) : [];
+
+  // ── Fetch live FMP prices for all watchlist items ──
+  React.useEffect(() => {
+    const syms = [...new Set(allItems.map(i => i.symbol).filter(Boolean))];
+    if (!syms.length) return;
+    let cancelled = false;
+    const fetchPrices = async () => {
+      try {
+        const BATCH = 10;
+        for (let i = 0; i < syms.length; i += BATCH) {
+          if (cancelled) return;
+          const batch = syms.slice(i, i + BATCH).join(',');
+          const r = await fetch('/api/fmp?path=/quotes?symbols=' + encodeURIComponent(batch));
+          const data = await r.json();
+          if (!Array.isArray(data) || cancelled) continue;
+          const map = {};
+          data.forEach(q => { map[q.symbol] = { price: q.price, change: q.changesPercentage, mktcap: q.marketCap }; });
+          setLivePrices(p => ({...p, ...map}));
+        }
+      } catch(e) {}
+    };
+    fetchPrices();
+    return () => { cancelled = true; };
+  }, [activeWLId, allItems.map(i=>i.symbol).join(',')]);
 
   // Fetch fundamentals — batched, cached
   React.useEffect(() => {
@@ -1606,23 +1734,7 @@ function WatchlistPage({ watchlists, setWatchlists, activeWLId, setActiveWLId, o
   const handleDragEnd = () => { setDragState(null); setDragOverCat(null); setDragOverSym(null); };
 
   // ── Data helpers ──
-  const getHealthScore = (sym) => {
-    const d = fundamentals[sym];
-    if (!d) return null;
-    const yrs = d.byYear?.slice(-3) || [];
-    const last = yrs[yrs.length-1] || {};
-    const sector = (d.sector || '').toLowerCase();
-    const isTech = /tech|software|semi/i.test(sector);
-    const isFinance = /financ|bank/i.test(sector);
-    const scores = [];
-    if (last.netMargin != null) scores.push(last.netMargin > (isTech?0.15:0.08) ? 2 : last.netMargin > 0 ? 1 : 0);
-    if (last.roe != null) scores.push(last.roe > 0.15 ? 2 : last.roe > 0.05 ? 1 : 0);
-    if (last.debtEquity != null) scores.push(last.debtEquity < (isFinance?2:1) ? 2 : last.debtEquity < (isFinance?4:2) ? 1 : 0);
-    if (last.freeCashFlow != null) scores.push(last.freeCashFlow > 0 ? 2 : 0);
-    const pe = d.peRatio;
-    if (pe != null && pe > 0) scores.push(pe < (isTech?30:20) ? 2 : pe < (isTech?50:35) ? 1 : 0);
-    return scores.length ? Math.round(scores.reduce((a,b)=>a+b,0)/scores.length*50) : null;
-  };
+  const getHealthScore = (sym) => calcCanonicalHealthScore(fundamentals[sym]);
   const getEPSGrowth = (sym) => {
     const d = fundamentals[sym];
     if (!d) return null;
@@ -1631,9 +1743,29 @@ function WatchlistPage({ watchlists, setWatchlists, activeWLId, setActiveWLId, o
     if (!last?.eps || !prev?.eps || prev.eps === 0) return null;
     return (last.eps / prev.eps - 1) * 100;
   };
+  // Live prices fetched independently (not just from portfolio positions)
+  const [wlLivePrices, setWlLivePrices] = React.useState({});
+  React.useEffect(() => {
+    if (!wl || !allItems.length) return;
+    const syms = [...new Set(allItems.map(i=>i.symbol).filter(s=>s&&!isISIN(s)))];
+    if (!syms.length) return;
+    fetch('/api/fmp?path=' + encodeURIComponent('/quotes?symbols=' + syms.join(',')))
+      .then(r=>r.json())
+      .then(data => {
+        if (!Array.isArray(data)) return;
+        const pm = {};
+        data.forEach(q => { pm[q.symbol] = { price: q.price, change: q.changesPercentage }; });
+        setWlLivePrices(pm);
+      })
+      .catch(() => {});
+  }, [activeWLId, allItems.map(i=>i.symbol).join(',')]);
+
   const getItemPrice = sym => {
+    const lp = livePrices[sym];
+    if (lp) return { price: lp.price, change: lp.change, mktcap: lp.mktcap };
+    // Fallback to portfolio position while live prices load
     const pos = positions.find(p => (p.fmpTicker || p.symbol) === sym);
-    return pos ? { price: pos.currentPrice, change: pos.currentPrice && pos.avgPrice ? ((pos.currentPrice/pos.avgPrice)-1)*100 : null } : null;
+    return pos?.currentPrice ? { price: pos.currentPrice, change: pos.dailyChange ?? null, mktcap: null } : null;
   };
   const fmtMktCap = v => {
     if (v == null) return null;
@@ -1948,7 +2080,7 @@ function WLRow({ item, catId, fundamentals, loadingFund, getHealthScore, getEPSG
   const flagCol = item.flag ? FLAG_COLORS[item.flag] : null;
   const isDragging = dragState?.symbol === item.symbol;
   const isDropTarget = dragOverCat===catId && dragOverSym===item.symbol;
-  const mktcap = fund?.marketCap ? fmtMktCap(fund.marketCap) : null;
+  const mktcap = fund?.marketCap ? fmtMktCap(fund.marketCap) : (priceData?.mktcap ? fmtMktCap(priceData.mktcap) : null);
   return (
     <div
       draggable={!!catId}
@@ -3892,6 +4024,587 @@ function StockDetail({ pos, onBack, transactions }) {
 }
 
 
+
+// ════════════════════════════════════════════════════════════════════════════
+// PortfolioPage — rich portfolio view with scorecards, CAGR, analysis charts
+// ════════════════════════════════════════════════════════════════════════════
+const EU_INFLATION = 2.6; // ECB target / recent avg %
+
+function PortfolioPage({ positions, transactions, onOpenStock, priceLoading }) {
+  const [tab, setTab] = React.useState('positions'); // positions | analysis
+  const [analysisView, setAnalysisView] = React.useState('asset'); // asset|sector|region|cagr|volatility|alloc
+  const [drillFilter, setDrillFilter] = React.useState(null); // {type, value} for click-through
+  const [fundamentals, setFundamentals] = React.useState({});
+  const [loadingFund, setLoadingFund] = React.useState({});
+  const [sortBy, setSortBy] = React.useState('value');
+  const [sortDir, setSortDir] = React.useState('desc');
+
+  const vis = positions.filter(p => p.qty > 0);
+  const totalVal = vis.reduce((s,p) => s + p.qty * p.currentPrice, 0);
+  const totalCost = vis.reduce((s,p) => s + p.qty * p.avgPrice, 0);
+
+  // Fetch fundamentals for all stocks
+  React.useEffect(() => {
+    const stocks = vis.filter(p => p.type === 'stock' || p.type === 'etf');
+    const syms = stocks.map(p => p.fmpTicker || p.symbol).filter(s => s && !isISIN(s) && !loadingFund[s] && !fundamentals[s]);
+    if (!syms.length) return;
+    const BATCH = 3;
+    (async () => {
+      for (let i = 0; i < syms.length; i += BATCH) {
+        const batch = syms.slice(i, i + BATCH);
+        batch.forEach(s => setLoadingFund(p => ({...p, [s]: true})));
+        await Promise.all(batch.map(async sym => {
+          try {
+            const r = await fetch('/api/fundamentals?symbol=' + sym.split('.')[0]);
+            const d = await r.json();
+            if (!d.error) setFundamentals(p => ({...p, [sym]: d}));
+          } catch(e) {}
+          finally { setLoadingFund(p => ({...p, [sym]: false})); }
+        }));
+        if (i + BATCH < syms.length) await new Promise(r => setTimeout(r, 400));
+      }
+    })();
+  }, [positions.map(p=>p.symbol).join(',')]);
+
+  // ── CAGR calculation per position ──
+  const calcCAGR = (pos) => {
+    const txns = transactions.filter(t => (t.symbol === pos.symbol || t.isin === pos.isin) && t.type === 'BUY');
+    if (!txns.length) return null;
+    // earliest buy date
+    const earliest = txns.reduce((a,b) => new Date(a.date) < new Date(b.date) ? a : b);
+    const years = (Date.now() - new Date(earliest.date)) / (365.25 * 86400000);
+    if (years < 0.1) return null;
+    const cv = pos.qty * pos.currentPrice;
+    const cc = pos.qty * pos.avgPrice;
+    if (cc <= 0) return null;
+    return (Math.pow(cv / cc, 1 / years) - 1) * 100;
+  };
+
+  const getFund = (pos) => fundamentals[pos.fmpTicker || pos.symbol];
+  const getScore = (pos) => calcCanonicalHealthScore(getFund(pos));
+  const getSector = (pos) => getFund(pos)?.sector || (pos.type === 'crypto' ? 'Crypto' : pos.type === 'etf' ? 'ETF' : null);
+  const getRegion = (pos) => {
+    const sym = pos.fmpTicker || pos.symbol || '';
+    if (sym.endsWith('.DE') || sym.endsWith('.F') || sym.endsWith('.AS') || sym.endsWith('.PA')) return 'Europe';
+    if (pos.type === 'crypto') return 'Global';
+    if (pos.type === 'etf') return 'Mixed';
+    return 'North America';
+  };
+
+  const fmtE = v => v == null ? '—' : '€' + v.toLocaleString('de-DE', {minimumFractionDigits:2,maximumFractionDigits:2});
+  const fmtPct = v => v == null ? '—' : (v >= 0 ? '+' : '') + v.toFixed(1) + '%';
+
+  const toggleSort = (col) => {
+    if (sortBy === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    else { setSortBy(col); setSortDir('desc'); }
+  };
+
+  // ── Sort positions ──
+  const sorted = [...vis].sort((a, b) => {
+    let va, vb;
+    if (sortBy === 'value')   { va = a.qty*a.currentPrice; vb = b.qty*b.currentPrice; }
+    else if (sortBy === 'pnl') { va = a.qty*(a.currentPrice-a.avgPrice); vb = b.qty*(b.currentPrice-b.avgPrice); }
+    else if (sortBy === 'pnlpct') { va = (a.currentPrice-a.avgPrice)/a.avgPrice; vb = (b.currentPrice-b.avgPrice)/b.avgPrice; }
+    else if (sortBy === 'daily') { va = a.dailyChange??-999; vb = b.dailyChange??-999; }
+    else if (sortBy === 'health') { va = getScore(a)??-1; vb = getScore(b)??-1; }
+    else if (sortBy === 'cagr') { va = calcCAGR(a)??-999; vb = calcCAGR(b)??-999; }
+    else { va = a[sortBy]??0; vb = b[sortBy]??0; }
+    return sortDir === 'asc' ? va - vb : vb - va;
+  });
+
+  // Filter for drill-down
+  const displayRows = drillFilter ? sorted.filter(p => {
+    if (drillFilter.type === 'sector') return getSector(p) === drillFilter.value;
+    if (drillFilter.type === 'region') return getRegion(p) === drillFilter.value;
+    if (drillFilter.type === 'asset')  return (p.type || 'stock') === drillFilter.value;
+    if (drillFilter.type === 'cagr') {
+      const cagr = calcCAGR(p);
+      if (drillFilter.value === 'high')   return cagr != null && cagr >= 15;
+      if (drillFilter.value === 'medium') return cagr != null && cagr >= 5 && cagr < 15;
+      if (drillFilter.value === 'low')    return cagr != null && cagr < 5;
+      if (drillFilter.value === 'n/a')    return cagr == null;
+    }
+    if (drillFilter.type === 'volatility') {
+      const beta = getFund(p)?.beta;
+      if (drillFilter.value === 'high')   return beta != null && beta > 1.3;
+      if (drillFilter.value === 'medium') return beta != null && beta >= 0.7 && beta <= 1.3;
+      if (drillFilter.value === 'low')    return beta != null && beta < 0.7;
+      if (drillFilter.value === 'n/a')    return beta == null;
+    }
+    if (drillFilter.type === 'currency') return getCurrency(p) === drillFilter.value;
+    return true;
+  }) : sorted;
+
+  // ── Pie chart data builders ──
+  const makePie = (groupFn, colorMap) => {
+    const groups = {};
+    vis.forEach(p => {
+      const key = groupFn(p) || 'Other';
+      groups[key] = (groups[key] || 0) + p.qty * p.currentPrice;
+    });
+    const total = Object.values(groups).reduce((a,b)=>a+b,0) || 1;
+    return Object.entries(groups)
+      .sort((a,b)=>b[1]-a[1])
+      .map(([name, val], i) => ({
+        name, value: Math.round(val/total*1000)/10,
+        rawVal: val,
+        color: colorMap?.[name] || PIE_PALETTE[i % PIE_PALETTE.length],
+      }));
+  };
+
+  const PIE_PALETTE = ['#00e5a0','#4d9fff','#f0b429','#a78bfa','#ff6b9d','#00d4ff','#ff4d6d','#7cfc00','#ff8c00','#9370db','#20b2aa','#dc143c'];
+  const ASSET_COLORS = { stock:'#00e5a0', etf:'#4d9fff', crypto:'#f0b429', derivative:'#ff4d6d' };
+  const REGION_COLORS = { 'North America':'#4d9fff','Europe':'#00e5a0','Global':'#f0b429','Mixed':'#a78bfa','Asia':'#ff6b9d' };
+
+  const assetPie  = makePie(p => p.type || 'stock', ASSET_COLORS);
+  const sectorPie = makePie(getSector, {});
+  const regionPie = makePie(getRegion, REGION_COLORS);
+  const allocPie  = makePie(p => p.symbol || p.name, {});
+  const getCurrency = (pos) => {
+    const sym = pos.fmpTicker || pos.symbol || '';
+    if (pos.type === 'crypto') return 'USD/Crypto';
+    if (sym.endsWith('.DE') || sym.endsWith('.F')) return 'EUR';
+    if (sym.endsWith('.AS') || sym.endsWith('.PA') || sym.endsWith('.MI')) return 'EUR';
+    if (sym.endsWith('.L')) return 'GBP';
+    if (sym.endsWith('.T')) return 'JPY';
+    if (sym.endsWith('.HK')) return 'HKD';
+    return 'USD';
+  };
+  const currencyPie = makePie(getCurrency, {'USD':'#4d9fff','EUR':'#00e5a0','GBP':'#a78bfa','JPY':'#f0b429','USD/Crypto':'#ff9f43','HKD':'#ff6b9d'});
+
+  const cagrPie = (() => {
+    const groups = { high: 0, medium: 0, low: 0, 'n/a': 0 };
+    vis.forEach(p => {
+      const cagr = calcCAGR(p);
+      const val = p.qty * p.currentPrice;
+      if (cagr == null)     groups['n/a'] += val;
+      else if (cagr >= 15)  groups.high   += val;
+      else if (cagr >= 5)   groups.medium += val;
+      else                  groups.low    += val;
+    });
+    const total = Object.values(groups).reduce((a,b)=>a+b,0) || 1;
+    const cols = {high:'#00e5a0',medium:'#f0b429',low:'#ff4d6d','n/a':'#3d4f5e'};
+    return Object.entries(groups).filter(([,v])=>v>0).map(([name,val])=>({
+      name, value: Math.round(val/total*1000)/10, rawVal: val, color: cols[name]
+    }));
+  })();
+
+  const volPie = (() => {
+    const groups = { high: 0, medium: 0, low: 0, 'n/a': 0 };
+    vis.forEach(p => {
+      const beta = getFund(p)?.beta;
+      const val = p.qty * p.currentPrice;
+      if (beta == null)   groups['n/a']  += val;
+      else if (beta > 1.3) groups.high   += val;
+      else if (beta < 0.7) groups.low    += val;
+      else                 groups.medium += val;
+    });
+    const total = Object.values(groups).reduce((a,b)=>a+b,0) || 1;
+    const cols = {high:'#ff4d6d',medium:'#f0b429',low:'#00e5a0','n/a':'#3d4f5e'};
+    return Object.entries(groups).filter(([,v])=>v>0).map(([name,val])=>({
+      name, value: Math.round(val/total*1000)/10, rawVal: val, color: cols[name]
+    }));
+  })();
+
+  const PIE_VIEWS = [
+    {id:'alloc',     label:'Allocation',   data: allocPie,  drillType: 'alloc'},
+    {id:'asset',     label:'Asset Class',  data: assetPie,  drillType: 'asset'},
+    {id:'sector',    label:'Sector',       data: sectorPie, drillType: 'sector'},
+    {id:'region',    label:'Region',       data: regionPie, drillType: 'region'},
+    {id:'cagr',      label:'CAGR Band',    data: cagrPie,   drillType: 'cagr'},
+    {id:'volatility',label:'Volatility',   data: volPie,    drillType: 'volatility'},
+    {id:'currency',  label:'Currency',    data: currencyPie, drillType: 'currency'},
+  ];
+  const currentPie = PIE_VIEWS.find(v => v.id === analysisView) || PIE_VIEWS[0];
+  const [hoveredSlice, setHoveredSlice] = React.useState(null);
+
+  const SCORECARD_LABELS = ['Profit','Growth','Moat','Balance','Cash','Valuation'];
+  const SCORE_COL = {green:'var(--green)',gold:'var(--gold)',red:'var(--red)',gray:'var(--text3)'};
+
+  // Compute per-position scorecard dims
+  const getScoreDims = (pos) => {
+    const d = getFund(pos);
+    if (!d) return null;
+    const yrs = d.byYear?.slice(-3)||[];
+    const last = yrs[yrs.length-1]||{};
+    const prev = yrs[yrs.length-2]||{};
+    const prev2= yrs[yrs.length-3]||{};
+    const s=(d.sector||'').toLowerCase();
+    const isTech=/tech|software|semi/i.test(s);
+    const isFinance=/financ|bank/i.test(s);
+    const isRetail=/retail|consumer/i.test(s);
+    const nmGood=isTech?0.15:isRetail?0.04:0.08, nmOk=isTech?0.06:isRetail?0.01:0.03;
+    const deGood=isFinance?2:isTech?0.5:1, deOk=isFinance?4:isTech?1.5:2;
+    const score2=(scores)=>{const f=scores.filter(s=>s!==null);return f.length?(f.reduce((a,b)=>a+b)/f.length>=1.5?'green':f.reduce((a,b)=>a+b)/f.length>=0.8?'gold':'red'):'gray';};
+    const profitColor=score2([
+      last.netMargin !=null?(last.netMargin >=nmGood?2:last.netMargin >=nmOk?1:0):null,
+      last.roe       !=null?(last.roe       >=0.15  ?2:last.roe       >=0.08?1:0):null,
+      last.grossMargin!=null?(last.grossMargin>=(isTech?0.50:0.35)?2:last.grossMargin>=(isTech?0.30:0.20)?1:0):null,
+    ]);
+    const g=(last.revenue&&prev.revenue&&prev.revenue>0)?(last.revenue/prev.revenue-1):null;
+    const growthColor=g==null?'gray':g>(isTech?0.15:0.07)?'green':g>(isTech?0.05:0.02)?'gold':'red';
+    const rvY=(last.revenue&&prev.revenue&&prev.revenue>0)?last.revenue/prev.revenue-1:null;
+    const rvP=(prev.revenue&&prev2.revenue&&prev2.revenue>0)?prev.revenue/prev2.revenue-1:null;
+    const moatColor=score2([
+      last.grossMargin!=null?(last.grossMargin>=(isTech?0.55:0.40)?2:last.grossMargin>=(isTech?0.35:0.25)?1:0):null,
+      last.roic!=null?(last.roic>=0.15?2:last.roic>=0.08?1:0):null,
+      last.roe !=null?(last.roe >=0.20?2:last.roe >=0.12?1:0):null,
+      (rvY!=null&&rvP!=null&&rvY>0&&rvP>0)?2:(rvY!=null?(rvY>0?1:0):null),
+    ]);
+    const balColor=score2([
+      last.debtEquity!=null?(last.debtEquity<=deGood?2:last.debtEquity<=deOk?1:0):null,
+      last.currentRatio!=null?(last.currentRatio>=2?2:last.currentRatio>=1?1:0):null,
+    ]);
+    const cashColor=score2([
+      last.freeCashFlow!=null?(last.freeCashFlow>0?(last.freeCashFlow/last.revenue>=0.10?2:1):0):null,
+      last.operatingCF !=null?(last.operatingCF >0?2:0):null,
+    ]);
+    const peFair=isTech?30:20, peOk=isTech?45:30;
+    const valColor=score2([
+      d.peRatio !=null?(d.peRatio <=peFair?2:d.peRatio <=peOk?1:0):null,
+      d.evEbitda!=null?(d.evEbitda<=10    ?2:d.evEbitda<=18  ?1:0):null,
+    ]);
+    return [profitColor,growthColor,moatColor,balColor,cashColor,valColor];
+  };
+
+  const ScoreDot = ({color}) => (
+    <div style={{width:10,height:10,borderRadius:'50%',flexShrink:0,
+      background:color==='green'?'var(--green)':color==='gold'?'var(--gold)':color==='red'?'var(--red)':'var(--surface2)',
+      border: color==='gray'?'1px solid var(--border)':'none'}}/>
+  );
+
+  return (
+    <div style={{padding:'26px 30px',overflow:'auto',height:'100%',boxSizing:'border-box'}}>
+
+      {/* ── Tabs ── */}
+      <div style={{display:'flex',gap:8,marginBottom:20}}>
+        {[['positions','Positions'],['analysis','Analysis']].map(([id,label])=>(
+          <button key={id} onClick={()=>{setTab(id);setDrillFilter(null);}} className="mono"
+            style={{padding:'7px 16px',borderRadius:6,cursor:'pointer',fontSize:11,letterSpacing:'0.06em',
+              border:'1px solid',transition:'all 0.15s',
+              borderColor: tab===id?'rgba(0,229,160,0.35)':'var(--border)',
+              background:  tab===id?'var(--green-dim)':'transparent',
+              color:       tab===id?'var(--green)':'var(--text2)'}}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* ══════════ POSITIONS TAB ══════════ */}
+      {tab==='positions' && (
+        <div className="card" style={{padding:0,overflow:'hidden'}}>
+          {/* Table header */}
+          <div style={{display:'grid',
+            gridTemplateColumns:'2fr 0.7fr 0.9fr 0.9fr 0.7fr 0.9fr 0.9fr 0.5fr 0.9fr 1.4fr 0.8fr',
+            padding:'9px 18px',background:'var(--surface2)',borderBottom:'1px solid var(--border2)',gap:8}}>
+            {[
+              ['name','ASSET'],['qty','QTY'],['price','AVG €'],['value','VALUE'],
+              ['daily','DAY%'],['pnl','P&L'],['pnlpct','P&L%'],['cagr','CAGR'],
+              ['breakeven','BREAK-EVEN'],
+              ['health','HEALTH SCORECARD'],['score','SCORE'],
+            ].map(([col,label])=>(
+              <div key={col} className="mono" onClick={()=>toggleSort(col)}
+                style={{fontSize:9,color:sortBy===col?'var(--green)':'var(--text3)',letterSpacing:'0.1em',
+                  cursor:'pointer',userSelect:'none',display:'flex',alignItems:'center',gap:3}}>
+                {label}
+                <span style={{opacity:sortBy===col?1:0.3,fontSize:8}}>{sortBy===col&&sortDir==='asc'?'▲':'▼'}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Rows */}
+          {displayRows.map(pos => {
+            const val = pos.qty * pos.currentPrice;
+            const pnl = pos.qty * (pos.currentPrice - pos.avgPrice);
+            const pnlpct = pos.avgPrice > 0 ? ((pos.currentPrice - pos.avgPrice) / pos.avgPrice * 100) : 0;
+            const up = pnl >= 0;
+            const cagr = calcCAGR(pos);
+            const score = getScore(pos);
+            const dims = getScoreDims(pos);
+            const loading = loadingFund[pos.fmpTicker || pos.symbol];
+            return (
+              <div key={pos.id} onClick={()=>onOpenStock(pos)}
+                style={{display:'grid',
+                  gridTemplateColumns:'2fr 0.7fr 0.9fr 0.9fr 0.7fr 0.9fr 0.9fr 0.5fr 0.9fr 1.4fr 0.8fr',
+                  padding:'11px 18px',borderBottom:'1px solid var(--border)',
+                  cursor:'pointer',transition:'background 0.12s',gap:8,alignItems:'center'}}
+                onMouseEnter={e=>e.currentTarget.style.background='var(--surface2)'}
+                onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+
+                {/* Asset */}
+                <div style={{display:'flex',alignItems:'center',gap:8,minWidth:0}}>
+                  <AssetLogo pos={pos}/>
+                  <div style={{minWidth:0}}>
+                    <div style={{fontSize:12,fontWeight:500}}>{pos.symbol}</div>
+                    <div style={{fontSize:10,color:'var(--text3)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:110}}>{pos.name}</div>
+                  </div>
+                </div>
+
+                {/* QTY */}
+                <div className="mono" style={{fontSize:11,color:'var(--text2)'}}>
+                  {pos.qty<1?pos.qty.toFixed(4):pos.qty.toFixed(pos.qty<10?3:1)}
+                </div>
+
+                {/* Avg price */}
+                <div className="mono" style={{fontSize:11,color:'var(--text2)'}}>
+                  {pos.avgPrice?.toFixed(2)}
+                </div>
+
+                {/* Value */}
+                <div className="mono" style={{fontSize:12,fontWeight:600}}>{fmtE(val)}</div>
+
+                {/* Daily */}
+                <div className="mono" style={{fontSize:11,fontWeight:600,
+                  color:pos.dailyChange==null?'var(--text3)':pos.dailyChange>=0?'var(--green)':'var(--red)'}}>
+                  {pos.dailyChange!=null?(pos.dailyChange>=0?'+':'')+pos.dailyChange.toFixed(2)+'%':'—'}
+                </div>
+
+                {/* P&L € */}
+                <div className="mono" style={{fontSize:11,color:up?'var(--green)':'var(--red)'}}>
+                  {up?'+':'-'}€{Math.abs(pnl).toFixed(0)}
+                </div>
+
+                {/* P&L % */}
+                <div className="mono" style={{fontSize:11,fontWeight:600,color:up?'var(--green)':'var(--red)'}}>
+                  {fmtPct(pnlpct)}
+                </div>
+
+                {/* CAGR */}
+                <div className="mono" style={{fontSize:11,color:cagr==null?'var(--text3)':cagr>=15?'var(--green)':cagr>=5?'var(--gold)':'var(--red)'}}>
+                  {cagr!=null?fmtPct(cagr):'—'}
+                </div>
+
+                {/* Break-even */}
+                {(() => {
+                  // Break-even: price needed to recover full cost basis
+                  // For simple buy-and-hold: = avgPrice
+                  // Show distance to break-even vs current price
+                  const be = pos.avgPrice;
+                  const dist = pos.currentPrice > 0 ? ((pos.currentPrice - be) / be * 100) : null;
+                  const above = dist != null && dist >= 0;
+                  return (
+                    <div>
+                      <div className="mono" style={{fontSize:11,color:'var(--text2)'}}>{be?.toFixed(2)??'—'}</div>
+                      {dist!=null && (
+                        <div className="mono" style={{fontSize:9,color:above?'var(--green)':'var(--red)'}}>
+                          {above?'+':''}{dist.toFixed(1)}%
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                {/* Scorecard dots */}
+                <div style={{display:'flex',gap:3,alignItems:'center'}}>
+                  {dims ? dims.map((col,i)=>(
+                    <div key={i} title={SCORECARD_LABELS[i]}
+                      style={{width:10,height:10,borderRadius:'50%',flexShrink:0,
+                        background:col==='green'?'var(--green)':col==='gold'?'var(--gold)':col==='red'?'var(--red)':'var(--surface2)',
+                        border:col==='gray'?'1px solid var(--border)':'none'}}/>
+                  )) : loading ? <span className="mono shimmer" style={{fontSize:9,color:'var(--text3)'}}>…</span>
+                  : <span className="mono" style={{fontSize:9,color:'var(--text3)'}}>—</span>}
+                </div>
+
+                {/* Overall score */}
+                <div style={{display:'flex',alignItems:'center',gap:5}}>
+                  {score!=null?(<>
+                    <div style={{width:28,height:4,borderRadius:2,background:'var(--surface2)',overflow:'hidden'}}>
+                      <div style={{height:'100%',width:score+'%',borderRadius:2,
+                        background:score>=70?'var(--green)':score>=40?'var(--gold)':'var(--red)'}}/>
+                    </div>
+                    <span className="mono" style={{fontSize:10,fontWeight:700,
+                      color:score>=70?'var(--green)':score>=40?'var(--gold)':'var(--red)'}}>
+                      {score}
+                    </span>
+                  </>):loading?<span className="mono shimmer" style={{fontSize:10,color:'var(--text3)'}}>…</span>
+                  :<span className="mono" style={{fontSize:10,color:'var(--text3)'}}>—</span>}
+                </div>
+              </div>
+            );
+          })}
+
+          {/* Scorecard legend */}
+          <div style={{padding:'10px 18px',borderTop:'1px solid var(--border)',display:'flex',gap:16,alignItems:'center',flexWrap:'wrap'}}>
+            <span className="mono" style={{fontSize:9,color:'var(--text3)',letterSpacing:'0.1em'}}>SCORECARD:</span>
+            {SCORECARD_LABELS.map((l,i)=>(
+              <div key={i} style={{display:'flex',alignItems:'center',gap:4}}>
+                <div style={{width:8,height:8,borderRadius:'50%',background:'var(--green)'}}/>
+                <span className="mono" style={{fontSize:9,color:'var(--text3)'}}>{l}</span>
+              </div>
+            ))}
+            <span className="mono" style={{fontSize:9,color:'var(--text3)',marginLeft:'auto'}}>
+              🟢 Strong  🟡 Mixed  🔴 Weak  ⚫ No data
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* ══════════ ANALYSIS TAB ══════════ */}
+      {tab==='analysis' && (
+        <div>
+          {/* Sub-tabs */}
+          <div style={{display:'flex',gap:6,marginBottom:16,flexWrap:'wrap'}}>
+            {PIE_VIEWS.map(v=>(
+              <button key={v.id} onClick={()=>{setAnalysisView(v.id);setDrillFilter(null);}} className="mono"
+                style={{padding:'5px 12px',borderRadius:5,cursor:'pointer',fontSize:10,letterSpacing:'0.06em',
+                  border:'1px solid',transition:'all 0.15s',
+                  borderColor:analysisView===v.id?'rgba(0,229,160,0.35)':'var(--border)',
+                  background:analysisView===v.id?'var(--green-dim)':'transparent',
+                  color:analysisView===v.id?'var(--green)':'var(--text2)'}}>
+                {v.label}
+              </button>
+            ))}
+          </div>
+
+          <div style={{display:'grid',gridTemplateColumns:'360px 1fr',gap:16,alignItems:'start'}}>
+
+            {/* ── Pie Chart ── */}
+            <div className="card" style={{padding:20}}>
+              <div className="mono" style={{fontSize:10,color:'var(--text2)',letterSpacing:'0.1em',marginBottom:14}}>
+                {currentPie.label.toUpperCase()}
+              </div>
+              {drillFilter && (
+                <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:12,padding:'6px 10px',
+                  background:'var(--green-dim)',borderRadius:6,border:'1px solid rgba(0,229,160,0.25)'}}>
+                  <span className="mono" style={{fontSize:10,color:'var(--green)'}}>
+                    Filtering: {drillFilter.value}
+                  </span>
+                  <button onClick={()=>setDrillFilter(null)}
+                    style={{marginLeft:'auto',background:'none',border:'none',cursor:'pointer',color:'var(--green)',fontSize:12}}>✕</button>
+                </div>
+              )}
+              <div style={{position:'relative',height:220}}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie data={currentPie.data} cx="50%" cy="50%" innerRadius={55} outerRadius={90}
+                      dataKey="value" paddingAngle={2}
+                      onMouseEnter={(_,i)=>setHoveredSlice(i)}
+                      onMouseLeave={()=>setHoveredSlice(null)}
+                      onClick={(entry)=>{
+                        if(currentPie.id==='alloc') return;
+                        setDrillFilter(df=>df?.value===entry.name?null:{type:currentPie.drillType,value:entry.name});
+                        setTab('positions');
+                      }}>
+                      {currentPie.data.map((entry,i)=>(
+                        <Cell key={i} fill={entry.color}
+                          opacity={hoveredSlice===null||hoveredSlice===i?1:0.5}
+                          style={{cursor:currentPie.id==='alloc'?'default':'pointer',outline:'none'}}/>
+                      ))}
+                    </Pie>
+                    <Tooltip contentStyle={{background:'var(--surface)',border:'1px solid var(--border2)',borderRadius:8,fontSize:11}}
+                      formatter={(v,n)=>[v+'%',n]}/>
+                  </PieChart>
+                </ResponsiveContainer>
+                {/* Centre label */}
+                <div style={{position:'absolute',inset:0,display:'flex',flexDirection:'column',
+                  alignItems:'center',justifyContent:'center',pointerEvents:'none'}}>
+                  <div className="mono" style={{fontSize:16,fontWeight:700,color:'var(--text)'}}>{currentPie.data.length}</div>
+                  <div className="mono" style={{fontSize:9,color:'var(--text3)'}}>groups</div>
+                </div>
+              </div>
+
+              {/* Legend */}
+              <div style={{display:'flex',flexDirection:'column',gap:7,marginTop:12}}>
+                {currentPie.data.map((d,i)=>(
+                  <div key={d.name} onClick={()=>{
+                    if(currentPie.id==='alloc') return;
+                    setDrillFilter(df=>df?.value===d.name?null:{type:currentPie.drillType,value:d.name});
+                    setTab('positions');
+                  }}
+                    style={{display:'flex',alignItems:'center',gap:8,cursor:currentPie.id!=='alloc'?'pointer':'default',
+                      padding:'3px 6px',borderRadius:4,transition:'background 0.1s',
+                      background:drillFilter?.value===d.name?'var(--green-dim)':'transparent'}}
+                    onMouseEnter={e=>{if(currentPie.id!=='alloc')e.currentTarget.style.background='var(--surface2)';}}
+                    onMouseLeave={e=>{e.currentTarget.style.background=drillFilter?.value===d.name?'var(--green-dim)':'transparent';}}>
+                    <div style={{width:8,height:8,borderRadius:2,background:d.color,flexShrink:0}}/>
+                    <span className="mono" style={{fontSize:10,color:'var(--text2)',flex:1,
+                      overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{d.name}</span>
+                    <span className="mono" style={{fontSize:10,color:'var(--text)',fontWeight:600}}>{d.value}%</span>
+                    <span className="mono" style={{fontSize:9,color:'var(--text3)'}}>€{(d.rawVal/1000).toFixed(0)}k</span>
+                  </div>
+                ))}
+              </div>
+              {currentPie.id !== 'alloc' && (
+                <div className="mono" style={{fontSize:9,color:'var(--text3)',marginTop:10,textAlign:'center'}}>
+                  Click a slice or legend item to filter positions →
+                </div>
+              )}
+            </div>
+
+            {/* ── Right: CAGR + inflation summary cards ── */}
+            <div style={{display:'flex',flexDirection:'column',gap:12}}>
+              {/* Portfolio CAGR summary */}
+              {(() => {
+                const cagrVals = vis.map(calcCAGR).filter(v=>v!=null);
+                const avgCagr = cagrVals.length ? cagrVals.reduce((a,b)=>a+b)/cagrVals.length : null;
+                const adjCagr = avgCagr != null ? avgCagr - EU_INFLATION : null;
+                return (
+                  <div className="card" style={{padding:18}}>
+                    <div className="mono" style={{fontSize:9,color:'var(--text3)',letterSpacing:'0.12em',marginBottom:12}}>PORTFOLIO RETURNS</div>
+                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12}}>
+                      {[
+                        {label:'Avg CAGR', val:avgCagr, suffix:'%', desc:'Compound annual growth'},
+                        {label:'EU Inflation', val:EU_INFLATION, suffix:'%', desc:'ECB target rate', fixed:true, neutral:true},
+                        {label:'Real Return', val:adjCagr, suffix:'%', desc:'CAGR – inflation'},
+                      ].map(({label,val,suffix,desc,fixed,neutral})=>(
+                        <div key={label} style={{textAlign:'center',padding:'12px 8px',background:'var(--surface2)',borderRadius:8}}>
+                          <div className="mono" style={{fontSize:9,color:'var(--text3)',letterSpacing:'0.1em',marginBottom:6}}>{label}</div>
+                          <div className="mono" style={{fontSize:20,fontWeight:700,
+                            color:neutral?'var(--text2)':val==null?'var(--text3)':val>=10?'var(--green)':val>=0?'var(--gold)':'var(--red)'}}>
+                            {val!=null?(val>=0&&!neutral?'+':'')+val.toFixed(1)+suffix:'—'}
+                          </div>
+                          <div style={{fontSize:10,color:'var(--text3)',marginTop:4}}>{desc}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Per-position CAGR table */}
+              <div className="card" style={{padding:0,overflow:'hidden'}}>
+                <div style={{padding:'12px 16px 10px',borderBottom:'1px solid var(--border)'}}>
+                  <div className="mono" style={{fontSize:9,color:'var(--text3)',letterSpacing:'0.12em'}}>POSITION RETURNS</div>
+                </div>
+                <div style={{maxHeight:320,overflow:'auto'}}>
+                  {[...vis].filter(p=>calcCAGR(p)!=null).sort((a,b)=>(calcCAGR(b)||0)-(calcCAGR(a)||0)).map(pos=>{
+                    const cagr = calcCAGR(pos);
+                    const real = cagr != null ? cagr - EU_INFLATION : null;
+                    return (
+                      <div key={pos.id} onClick={()=>onOpenStock(pos)}
+                        style={{display:'grid',gridTemplateColumns:'2fr 1fr 1fr 1fr',
+                          padding:'9px 16px',borderBottom:'1px solid var(--border)',
+                          cursor:'pointer',alignItems:'center',gap:8}}
+                        onMouseEnter={e=>e.currentTarget.style.background='var(--surface2)'}
+                        onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                        <div>
+                          <div className="mono" style={{fontSize:11,fontWeight:500}}>{pos.symbol}</div>
+                          <div style={{fontSize:9,color:'var(--text3)'}}>{pos.name?.slice(0,20)}</div>
+                        </div>
+                        <div className="mono" style={{fontSize:11,textAlign:'right',
+                          color:cagr>=15?'var(--green)':cagr>=5?'var(--gold)':'var(--red)'}}>
+                          {fmtPct(cagr)}
+                        </div>
+                        <div className="mono" style={{fontSize:9,textAlign:'right',color:'var(--text3)'}}>
+                          − {EU_INFLATION}%
+                        </div>
+                        <div className="mono" style={{fontSize:11,textAlign:'right',fontWeight:600,
+                          color:real>=5?'var(--green)':real>=0?'var(--gold)':'var(--red)'}}>
+                          {fmtPct(real)}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function App() {
   const [positions,   setPositions]   = useState([]);
   const positionsRef = React.useRef([]);
@@ -4042,10 +4755,16 @@ export default function App() {
       if(!tickerList.length){ setLastUpdated(new Date()); return; }
       const quotes = await fmpGet('/quotes?symbols='+tickerList.join(','));
       const pm={};
-      (Array.isArray(quotes)?quotes:[]).forEach(q=>{ pm[q.symbol]=q.currency==='USD'?q.price/eurUsd:q.price; });
+      const dc={}; // daily change %
+      (Array.isArray(quotes)?quotes:[]).forEach(q=>{
+        pm[q.symbol]=q.currency==='USD'?q.price/eurUsd:q.price;
+        dc[q.symbol]=q.changesPercentage??null;
+      });
       setPositions(prev=>prev.map(p=>{
         if(p.type==='crypto'||p.type==='derivative') return p;
-        const t=getT(p); return pm[t]?{...p,currentPrice:pm[t]}:p;
+        const t=getT(p);
+        if(!pm[t]) return p;
+        return {...p, currentPrice:pm[t], dailyChange:dc[t]??null};
       }));
       setLastUpdated(new Date());
     } catch(e){ console.warn('fetchPrices error:',e); }
@@ -4406,7 +5125,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v54 · Watchlist fixes: layout, sorting, add-item, open-overview from right-click</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v55 · Portfolio page redesign + health score fix + daily chg% + smart ticker search</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
@@ -4474,7 +5193,7 @@ export default function App() {
             <button className="btn btn-primary" onClick={()=>setShowModal(true)}>+ ADD POSITION</button>
           </div>
 
-          {(nav==="dashboard"||nav==="portfolio")&&(<>
+          {nav==="dashboard"&&(<>
 
             {/* Empty state */}
             {positions.length === 0 && (
@@ -4542,10 +5261,8 @@ export default function App() {
                 </div>
               )}
 
-              {/* Side-by-side: chart left, donut right */}
               <div style={{display:"flex",gap:20,alignItems:"stretch"}}>
-
-                {/* ── Left: Performance Chart ── */}
+                {/* ── Performance Chart ── */}
                 <div style={{flex:"1 1 0",minWidth:0}}>
                   {chartLoading && (
                     <div style={{height:240,display:"flex",alignItems:"center",justifyContent:"center"}}>
@@ -4589,42 +5306,7 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* ── Divider ── */}
-                <div style={{width:1,background:"var(--border)",flexShrink:0}}/>
 
-                {/* ── Right: Allocation Donut + Legend ── */}
-                <div style={{width:220,flexShrink:0,display:"flex",flexDirection:"column",justifyContent:"center",gap:0}}>
-                  <div className="mono" style={{fontSize:10,color:"var(--text2)",letterSpacing:"0.1em",marginBottom:10}}>ALLOCATION</div>
-                  {allocData.length ? (
-                    <>
-                      <div style={{height:160,position:"relative"}}>
-                        <MiniPie data={allocData}/>
-                        {/* Centre label */}
-                        <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",pointerEvents:"none"}}>
-                          <div className="mono" style={{fontSize:13,fontWeight:600,color:"var(--text)"}}>{allocData.length}</div>
-                          <div className="mono" style={{fontSize:9,color:"var(--text3)"}}>positions</div>
-                        </div>
-                      </div>
-                      {/* Legend */}
-                      <div style={{display:"flex",flexDirection:"column",gap:6,marginTop:12}}>
-                        {allocData.slice(0,6).map(d=>(
-                          <div key={d.name} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
-                            <div style={{display:"flex",alignItems:"center",gap:6}}>
-                              <div style={{width:8,height:8,borderRadius:2,background:d.color,flexShrink:0}}/>
-                              <span className="mono" style={{fontSize:10,color:"var(--text2)",maxWidth:110,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.name}</span>
-                            </div>
-                            <span className="mono" style={{fontSize:10,color:"var(--text)",fontWeight:500}}>{d.value}%</span>
-                          </div>
-                        ))}
-                        {allocData.length>6&&<div className="mono" style={{fontSize:9,color:"var(--text3)",marginTop:2}}>+{allocData.length-6} more</div>}
-                      </div>
-                    </>
-                  ) : (
-                    <div style={{height:200,display:"flex",alignItems:"center",justifyContent:"center"}}>
-                      <span className="mono" style={{fontSize:10,color:"var(--text3)"}}>No positions</span>
-                    </div>
-                  )}
-                </div>
               </div>
             </div>
 
@@ -4650,7 +5332,7 @@ export default function App() {
 
               {/* Table header — sortable */}
               <div className="trow" style={{padding:"9px 18px",borderBottom:"1px solid var(--border2)",borderTop:"1px solid var(--border)"}}>
-                {[["name","ASSET"],["qty","QTY"],["price","AVG PRICE"],["value","LIVE PRICE"],["pnl","P&L"],["pnlpct","P&L %"]].map(([col,label])=>{
+                {[["name","ASSET"],["qty","QTY"],["price","AVG PRICE"],["value","LIVE PRICE"],["daily","DAY %"],["pnl","P&L"],["pnlpct","P&L %"]].map(([col,label])=>{
                   const active=sortBy===col;
                   return <div key={col} onClick={()=>toggleSort(col)} className="mono"
                     style={{fontSize:9,color:active?"var(--green)":"var(--text3)",letterSpacing:"0.12em",cursor:"pointer",userSelect:"none",display:"flex",alignItems:"center",gap:4}}>
@@ -4698,6 +5380,12 @@ export default function App() {
                       </div>
                     </div>
 
+                    {/* Daily change % */}
+                    <div className="mono" style={{fontSize:12,fontWeight:600,
+                      color:pos.dailyChange==null?"var(--text3)":pos.dailyChange>=0?"var(--green)":"var(--red)"}}>
+                      {pos.dailyChange!=null?(pos.dailyChange>=0?"+":"")+pos.dailyChange.toFixed(2)+"%":"—"}
+                    </div>
+
                     <div className="mono" style={{fontSize:13,color:up?"var(--green)":"var(--red)",fontWeight:500}}>
                       {up?"+":"-"}{fmtE(Math.abs(p))}
                     </div>
@@ -4710,6 +5398,9 @@ export default function App() {
             </div>
           </>)}
 
+          {nav==="portfolio"&&<PortfolioPage positions={positions} transactions={transactions}
+            onOpenStock={pos=>{setSelectedPos(pos);setNav("stock")}}
+            priceLoading={priceLoading}/>}
           {nav==="stock"&&selectedPos&&<StockDetail pos={selectedPos} onBack={()=>{setNav("dashboard");setSelectedPos(null)}} transactions={transactions}/> }
           {nav==="screener"&&<div className="fu card" style={{padding:40,textAlign:"center"}}><div className="serif" style={{fontSize:22,color:"var(--text2)",marginBottom:8}}>Stock Screener</div><div style={{fontSize:13,color:"var(--text3)"}}>Coming in Phase 3 — filter by P/E, dividend yield, sector, region & more</div></div>}
           {nav==="compare"&&<CompareView/>}
