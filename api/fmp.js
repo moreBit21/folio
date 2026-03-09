@@ -15,13 +15,17 @@ export default async function handler(req, res) {
   try {
     const r = await fetch(url);
     const text = await r.text();
-    // Normalize premium errors to JSON
     if (text.startsWith('Premium') || text.includes('Premium Query')) {
       res.status(200).json({ error: 'Premium', message: text.slice(0, 100) });
       return;
     }
-    try { res.status(200).json(JSON.parse(text)); }
-    catch { res.status(200).json({ error: 'parse', raw: text.slice(0, 200) }); }
+    let parsed;
+    try { parsed = JSON.parse(text); } catch { res.status(200).json({ error: 'parse', raw: text.slice(0, 200) }); return; }
+    // Add debug header so client can see first symbol's fields in dev
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      res.setHeader('X-FMP-Fields', Object.keys(parsed[0]).join(',').slice(0, 200));
+    }
+    res.status(200).json(parsed);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

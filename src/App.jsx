@@ -1664,17 +1664,21 @@ function WatchlistPage({ watchlists, setWatchlists, activeWLId, setActiveWLId, o
           if (cancelled) return;
           const batch = syms.slice(i, i + BATCH).join(',');
           const r = await fetch('/api/fmp?path=' + encodeURIComponent('/quotes?symbols=' + batch));
-          const data = await r.json();
-          if (!Array.isArray(data) || cancelled) continue;
+          if (!r.ok) continue;
+          const data = await r.json().catch(() => null);
+          if (!data || cancelled) continue;
+          const arr = Array.isArray(data) ? data : (data && typeof data === 'object' && !data.error ? [data] : []);
+          if (!arr.length) continue;
           const map = {};
-          data.forEach(q => {
-            let chg = q.changesPercentage ?? null;
-            if (chg == null && q.previousClose && q.previousClose > 0 && q.price != null) {
+          arr.forEach(q => {
+            if (!q?.symbol) return;
+            let chg = q.changesPercentage ?? q.changePercent ?? q.change_percent ?? null;
+            if (chg == null && q.previousClose > 0 && q.price != null) {
               chg = (q.price - q.previousClose) / q.previousClose * 100;
             }
             map[q.symbol] = { price: q.price, change: chg, mktcap: q.marketCap };
           });
-          setLivePrices(p => ({...p, ...map}));
+          if (!cancelled) setLivePrices(p => ({...p, ...map}));
         }
       } catch(e) { console.warn('WL price fetch error:', e); }
     };
@@ -2096,8 +2100,14 @@ function WatchlistPage({ watchlists, setWatchlists, activeWLId, setActiveWLId, o
         <WLContextMenu x={ctxMenu.x} y={ctxMenu.y} item={ctxMenu.item}
           onFlag={(sym,flag)=>flagItem(sym,flag)}
           onOpenStock={()=>{
-            const pos = positions.find(p=>(p.fmpTicker||p.symbol)===ctxMenu.item.symbol);
-            if(pos) onOpenStock(pos);
+            const sym = ctxMenu.item.symbol;
+            const pos = positions.find(p=>(p.fmpTicker||p.symbol)===sym)
+              || { symbol: sym, fmpTicker: sym, name: ctxMenu.item.name||sym,
+                   type:'stock', qty:0, avgPrice:0,
+                   currentPrice: livePrices[sym]?.price||0,
+                   dailyChange: livePrices[sym]?.change??null,
+                   broker:'—', id: sym };
+            onOpenStock(pos);
           }}
           onRemove={()=>removeItem(ctxMenu.item.symbol)}
           onClose={()=>setCtxMenu(null)}/>
@@ -2784,8 +2794,14 @@ function ChartsPage({ positions, watchlists, setWatchlists, activeWLId, setActiv
                 }))
               } : wl))}
               onOpenStock={() => {
-                const pos = positions.find(p => (p.fmpTicker||p.symbol)===ctxMenu.item.symbol);
-                if (pos && onOpenStock) onOpenStock(pos);
+                const sym = ctxMenu.item.symbol;
+                const pos = positions.find(p => (p.fmpTicker||p.symbol)===sym)
+                  || { symbol: sym, fmpTicker: sym, name: ctxMenu.item.name||sym,
+                       type:'stock', qty:0, avgPrice:0,
+                       currentPrice: wlPrices[sym]?.price||0,
+                       dailyChange: wlPrices[sym]?.change??null,
+                       broker:'—', id: sym };
+                if (onOpenStock) onOpenStock(pos);
               }}
               onRemove={() => setWatchlists(prev => prev.map(wl => wl.id === activeWL ? {
                 ...wl, categories: wl.categories.map(cat => ({...cat, items: cat.items.filter(it => it.symbol !== ctxMenu.item.symbol)}))
@@ -4792,7 +4808,6 @@ export default function App() {
     const r = await fetch('/api/fmp?path=' + encodeURIComponent(path));
     if (!r.ok) throw new Error('fmp ' + r.status);
     const text = await r.text();
-    // Handle plain-text premium errors ("Premium Query : ...")
     if (text.startsWith('Premium') || text.includes('Premium Query')) throw new Error('Premium');
     let data;
     try { data = JSON.parse(text); } catch(e) { throw new Error('parse: ' + text.slice(0,80)); }
@@ -4801,6 +4816,36 @@ export default function App() {
     if (data?.error) throw new Error(data.error);
     return data;
   }, []);
+
+  // Fetch quotes for a list of tickers — returns map { symbol: {price, change, prevClose} }
+  // Uses changesPercentage from FMP stable API; falls back to computing from previousClose
+  const fetchQuotes = useCallback(async (tickers) => {
+    if (!tickers.length) return {};
+    const BATCH = 20;
+    const map = {};
+    for (let i = 0; i < tickers.length; i += BATCH) {
+      const batch = tickers.slice(i, i + BATCH);
+      try {
+        const data = await fmpGet('/quotes?symbols=' + batch.join(','));
+        const arr = Array.isArray(data) ? data : (data ? [data] : []);
+        if (arr.length > 0) {
+          // Debug: log actual field names returned by FMP to help diagnose missing chg%
+          const sample = arr[0];
+          console.log('[folio] FMP quote fields:', Object.keys(sample).join(', '));
+          console.log('[folio] Sample changesPercentage:', sample.changesPercentage, '| changePercent:', sample.changePercent, '| change:', sample.change);
+        }
+        arr.forEach(q => {
+          if (!q?.symbol) return;
+          let chg = q.changesPercentage ?? q.changePercent ?? q.change_percent ?? null;
+          if (chg == null && q.previousClose > 0 && q.price != null) {
+            chg = (q.price - q.previousClose) / q.previousClose * 100;
+          }
+          map[q.symbol] = { price: q.price, change: chg, mktcap: q.marketCap, prevClose: q.previousClose };
+        });
+      } catch(e) { console.warn('fetchQuotes batch failed:', batch.join(','), e.message); }
+    }
+    return map;
+  }, [fmpGet]);
 
   const fetchPrices = useCallback(async () => {
     const cur = positionsRef.current;
@@ -4880,24 +4925,16 @@ export default function App() {
       }
       const tickerList=[...new Set(stockPos.map(getT).filter(Boolean))];
       if(!tickerList.length){ setLastUpdated(new Date()); return; }
-      const quotes = await fmpGet('/quotes?symbols='+tickerList.join(','));
-      const pm={};
-      const dc={}; // daily change %
-      (Array.isArray(quotes)?quotes:[]).forEach(q=>{
-        pm[q.symbol]=q.currency==='USD'?q.price/eurUsd:q.price;
-        // changesPercentage = daily % change from FMP
-        // Fallback: compute from previousClose if changesPercentage is null
-        let chg = q.changesPercentage??null;
-        if (chg == null && q.previousClose && q.previousClose > 0 && q.price != null) {
-          chg = (q.price - q.previousClose) / q.previousClose * 100;
-        }
-        dc[q.symbol] = chg;
-      });
+      const qmap = await fetchQuotes(tickerList);
       setPositions(prev=>prev.map(p=>{
         if(p.type==='crypto'||p.type==='derivative') return p;
         const t=getT(p);
-        if(!pm[t]) return p;
-        return {...p, currentPrice:pm[t], dailyChange:dc[t]??null};
+        const q=qmap[t];
+        if(!q?.price) return p;
+        const price = (p.isin?.startsWith('US') || (!t?.includes('.') && p.type!=='etf'))
+          ? q.price / eurUsd  // USD stocks → EUR
+          : q.price;          // EUR/other stocks already in local currency
+        return {...p, currentPrice: price, dailyChange: q.change ?? null};
       }));
       setLastUpdated(new Date());
     } catch(e){ console.warn('fetchPrices error:',e); }
@@ -5258,7 +5295,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v57 · fix crash: PIE_PALETTE order, currencyPie, URL encoding, health sort</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v57 · right-click overview fix, resilient quote parsing, debug logging</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
