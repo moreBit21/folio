@@ -1663,7 +1663,7 @@ function WatchlistPage({ watchlists, setWatchlists, activeWLId, setActiveWLId, o
         for (let i = 0; i < syms.length; i += BATCH) {
           if (cancelled) return;
           const batch = syms.slice(i, i + BATCH).join(',');
-          const r = await fetch('/api/fmp?path=' + encodeURIComponent('/v3/quote/' + batch));
+          const r = await fetch('/api/fmp?path=' + encodeURIComponent('/quote?symbol=' + batch));
           if (!r.ok) continue;
           const data = await r.json().catch(() => null);
           if (!data || cancelled) continue;
@@ -1791,7 +1791,7 @@ function WatchlistPage({ watchlists, setWatchlists, activeWLId, setActiveWLId, o
     if (!wl || !allItems.length) return;
     const syms = [...new Set(allItems.map(i=>i.symbol).filter(s=>s&&!isISIN(s)))];
     if (!syms.length) return;
-    fetch('/api/fmp?path=' + encodeURIComponent('/v3/quote/' + syms.join(',')))
+    fetch('/api/fmp?path=' + encodeURIComponent('/quote?symbol=' + syms[0]))
       .then(r=>r.json())
       .then(data => {
         if (!Array.isArray(data)) return;
@@ -2354,7 +2354,7 @@ function ChartsPage({ positions, watchlists, setWatchlists, activeWLId, setActiv
     if (!items.length) return;
     const syms = [...new Set(items.map(i => i.symbol))].filter(Boolean).join(',');
     if (!syms) return;
-    fetch('/api/fmp?path=' + encodeURIComponent('/v3/quote/' + syms))
+    fetch('/api/fmp?path=' + encodeURIComponent('/quote?symbol=' + syms))
       .then(r => r.json())
       .then(data => {
         if (!Array.isArray(data)) return;
@@ -4192,6 +4192,79 @@ function StockDetail({ pos, onBack, transactions }) {
 // ════════════════════════════════════════════════════════════════════════════
 const EU_INFLATION = 2.6; // ECB target / recent avg %
 
+// ── tiny helpers to avoid IIFEs in JSX (which can cause render artifacts) ──
+function PortfolioOutlook({ positions }) {
+  const totalVal = positions.reduce((s,p) => s + p.qty * (p.currentPrice||0), 0);
+  const fmt = v => v >= 1e6 ? '€'+(v/1e6).toFixed(2)+'M' : '€'+(v/1000).toFixed(1)+'k';
+  const fmtPct2 = v => (v>=0?'+':'')+v.toFixed(0)+'%';
+  const scenarios = [
+    { label:'BEAR', icon:'🐻', color:'#ff4d6d', bg:'rgba(255,77,109,0.07)', border:'rgba(255,77,109,0.2)',
+      desc:'Recession / rate shock / sector rotation',
+      yr1: totalVal*0.70, yr5: totalVal*Math.pow(0.93,5), yr10: totalVal*Math.pow(0.95,10) },
+    { label:'BASE', icon:'⚖️', color:'var(--gold)', bg:'rgba(240,180,41,0.07)', border:'rgba(240,180,41,0.2)',
+      desc:'Moderate growth, historical avg returns',
+      yr1: totalVal*1.08, yr5: totalVal*Math.pow(1.08,5), yr10: totalVal*Math.pow(1.08,10) },
+    { label:'BULL', icon:'🐂', color:'var(--green)', bg:'rgba(0,229,160,0.07)', border:'rgba(0,229,160,0.2)',
+      desc:'Strong growth, AI & tech cycle tailwind',
+      yr1: totalVal*1.20, yr5: totalVal*Math.pow(1.15,5), yr10: totalVal*Math.pow(1.15,10) },
+  ];
+  return (
+    <div className="card" style={{padding:'18px 20px',marginBottom:16}}>
+      <div className="mono" style={{fontSize:10,color:'var(--text2)',letterSpacing:'0.12em',marginBottom:14}}>◈ PORTFOLIO OUTLOOK</div>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:10}}>
+        {scenarios.map(s => (
+          <div key={s.label} style={{borderRadius:8,background:s.bg,border:`1px solid ${s.border}`,padding:'14px 16px'}}>
+            <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:8}}>
+              <span>{s.icon}</span>
+              <span className="mono" style={{fontSize:10,fontWeight:700,color:s.color,letterSpacing:'0.1em'}}>{s.label}</span>
+            </div>
+            <div style={{fontSize:10,color:'var(--text3)',marginBottom:10,lineHeight:1.4}}>{s.desc}</div>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:6}}>
+              {[['1Y',s.yr1],['5Y',s.yr5],['10Y',s.yr10]].map(([period,val]) => {
+                const pct = totalVal > 0 ? (val-totalVal)/totalVal*100 : 0;
+                return (
+                  <div key={period} style={{textAlign:'center'}}>
+                    <div className="mono" style={{fontSize:8,color:'var(--text3)',marginBottom:3}}>{period}</div>
+                    <div className="mono" style={{fontSize:11,fontWeight:700,color:s.color}}>{fmt(val)}</div>
+                    <div className="mono" style={{fontSize:9,color:s.color,opacity:0.8}}>{fmtPct2(pct)}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+      <div style={{marginTop:10,fontSize:9,color:'var(--text3)',fontFamily:'IBM Plex Mono',lineHeight:1.5}}>
+        ⚠ Illustrative projections only. Bear: −30% yr1, −7%/yr avg. Base: +8%/yr. Bull: +20% yr1, +15%/yr. Not financial advice.
+      </div>
+    </div>
+  );
+}
+
+function CostBasisCell({ pos }) {
+  const costBasis = pos.qty * pos.avgPrice;
+  const currentVal = pos.qty * pos.currentPrice;
+  const dist = costBasis > 0 ? ((currentVal - costBasis) / costBasis * 100) : null;
+  const above = dist != null && dist >= 0;
+  return (
+    <div>
+      <div className="mono" style={{fontSize:11,color:'var(--text2)'}}>
+        {costBasis > 0 ? '€'+costBasis.toFixed(0) : '—'}
+      </div>
+      {dist!=null && (
+        <div className="mono" style={{fontSize:9,color:above?'var(--green)':'var(--red)'}}>
+          {above?'+':''}{dist.toFixed(1)}%
+        </div>
+      )}
+    </div>
+  );
+}
+function GroupAllocBadge({ groupVal, positions }) {
+  const totalPortVal = positions.reduce((s,p)=>s+p.qty*(p.currentPrice||0),0);
+  const alloc = totalPortVal > 0 ? (groupVal/totalPortVal*100) : 0;
+  return <span className="mono" style={{fontSize:9,color:'var(--green)',marginLeft:6,background:'rgba(0,229,160,0.1)',padding:'1px 6px',borderRadius:3}}>{alloc.toFixed(1)}%</span>;
+}
+
 function PortfolioPage({ positions, transactions, onOpenStock, priceLoading, chartData, investedChartData, chartLoading, chartError, activeBM, setActiveBM, range, setRange, BENCHMARKS, perfStats }) {
   const [collapsedGroups, setCollapsedGroups] = useState(new Set(['stock','etf','crypto','derivative'])); // all collapsed by default
   const [tab, setTab] = React.useState('positions'); // positions | analysis
@@ -4532,57 +4605,7 @@ function PortfolioPage({ positions, transactions, onOpenStock, priceLoading, cha
       )}
 
       {/* ── Bear / Base / Bull Outlook ── */}
-      {positions.length > 0 && (() => {
-        const totalVal = positions.reduce((s,p)=>s+p.qty*p.currentPrice,0);
-        const totalInvested = positions.reduce((s,p)=>s+p.qty*p.avgPrice,0);
-        // Rough market assumptions: bear = -30%, base = +8%/yr, bull = +15%/yr
-        const scenarios = [
-          { label:'BEAR', icon:'🐻', color:'#ff4d6d', bg:'rgba(255,77,109,0.07)', border:'rgba(255,77,109,0.2)',
-            desc:'Recession / rate shock / sector rotation',
-            yr1: totalVal * 0.70, yr5: totalVal * Math.pow(0.93,5), yr10: totalVal * Math.pow(0.95,10) },
-          { label:'BASE', icon:'⚖️', color:'var(--gold)', bg:'rgba(240,180,41,0.07)', border:'rgba(240,180,41,0.2)',
-            desc:'Moderate growth, historical avg returns',
-            yr1: totalVal * 1.08, yr5: totalVal * Math.pow(1.08,5), yr10: totalVal * Math.pow(1.08,10) },
-          { label:'BULL', icon:'🐂', color:'var(--green)', bg:'rgba(0,229,160,0.07)', border:'rgba(0,229,160,0.2)',
-            desc:'Strong growth, AI & tech cycle tailwind',
-            yr1: totalVal * 1.20, yr5: totalVal * Math.pow(1.15,5), yr10: totalVal * Math.pow(1.15,10) },
-        ];
-        const fmt = v => v >= 1e6 ? '€'+(v/1e6).toFixed(2)+'M' : '€'+(v/1000).toFixed(1)+'k';
-        const fmtPct2 = v => (v>=0?'+':'')+v.toFixed(0)+'%';
-        return (
-          <div className="card" style={{padding:'18px 20px',marginBottom:16}}>
-            <div className="mono" style={{fontSize:10,color:'var(--text2)',letterSpacing:'0.12em',marginBottom:14}}>
-              ◈ PORTFOLIO OUTLOOK
-            </div>
-            <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:10}}>
-              {scenarios.map(s => (
-                <div key={s.label} style={{borderRadius:8,background:s.bg,border:`1px solid ${s.border}`,padding:'14px 16px'}}>
-                  <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:10}}>
-                    <span>{s.icon}</span>
-                    <span className="mono" style={{fontSize:10,fontWeight:700,color:s.color,letterSpacing:'0.1em'}}>{s.label}</span>
-                  </div>
-                  <div style={{fontSize:10,color:'var(--text3)',marginBottom:12,lineHeight:1.4}}>{s.desc}</div>
-                  <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:6}}>
-                    {[['1Y',s.yr1],['5Y',s.yr5],['10Y',s.yr10]].map(([period,val])=>{
-                      const pct = totalVal > 0 ? (val-totalVal)/totalVal*100 : 0;
-                      return (
-                        <div key={period} style={{textAlign:'center'}}>
-                          <div className="mono" style={{fontSize:8,color:'var(--text3)',marginBottom:3}}>{period}</div>
-                          <div className="mono" style={{fontSize:12,fontWeight:700,color:s.color}}>{fmt(val)}</div>
-                          <div className="mono" style={{fontSize:9,color:s.color,opacity:0.8}}>{fmtPct2(pct)}</div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div style={{marginTop:10,fontSize:9,color:'var(--text3)',fontFamily:'IBM Plex Mono',lineHeight:1.5}}>
-              ⚠ Illustrative projections only. Bear: −30% yr1, −7%/yr avg. Base: +8%/yr. Bull: +20% yr1, +15%/yr. Not financial advice.
-            </div>
-          </div>
-        );
-      })()}
+      {positions.length > 0 && <PortfolioOutlook positions={positions}/>}
 
       {/* ── Tabs ── */}
       <div style={{display:'flex',gap:8,marginBottom:16}}>
@@ -4649,11 +4672,7 @@ function PortfolioPage({ positions, transactions, onOpenStock, priceLoading, cha
                         transform:expanded?'rotate(90deg)':'rotate(0deg)',display:'inline-block'}}>▶</span>
                       <span className="mono" style={{fontSize:10,fontWeight:700,color:'var(--text2)',letterSpacing:'0.08em'}}>{label.toUpperCase()}</span>
                       <span className="mono" style={{fontSize:9,color:'var(--text3)',marginLeft:4}}>{rows.length} position{rows.length!==1?'s':''}</span>
-                      {(() => {
-                        const totalPortVal = positions.reduce((s,p)=>s+p.qty*p.currentPrice,0);
-                        const alloc = totalPortVal > 0 ? (groupVal/totalPortVal*100) : 0;
-                        return <span className="mono" style={{fontSize:9,color:'var(--green)',marginLeft:6,background:'rgba(0,229,160,0.1)',padding:'1px 6px',borderRadius:3}}>{alloc.toFixed(1)}%</span>;
-                      })()}
+                      <GroupAllocBadge groupVal={groupVal} positions={positions}/>
                     </div>
                     <div/>
                     <div/>
@@ -4726,24 +4745,7 @@ function PortfolioPage({ positions, transactions, onOpenStock, priceLoading, cha
                 </div>
 
                 {/* Break-even: total cost basis (qty × avgPrice) */}
-                {(() => {
-                  const costBasis = pos.qty * pos.avgPrice;
-                  const currentVal = pos.qty * pos.currentPrice;
-                  const dist = costBasis > 0 ? ((currentVal - costBasis) / costBasis * 100) : null;
-                  const above = dist != null && dist >= 0;
-                  return (
-                    <div>
-                      <div className="mono" style={{fontSize:11,color:'var(--text2)'}}>
-                        {costBasis > 0 ? '€'+costBasis.toFixed(0) : '—'}
-                      </div>
-                      {dist!=null && (
-                        <div className="mono" style={{fontSize:9,color:above?'var(--green)':'var(--red)'}}>
-                          {above?'+':''}{dist.toFixed(1)}%
-                        </div>
-                      )}
-                    </div>
-                  );
-                })()}
+                <CostBasisCell pos={pos}/>
 
                 {/* HEALTH — scorecard dots + score bar in one cell */}
                 <div style={{display:'flex',flexDirection:'column',gap:4}}>
@@ -5037,29 +5039,25 @@ export default function App() {
   // Uses changePercentage from FMP stable API (v3 used changesPercentage); falls back to previousClose
   const fetchQuotes = useCallback(async (tickers) => {
     if (!tickers.length) return {};
-    const BATCH = 20;
     const map = {};
-    for (let i = 0; i < tickers.length; i += BATCH) {
-      const batch = tickers.slice(i, i + BATCH);
-      try {
-        const data = await fmpGet('/v3/quote/' + batch.join(','));
-        const arr = Array.isArray(data) ? data : (data ? [data] : []);
-        if (arr.length > 0) {
-          // Debug: log actual field names returned by FMP to help diagnose missing chg%
-          const sample = arr[0];
-          console.log('[folio] FMP quote fields:', Object.keys(sample).join(', '));
-          console.log('[folio] Sample changePercentage:', sample.changePercentage, '| changesPercentage:', sample.changesPercentage, '| change:', sample.change, '| previousClose:', sample.previousClose);
-        }
-        arr.forEach(q => {
-          if (!q?.symbol) return;
-          // FMP stable API uses 'changePercentage' (no 's'), v3 used 'changesPercentage'
-          let chg = q.changePercentage ?? q.changesPercentage ?? q.changePercent ?? null;
-          if (chg == null && q.previousClose > 0 && q.price != null) {
-            chg = (q.price - q.previousClose) / q.previousClose * 100;
-          }
-          map[q.symbol] = { price: q.price, change: chg, mktcap: q.marketCap, prevClose: q.previousClose };
-        });
-      } catch(e) { console.warn('fetchQuotes batch failed:', batch.join(','), e.message); }
+    // FMP free plan: single ticker per request — run concurrently (max 5 at once)
+    const CONCURRENCY = 5;
+    for (let i = 0; i < tickers.length; i += CONCURRENCY) {
+      const slice = tickers.slice(i, i + CONCURRENCY);
+      await Promise.all(slice.map(async ticker => {
+        try {
+          const data = await fmpGet('/quote?symbol=' + encodeURIComponent(ticker));
+          const arr = Array.isArray(data) ? data : (data ? [data] : []);
+          arr.forEach(q => {
+            if (!q?.symbol) return;
+            let chg = q.changePercentage ?? q.changesPercentage ?? q.changePercent ?? null;
+            if (chg == null && q.previousClose > 0 && q.price != null) {
+              chg = (q.price - q.previousClose) / q.previousClose * 100;
+            }
+            map[q.symbol] = { price: q.price, change: chg, mktcap: q.marketCap, prevClose: q.previousClose };
+          });
+        } catch(e) { /* silent fail per ticker */ }
+      }));
     }
     return map;
   }, [fmpGet]);
