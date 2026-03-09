@@ -1626,7 +1626,7 @@ function calcCanonicalHealthScore(d) {
   const dims=[profitColor,growthColor,moatColor,balanceColor,cashColor,valuationColor]
     .map(col=>colorScore[col]).filter(v=>v!==null);
   if(!dims.length) return null;
-  return Math.round(dims.reduce((a,b)=>a+b)/dims.length*50);
+  return Math.round(dims.reduce((a,b)=>a+b)/dims.length*5*10)/10; // 0-10 scale
 }
 
 // ── WatchlistPage ────────────────────────────────────────────────────────────
@@ -2213,12 +2213,12 @@ function WLRow({ item, catId, fundamentals, loadingFund, getHealthScore, getEPSG
       <div style={{textAlign:'right',display:'flex',alignItems:'center',justifyContent:'flex-end',gap:5}}>
         {score!=null ? (<>
           <div style={{width:32,height:4,borderRadius:2,background:'var(--surface2)',overflow:'hidden'}}>
-            <div style={{height:'100%',width:score+'%',borderRadius:2,
-              background:score>=70?'var(--green)':score>=40?'var(--gold)':'var(--red)',transition:'width 0.4s'}}/>
+            <div style={{height:'100%',width:(score*10)+'%',borderRadius:2,
+              background:score>=7?'var(--green)':score>=4?'var(--gold)':'var(--red)',transition:'width 0.4s'}}/>
           </div>
           <span className="mono" style={{fontSize:10,fontWeight:600,
-            color:score>=70?'var(--green)':score>=40?'var(--gold)':'var(--red)'}}>
-            {score}
+            color:score>=7?'var(--green)':score>=4?'var(--gold)':'var(--red)'}}>
+            {score?.toFixed(1)}<span style={{fontSize:7,opacity:0.6}}>/10</span>
           </span>
         </>) : <span className="mono" style={{fontSize:10,color:'var(--text3)'}}>{loading?<span className="shimmer">…</span>:'—'}</span>}
       </div>
@@ -3125,6 +3125,89 @@ function CompareView() {
           <CompareBar label="EPS LATEST (actual)"         stocks={stocksWithMetrics} valueKey="eps"          format="raw"/>
         </CompareSection>
 
+        {/* Health Score comparison */}
+        <CompareSection title="HEALTH SCORE" icon="🏥">
+          <div style={{padding:'6px 0 10px'}}>
+            <div style={{display:'flex',gap:12,alignItems:'flex-end',flexWrap:'wrap'}}>
+              {stocksWithMetrics.map((s, i) => {
+                const score = calcCanonicalHealthScore(s.data);
+                return (
+                  <div key={s.ticker} style={{display:'flex',flexDirection:'column',gap:6,minWidth:90}}>
+                    <div style={{display:'flex',alignItems:'center',gap:8}}>
+                      <span className="mono" style={{fontSize:10,color:COMPARE_COLORS[i],fontWeight:600}}>{s.ticker}</span>
+                      {score!=null && <span className="mono" style={{fontSize:16,fontWeight:700,
+                        color:score>=7?'var(--green)':score>=4?'var(--gold)':'var(--red)'}}>
+                        {score?.toFixed(1)}<span style={{fontSize:9,color:'var(--text3)'}}>/10</span>
+                      </span>}
+                    </div>
+                    {score!=null && (
+                      <div style={{width:120,height:5,borderRadius:3,background:'var(--surface2)',overflow:'hidden'}}>
+                        <div style={{height:'100%',width:(score*10)+'%',borderRadius:3,
+                          background:score>=7?'var(--green)':score>=4?'var(--gold)':'var(--red)',
+                          boxShadow:`0 0 6px ${score>=7?'var(--green)':score>=4?'var(--gold)':'var(--red)'}60`}}/>
+                      </div>
+                    )}
+                    {score==null && s.loading && <span className="mono shimmer" style={{fontSize:9,color:'var(--text3)'}}>Loading…</span>}
+                    {score==null && !s.loading && <span className="mono" style={{fontSize:9,color:'var(--text3)'}}>No data</span>}
+                    {score!=null && (
+                      <div style={{display:'flex',gap:3,flexWrap:'wrap',maxWidth:130}}>
+                        {['Profit','Growth','Moat','Balance','Cash','Val'].map((dim,di) => {
+                          const dimColors = (() => {
+                            if (!s.data) return [];
+                            const d = s.data;
+                            const yrs = d.byYear?.slice(-3)||[];
+                            const last=yrs[yrs.length-1]||{};
+                            const prev=yrs[yrs.length-2]||{};
+                            const prev2=yrs[yrs.length-3]||{};
+                            const sector=(d.sector||'').toLowerCase();
+                            const isTech=/tech|software|semi|information/i.test(sector);
+                            const isFinance=/financ|bank|insurance|reit/i.test(sector);
+                            const isRetail=/retail|consumer staple|grocery/i.test(sector);
+                            const isEnergy=/energy|oil|gas|util/i.test(sector);
+                            const nmGood=isTech?0.15:isRetail?0.04:isEnergy?0.06:0.08;
+                            const nmOk=isTech?0.06:isRetail?0.01:isEnergy?0.02:0.03;
+                            const deGood=isFinance?2:isTech?0.5:1;
+                            const deOk=isFinance?4:isTech?1.5:2;
+                            const profitS=[last.netMargin!=null?(last.netMargin>=nmGood?2:last.netMargin>=nmOk?1:0):null,last.roe!=null?(last.roe>=0.15?2:last.roe>=0.08?1:0):null,last.roic!=null?(last.roic>=0.10?2:last.roic>=0.05?1:0):null,last.grossMargin!=null?(last.grossMargin>=(isTech?0.50:isRetail?0.25:0.35)?2:last.grossMargin>=(isTech?0.30:isRetail?0.15:0.20)?1:0):null].filter(s=>s!==null);
+                            const profitC=profitS.length?(profitS.reduce((a,b)=>a+b)/profitS.length>=1.5?'green':profitS.reduce((a,b)=>a+b)/profitS.length>=0.8?'gold':'red'):'gray';
+                            const g=(last.revenue&&prev.revenue&&prev.revenue>0)?(last.revenue/prev.revenue-1):null;
+                            const growthC=g==null?'gray':g>(isTech?0.15:0.07)?'green':g>(isTech?0.05:0.02)?'gold':'red';
+                            const rvY=(last.revenue&&prev.revenue&&prev.revenue>0)?last.revenue/prev.revenue-1:null;
+                            const rvP=(prev.revenue&&prev2.revenue&&prev2.revenue>0)?prev.revenue/prev2.revenue-1:null;
+                            const gc=rvY!=null&&rvP!=null&&rvY>0&&rvP>0;
+                            const moatS=[last.grossMargin!=null?(last.grossMargin>=(isTech?0.55:isRetail?0.30:0.40)?2:last.grossMargin>=(isTech?0.35:isRetail?0.15:0.25)?1:0):null,last.roic!=null?(last.roic>=0.15?2:last.roic>=0.08?1:0):null,last.roe!=null?(last.roe>=0.20?2:last.roe>=0.12?1:0):null,gc?2:(rvY!=null?(rvY>0?1:0):null)].filter(s=>s!==null);
+                            const moatC=moatS.length<2?'gray':(moatS.reduce((a,b)=>a+b)/moatS.length>=1.6?'green':moatS.reduce((a,b)=>a+b)/moatS.length>=0.9?'gold':'red');
+                            const de=last.debtEquity,cr=last.currentRatio;
+                            const balS=[de!=null?(de<=deGood?2:de<=deOk?1:0):null,cr!=null?(cr>=2.0?2:cr>=1.0?1:0):null].filter(s=>s!==null);
+                            const balC=balS.length?(balS.reduce((a,b)=>a+b)/balS.length>=1.5?'green':balS.reduce((a,b)=>a+b)/balS.length>=0.8?'gold':'red'):'gray';
+                            const fcf=last.freeCashFlow,fcfR=(fcf&&last.revenue)?fcf/last.revenue:null;
+                            const cashS=[fcf!=null?(fcf>0?(fcfR>=0.10?2:1):0):null,last.operatingCF!=null?(last.operatingCF>0?2:0):null].filter(s=>s!==null);
+                            const cashC=cashS.length?(cashS.reduce((a,b)=>a+b)/cashS.length>=1.5?'green':cashS.reduce((a,b)=>a+b)/cashS.length>=0.8?'gold':'red'):'gray';
+                            const peFair=isTech?30:isFinance?15:20;const peOk=isTech?45:isFinance?20:30;
+                            const pe=d.peRatio,ev=d.evEbitda,peg=d.pegRatio;
+                            const valS=[pe!=null?(pe<=peFair?2:pe<=peOk?1:0):null,ev!=null?(ev<=10?2:ev<=18?1:0):null,peg!=null?(peg<=1?2:peg<=2?1:0):null].filter(s=>s!==null);
+                            const valC=valS.length?(valS.reduce((a,b)=>a+b)/valS.length>=1.5?'green':valS.reduce((a,b)=>a+b)/valS.length>=0.8?'gold':'red'):'gray';
+                            return [profitC,growthC,moatC,balC,cashC,valC];
+                          })();
+                          const col = dimColors[di];
+                          return (
+                            <div key={dim} title={dim} style={{display:'flex',flexDirection:'column',alignItems:'center',gap:2}}>
+                              <div style={{width:8,height:8,borderRadius:'50%',
+                                background:col==='green'?'var(--green)':col==='gold'?'var(--gold)':col==='red'?'var(--red)':'var(--surface2)',
+                                border:col==='gray'?'1px solid var(--border)':'none'}}/>
+                              <span className="mono" style={{fontSize:5,color:'var(--text3)'}}>{dim.slice(0,3).toUpperCase()}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </CompareSection>
+
         {/* Summary table */}
         <div className="card" style={{padding:'18px 20px',marginBottom:14,overflowX:'auto'}}>
           <div className="mono" style={{fontSize:10,letterSpacing:'0.12em',color:'var(--text2)',marginBottom:14}}>⊞  SUMMARY TABLE</div>
@@ -3594,31 +3677,52 @@ function StockDetail({ pos, onBack, transactions }) {
   const colorScore = { green:2, gold:1, red:0, gray:null };
   const scoreDims = scorecard.map(s => colorScore[s.color]).filter(v => v !== null);
   const overallScore = scoreDims.length
-    ? Math.round(scoreDims.reduce((a,b)=>a+b,0) / scoreDims.length * 50) : null; // 0-100
+    ? Math.round(scoreDims.reduce((a,b)=>a+b,0) / scoreDims.length * 5 * 10) / 10 : null; // 0-10
   const overallColor = overallScore == null ? 'gray'
-    : overallScore >= 70 ? 'green' : overallScore >= 40 ? 'gold' : 'red';
+    : overallScore >= 7 ? 'green' : overallScore >= 4 ? 'gold' : 'red';
   const overallLabel = overallScore == null ? 'No Data'
-    : overallScore >= 70 ? 'Healthy' : overallScore >= 40 ? 'Mixed' : 'Weak';
+    : overallScore >= 7 ? 'Healthy' : overallScore >= 4 ? 'Mixed' : 'Weak';
 
   // ── Mini bar chart ──
+  // Uses baseline from min value so small changes are visible between adjacent bars
   function BarChart({ data: bdata, getVal, color='#00e5a0', fmtFn=fmtB, labelKey }) {
-    const vals = bdata.map(getVal);
-    const max  = Math.max(...vals.filter(v=>v!=null).map(Math.abs), 1);
+    const vals = bdata.map(getVal).filter(v=>v!=null);
     const getXLabel = yr => labelKey ? labelKey(yr) : (yr.year?.slice(-2) ?? '');
+    if (!vals.length) return <div style={{height:90,display:'flex',alignItems:'center',justifyContent:'center'}}><span style={{fontSize:9,color:'var(--text3)'}}>—</span></div>;
+    const hasNeg = vals.some(v=>v<0);
+    const CHART_H = 72;
+    // For all-positive data: use min-anchored baseline so small differences are visible
+    // For mixed data: use zero baseline
+    const minV = hasNeg ? 0 : Math.min(...vals);
+    const maxV = Math.max(...vals.map(Math.abs), Math.abs(minV), 1);
+    const range2 = hasNeg ? maxV * 2 : (maxV - minV * 0.8) || 1;
     return (
       <div style={{display:'flex', alignItems:'flex-end', gap:3, height:90}}>
         {bdata.map((yr, i) => {
           const v = getVal(yr);
-          const h = v==null ? 2 : Math.abs(v)/max*78;
+          const isLast = i === bdata.length - 1;
+          const isLatest = isLast;
+          const prevV = i > 0 ? getVal(bdata[i-1]) : null;
+          const trending = v != null && prevV != null ? (v > prevV ? 'up' : v < prevV ? 'down' : 'flat') : null;
+          let h;
+          if (v == null) { h = 2; }
+          else if (hasNeg) { h = Math.max(Math.abs(v)/maxV*CHART_H, 3); }
+          else { h = Math.max((v - minV * 0.8) / range2 * CHART_H, 4); }
           const col = v==null ? '#1c2730' : v<0 ? '#ff4d6d' : color;
+          const opacity = isLatest ? 1 : 0.5 + (i / bdata.length) * 0.4;
           return (
-            <div key={i} style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',gap:3,minWidth:0}}>
-              <div className="mono" style={{fontSize:6,color:'var(--text3)',textAlign:'center',lineHeight:1.2,overflow:'hidden',whiteSpace:'nowrap',width:'100%',textOverflow:'ellipsis'}}>
-                {v==null?'—':fmtFn(v)}
+            <div key={i} style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',gap:2,minWidth:0}}>
+              <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:1}}>
+                <div className="mono" style={{fontSize:6,color:isLatest?'var(--text2)':'var(--text3)',textAlign:'center',lineHeight:1.2,overflow:'hidden',whiteSpace:'nowrap',width:'100%',textOverflow:'ellipsis',fontWeight:isLatest?600:400}}>
+                  {v==null?'—':fmtFn(v)}
+                </div>
+                {trending && <span style={{fontSize:5,color:trending==='up'?'var(--green)':trending==='down'?'var(--red)':'var(--text3)',lineHeight:1}}>{trending==='up'?'▲':trending==='down'?'▼':'–'}</span>}
               </div>
-              <div style={{width:'100%',height:h,background:col,borderRadius:'2px 2px 0 0',
-                opacity: i===bdata.length-1?1:0.6, minHeight:2}}/>
-              <div className="mono" style={{fontSize:6,color:'var(--text3)',overflow:'hidden',whiteSpace:'nowrap',width:'100%',textAlign:'center'}}>{getXLabel(yr)}</div>
+              <div style={{width:'100%',flex:1,display:'flex',alignItems:'flex-end'}}>
+                <div style={{width:'100%',height:h,background:col,borderRadius:'2px 2px 0 0',opacity,
+                  boxShadow:isLatest?`0 0 6px ${col}60`:undefined,minHeight:3,transition:'height 0.2s'}}/>
+              </div>
+              <div className="mono" style={{fontSize:6,color:isLatest?'var(--text2)':'var(--text3)',overflow:'hidden',whiteSpace:'nowrap',width:'100%',textAlign:'center'}}>{getXLabel(yr)}</div>
             </div>
           );
         })}
@@ -3711,12 +3815,12 @@ function StockDetail({ pos, onBack, transactions }) {
               </div>
               <div style={{display:'flex',alignItems:'center',gap:10}}>
                 <div style={{flex:1,height:6,background:'var(--surface2)',borderRadius:3,overflow:'hidden'}}>
-                  <div style={{height:'100%',width:`${overallScore}%`,
+                  <div style={{height:'100%',width:`${overallScore*10}%`,
                     background:SCORE_COLOR[overallColor],borderRadius:3,
                     transition:'width 0.6s ease'}}/>
                 </div>
-                <span className="mono" style={{fontSize:13,fontWeight:700,color:SCORE_COLOR[overallColor],minWidth:36,textAlign:'right'}}>
-                  {overallScore}
+                <span className="mono" style={{fontSize:13,fontWeight:700,color:SCORE_COLOR[overallColor],minWidth:46,textAlign:'right'}}>
+                  {overallScore?.toFixed(1)}<span style={{fontSize:9,opacity:0.6}}>/10</span>
                 </span>
               </div>
               {/* Dimension pills */}
@@ -4089,6 +4193,7 @@ function StockDetail({ pos, onBack, transactions }) {
 const EU_INFLATION = 2.6; // ECB target / recent avg %
 
 function PortfolioPage({ positions, transactions, onOpenStock, priceLoading, chartData, investedChartData, chartLoading, chartError, activeBM, setActiveBM, range, setRange, BENCHMARKS, perfStats }) {
+  const [collapsedGroups, setCollapsedGroups] = useState(new Set()); // all expanded by default
   const [tab, setTab] = React.useState('positions'); // positions | analysis
   const [analysisView, setAnalysisView] = React.useState('asset'); // asset|sector|region|cagr|volatility|alloc
   const [drillFilter, setDrillFilter] = React.useState(null); // {type, value} for click-through
@@ -4426,6 +4531,59 @@ function PortfolioPage({ positions, transactions, onOpenStock, priceLoading, cha
         </div>
       )}
 
+      {/* ── Bear / Base / Bull Outlook ── */}
+      {positions.length > 0 && (() => {
+        const totalVal = positions.reduce((s,p)=>s+p.qty*p.currentPrice,0);
+        const totalInvested = positions.reduce((s,p)=>s+p.qty*p.avgPrice,0);
+        // Rough market assumptions: bear = -30%, base = +8%/yr, bull = +15%/yr
+        const scenarios = [
+          { label:'BEAR', icon:'🐻', color:'#ff4d6d', bg:'rgba(255,77,109,0.07)', border:'rgba(255,77,109,0.2)',
+            desc:'Recession / rate shock / sector rotation',
+            yr1: totalVal * 0.70, yr5: totalVal * Math.pow(0.93,5), yr10: totalVal * Math.pow(0.95,10) },
+          { label:'BASE', icon:'⚖️', color:'var(--gold)', bg:'rgba(240,180,41,0.07)', border:'rgba(240,180,41,0.2)',
+            desc:'Moderate growth, historical avg returns',
+            yr1: totalVal * 1.08, yr5: totalVal * Math.pow(1.08,5), yr10: totalVal * Math.pow(1.08,10) },
+          { label:'BULL', icon:'🐂', color:'var(--green)', bg:'rgba(0,229,160,0.07)', border:'rgba(0,229,160,0.2)',
+            desc:'Strong growth, AI & tech cycle tailwind',
+            yr1: totalVal * 1.20, yr5: totalVal * Math.pow(1.15,5), yr10: totalVal * Math.pow(1.15,10) },
+        ];
+        const fmt = v => v >= 1e6 ? '€'+(v/1e6).toFixed(2)+'M' : '€'+(v/1000).toFixed(1)+'k';
+        const fmtPct2 = v => (v>=0?'+':'')+v.toFixed(0)+'%';
+        return (
+          <div className="card" style={{padding:'18px 20px',marginBottom:16}}>
+            <div className="mono" style={{fontSize:10,color:'var(--text2)',letterSpacing:'0.12em',marginBottom:14}}>
+              ◈ PORTFOLIO OUTLOOK
+            </div>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:10}}>
+              {scenarios.map(s => (
+                <div key={s.label} style={{borderRadius:8,background:s.bg,border:`1px solid ${s.border}`,padding:'14px 16px'}}>
+                  <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:10}}>
+                    <span>{s.icon}</span>
+                    <span className="mono" style={{fontSize:10,fontWeight:700,color:s.color,letterSpacing:'0.1em'}}>{s.label}</span>
+                  </div>
+                  <div style={{fontSize:10,color:'var(--text3)',marginBottom:12,lineHeight:1.4}}>{s.desc}</div>
+                  <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:6}}>
+                    {[['1Y',s.yr1],['5Y',s.yr5],['10Y',s.yr10]].map(([period,val])=>{
+                      const pct = totalVal > 0 ? (val-totalVal)/totalVal*100 : 0;
+                      return (
+                        <div key={period} style={{textAlign:'center'}}>
+                          <div className="mono" style={{fontSize:8,color:'var(--text3)',marginBottom:3}}>{period}</div>
+                          <div className="mono" style={{fontSize:12,fontWeight:700,color:s.color}}>{fmt(val)}</div>
+                          <div className="mono" style={{fontSize:9,color:s.color,opacity:0.8}}>{fmtPct2(pct)}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div style={{marginTop:10,fontSize:9,color:'var(--text3)',fontFamily:'IBM Plex Mono',lineHeight:1.5}}>
+              ⚠ Illustrative projections only. Bear: −30% yr1, −7%/yr avg. Base: +8%/yr. Bull: +20% yr1, +15%/yr. Not financial advice.
+            </div>
+          </div>
+        );
+      })()}
+
       {/* ── Tabs ── */}
       <div style={{display:'flex',gap:8,marginBottom:16}}>
         {[['positions','Positions'],['analysis','Analysis']].map(([id,label])=>(
@@ -4450,7 +4608,7 @@ function PortfolioPage({ positions, transactions, onOpenStock, priceLoading, cha
             {[
               ['name','ASSET'],['qty','QTY'],['price','AVG €'],['value','VALUE'],
               ['daily','DAY%'],['pnl','P&L'],['pnlpct','P&L%'],
-              ['breakeven','BREAK-EVEN'],
+              ['breakeven','COST BASIS'],
               ['health','HEALTH'],
             ].map(([col,label])=>(
               <div key={col} className="mono" onClick={()=>toggleSort(col)}
@@ -4462,8 +4620,51 @@ function PortfolioPage({ positions, transactions, onOpenStock, priceLoading, cha
             ))}
           </div>
 
-          {/* Rows */}
-          {displayRows.map(pos => {
+          {/* Asset-class grouped rows */}
+          {(() => {
+            const typeLabel = t => t==='etf'?'ETF':t==='crypto'?'Crypto':t==='derivative'?'Derivative':'Stock';
+            const typeOrder = ['stock','etf','crypto','derivative'];
+            const groups = typeOrder.map(type => ({
+              type, label: typeLabel(type),
+              rows: displayRows.filter(p => (p.type||'stock') === type)
+            })).filter(g => g.rows.length > 0);
+            return groups.map(({ type, label, rows }) => {
+              const expanded = !collapsedGroups.has(type);
+              const groupVal = rows.reduce((s,p)=>s+p.qty*p.currentPrice,0);
+              const groupCost = rows.reduce((s,p)=>s+p.qty*p.avgPrice,0);
+              const groupPnl = groupVal - groupCost;
+              const groupPct = groupCost > 0 ? groupPnl/groupCost*100 : 0;
+              const groupUp = groupPnl >= 0;
+              return (
+                <React.Fragment key={type}>
+                  {/* Group header row */}
+                  <div onClick={()=>setCollapsedGroups(prev=>{const s=new Set(prev);s.has(type)?s.delete(type):s.add(type);return s;})}
+                    style={{display:'grid',gridTemplateColumns:'2fr 0.7fr 0.9fr 0.9fr 0.7fr 0.9fr 0.9fr 0.9fr 1.8fr',
+                      padding:'8px 18px',background:'var(--surface2)',borderBottom:'1px solid var(--border2)',
+                      cursor:'pointer',gap:8,alignItems:'center',userSelect:'none'}}
+                    onMouseEnter={e=>e.currentTarget.style.background='#1c2730'}
+                    onMouseLeave={e=>e.currentTarget.style.background='var(--surface2)'}>
+                    <div style={{display:'flex',alignItems:'center',gap:6}}>
+                      <span style={{fontSize:10,color:'var(--text3)',transition:'transform 0.15s',
+                        transform:expanded?'rotate(90deg)':'rotate(0deg)',display:'inline-block'}}>▶</span>
+                      <span className="mono" style={{fontSize:10,fontWeight:700,color:'var(--text2)',letterSpacing:'0.08em'}}>{label.toUpperCase()}</span>
+                      <span className="mono" style={{fontSize:9,color:'var(--text3)',marginLeft:4}}>{rows.length} position{rows.length!==1?'s':''}</span>
+                    </div>
+                    <div/>
+                    <div/>
+                    <div className="mono" style={{fontSize:11,fontWeight:700}}>{fmtE(groupVal)}</div>
+                    <div/>
+                    <div className="mono" style={{fontSize:11,fontWeight:600,color:groupUp?'var(--green)':'var(--red)'}}>
+                      {groupUp?'+':'-'}€{Math.abs(groupPnl).toFixed(0)}
+                    </div>
+                    <div className="mono" style={{fontSize:11,fontWeight:600,color:groupUp?'var(--green)':'var(--red)'}}>
+                      {fmtPct(groupPct)}
+                    </div>
+                    <div className="mono" style={{fontSize:10,color:'var(--text3)'}}>€{groupCost.toFixed(0)}</div>
+                    <div/>
+                  </div>
+                  {/* Position rows */}
+                  {expanded && rows.map(pos => {
             const val = pos.qty * pos.currentPrice;
             const pnl = pos.qty * (pos.currentPrice - pos.avgPrice);
             const pnlpct = pos.avgPrice > 0 ? ((pos.currentPrice - pos.avgPrice) / pos.avgPrice * 100) : 0;
@@ -4519,17 +4720,17 @@ function PortfolioPage({ positions, transactions, onOpenStock, priceLoading, cha
                   {fmtPct(pnlpct)}
                 </div>
 
-                {/* Break-even */}
+                {/* Break-even: total cost basis (qty × avgPrice) */}
                 {(() => {
-                  // Break-even: price needed to recover full cost basis
-                  // For simple buy-and-hold: = avgPrice
-                  // Show distance to break-even vs current price
-                  const be = pos.avgPrice;
-                  const dist = pos.currentPrice > 0 ? ((pos.currentPrice - be) / be * 100) : null;
+                  const costBasis = pos.qty * pos.avgPrice;
+                  const currentVal = pos.qty * pos.currentPrice;
+                  const dist = costBasis > 0 ? ((currentVal - costBasis) / costBasis * 100) : null;
                   const above = dist != null && dist >= 0;
                   return (
                     <div>
-                      <div className="mono" style={{fontSize:11,color:'var(--text2)'}}>{be?.toFixed(2)??'—'}</div>
+                      <div className="mono" style={{fontSize:11,color:'var(--text2)'}}>
+                        {costBasis > 0 ? '€'+costBasis.toFixed(0) : '—'}
+                      </div>
                       {dist!=null && (
                         <div className="mono" style={{fontSize:9,color:above?'var(--green)':'var(--red)'}}>
                           {above?'+':''}{dist.toFixed(1)}%
@@ -4550,20 +4751,26 @@ function PortfolioPage({ positions, transactions, onOpenStock, priceLoading, cha
                     )) : loading ? <span className="mono shimmer" style={{fontSize:9,color:'var(--text3)'}}>…</span>
                     : <span className="mono" style={{fontSize:9,color:'var(--text3)'}}>—</span>}
                     {score!=null && <span className="mono" style={{fontSize:10,fontWeight:700,marginLeft:4,
-                      color:score>=70?'var(--green)':score>=40?'var(--gold)':'var(--red)'}}>
-                      {score}
+                      color:score>=7?'var(--green)':score>=4?'var(--gold)':'var(--red)'}}>
+                      {score?.toFixed(1)}<span style={{fontSize:7,opacity:0.6}}>/10</span>
                     </span>}
                   </div>
                   {score!=null && (
                     <div style={{width:'100%',maxWidth:80,height:3,borderRadius:2,background:'var(--surface2)',overflow:'hidden'}}>
-                      <div style={{height:'100%',width:score+'%',borderRadius:2,
-                        background:score>=70?'var(--green)':score>=40?'var(--gold)':'var(--red)'}}/>
+                      <div style={{height:'100%',width:(score*10)+'%',borderRadius:2,
+                        background:score>=7?'var(--green)':score>=4?'var(--gold)':'var(--red)'}}/>
                     </div>
                   )}
                 </div>
               </div>
             );
           })}
+
+                })}
+                </React.Fragment>
+              );
+            });
+          })()}
 
           {/* Scorecard legend */}
           <div style={{padding:'10px 18px',borderTop:'1px solid var(--border)',display:'flex',gap:16,alignItems:'center',flexWrap:'wrap'}}>
@@ -4725,10 +4932,10 @@ function PortfolioPage({ positions, transactions, onOpenStock, priceLoading, cha
                               {score!=null&&(
                                 <div style={{display:'flex',alignItems:'center',gap:4,flexShrink:0}}>
                                   <div style={{width:28,height:4,borderRadius:2,background:'var(--surface2)',overflow:'hidden'}}>
-                                    <div style={{height:'100%',width:score+'%',background:score>=70?'var(--green)':score>=40?'var(--gold)':'var(--red)',borderRadius:2}}/>
+                                    <div style={{height:'100%',width:(score*10)+'%',background:score>=7?'var(--green)':score>=4?'var(--gold)':'var(--red)',borderRadius:2}}/>
                                   </div>
                                   <span className="mono" style={{fontSize:10,fontWeight:700,
-                                    color:score>=70?'var(--green)':score>=40?'var(--gold)':'var(--red)'}}>{score}</span>
+                                    color:score>=7?'var(--green)':score>=4?'var(--gold)':'var(--red)'}}>{score?.toFixed(1)}<span style={{fontSize:7,opacity:0.6}}>/10</span></span>
                                 </div>
                               )}
                             </div>
@@ -4937,8 +5144,14 @@ export default function App() {
       const tickerList = [...new Set([...rawTickers, ...baseTickers])];
       if(!tickerList.length){ setLastUpdated(new Date()); return; }
       const qmap = await fetchQuotes(tickerList);
-      console.log('[folio] tickerList:', tickerList.slice(0,10).join(','));
-      console.log('[folio] qmap sample:', Object.entries(qmap).slice(0,5).map(([k,v])=>`${k}:price=${v.price},chg=${v.change}`).join(' | '));
+      console.log('[folio] tickerList:', tickerList.join(','));
+      const qmapEntries = Object.entries(qmap);
+      console.log('[folio] qmap hits:', qmapEntries.length, '/', tickerList.length, 'tickers');
+      if(qmapEntries.length > 0) {
+        console.log('[folio] qmap sample:', qmapEntries.slice(0,5).map(([k,v])=>`${k}:price=${v.price?.toFixed(2)},chg=${v.change?.toFixed(2)}`).join(' | '));
+      } else {
+        console.warn('[folio] qmap is EMPTY - FMP returned nothing for these tickers');
+      }
       setPositions(prev=>prev.map(p=>{
         if(p.type==='crypto'||p.type==='derivative') return p;
         // Use resolvedTickerMap for newly-resolved positions (avoids stale React state),
@@ -4963,6 +5176,14 @@ export default function App() {
   }, [fmpGet]);
 
   useEffect(() => { fetchPrices(); }, [fetchPrices]);
+  // Also trigger when positions are first populated (e.g. after CSV import or localStorage restore)
+  const prevLenRef = React.useRef(0);
+  useEffect(() => {
+    if (positions.length > 0 && prevLenRef.current === 0) {
+      fetchPrices();
+    }
+    prevLenRef.current = positions.length;
+  }, [positions.length, fetchPrices]);
 
   // Derived values
   const vis       = useMemo(()=>positions.filter(p=>activeBrokers[p.broker]),[positions,activeBrokers]);
@@ -5678,7 +5899,7 @@ export default function App() {
           }
           setTransactions(txs);
         }
-        else{setPositions(prev=>[...prev,...imported]);}
+        else{setPositions(prev=>[...prev,...imported]);setTimeout(fetchPrices,100);}
         setShowImport(false); setNav("dashboard");
       }}/>}
 
