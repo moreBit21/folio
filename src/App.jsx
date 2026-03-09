@@ -1390,20 +1390,51 @@ function dedupeSearchResults(results) {
 }
 async function fetchTickerSearch(query, limit = 12) {
   if (!query || query.length < 1) return [];
-  // Run name search always; run symbol search in parallel for short queries
-  const nameUrl = '/api/fmp?path=' + encodeURIComponent('/search-name?query=' + query + '&limit=' + limit);
   const looksLikeTicker = query.length <= 6 && !/\s/.test(query);
-  const symUrl = '/api/fmp?path=' + encodeURIComponent('/search?query=' + query.toUpperCase() + '&limit=8&exchange=NASDAQ,NYSE,XETRA');
+  const q = query.toUpperCase();
+  const searchLimit = looksLikeTicker ? Math.max(limit, 20) : limit;
+
+  // Run name search + ticker quote lookup in parallel
+  const namePromise = fetch('/api/fmp?path=' + encodeURIComponent('/search-name?query=' + query + '&limit=' + searchLimit))
+    .then(r => r.ok ? r.json() : []).catch(() => []);
+
+  // For short queries that look like tickers, also try /quote/TICKER for exact match
+  // and /search-name with uppercase variant
+  const tickerPromise = looksLikeTicker
+    ? fetch('/api/fmp?path=' + encodeURIComponent('/quote/' + q))
+        .then(r => r.ok ? r.json() : []).catch(() => [])
+    : Promise.resolve([]);
+
   try {
-    const [nameRes, symRes] = await Promise.allSettled([
-      fetch(nameUrl).then(r=>r.ok?r.json():[]).catch(()=>[]),
-      looksLikeTicker ? fetch(symUrl).then(r=>r.ok?r.json():[]).catch(()=>[]) : Promise.resolve([]),
-    ]);
-    const nameData = Array.isArray(nameRes.value) ? nameRes.value : [];
-    const symData  = Array.isArray(symRes.value)  ? symRes.value  : [];
-    // Merge: symbol-exact matches at top, then name results
-    const combined = [...symData, ...nameData];
-    return dedupeSearchResults(combined.filter(r=>r&&r.symbol));
+    const [nameData, tickerData] = await Promise.all([namePromise, tickerPromise]);
+    const nameResults = Array.isArray(nameData) ? nameData : [];
+    // /quote returns array of quote objects — shape is different, normalize it
+    const tickerResults = (Array.isArray(tickerData) ? tickerData : [])
+      .filter(t => t?.symbol)
+      .map(t => ({ symbol: t.symbol, name: t.name, exchangeShortName: t.exchange || 'NASDAQ', stockExchange: t.exchange || '' }));
+
+    // Merge: put exact ticker matches first, then name results
+    const seen = new Set();
+    const merged = [];
+    // First add exact ticker matches from /quote
+    for (const r of tickerResults) {
+      if (!seen.has(r.symbol)) { seen.add(r.symbol); merged.push(r); }
+    }
+    // Then name search results
+    for (const r of nameResults) {
+      if (r?.symbol && !seen.has(r.symbol)) { seen.add(r.symbol); merged.push(r); }
+    }
+
+    // For ticker-style queries, sort: exact symbol > starts-with > rest
+    if (looksLikeTicker) {
+      merged.sort((a, b) => {
+        const aScore = a.symbol?.toUpperCase() === q ? -3 : a.symbol?.toUpperCase().startsWith(q) ? -1 : 0;
+        const bScore = b.symbol?.toUpperCase() === q ? -3 : b.symbol?.toUpperCase().startsWith(q) ? -1 : 0;
+        if (aScore !== bScore) return aScore - bScore;
+        return rankSearchResult(a) - rankSearchResult(b);
+      });
+    }
+    return dedupeSearchResults(merged.filter(r => r && r.symbol)).slice(0, limit);
   } catch { return []; }
 }
 
@@ -4030,7 +4061,7 @@ function StockDetail({ pos, onBack, transactions }) {
 // ════════════════════════════════════════════════════════════════════════════
 const EU_INFLATION = 2.6; // ECB target / recent avg %
 
-function PortfolioPage({ positions, transactions, onOpenStock, priceLoading }) {
+function PortfolioPage({ positions, transactions, onOpenStock, priceLoading, chartData, investedChartData, chartLoading, chartError, activeBM, setActiveBM, range, setRange, BENCHMARKS, perfStats }) {
   const [tab, setTab] = React.useState('positions'); // positions | analysis
   const [analysisView, setAnalysisView] = React.useState('asset'); // asset|sector|region|cagr|volatility|alloc
   const [drillFilter, setDrillFilter] = React.useState(null); // {type, value} for click-through
@@ -4067,12 +4098,26 @@ function PortfolioPage({ positions, transactions, onOpenStock, priceLoading }) {
   }, [positions.map(p=>p.symbol).join(',')]);
 
   // ── CAGR calculation per position ──
+  const parseDate = (d) => {
+    if (!d) return null;
+    // Handle German format dd.mm.yyyy
+    const german = d.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+    if (german) return new Date(`${german[3]}-${german[2].padStart(2,'0')}-${german[1].padStart(2,'0')}`);
+    // ISO or other parseable
+    const dt = new Date(d);
+    return isNaN(dt) ? null : dt;
+  };
   const calcCAGR = (pos) => {
-    const txns = transactions.filter(t => (t.symbol === pos.symbol || t.isin === pos.isin) && t.type === 'BUY');
+    const txns = transactions.filter(t => (t.symbol === pos.symbol || t.isin === pos.isin) && t.type?.toLowerCase() === 'buy');
     if (!txns.length) return null;
     // earliest buy date
-    const earliest = txns.reduce((a,b) => new Date(a.date) < new Date(b.date) ? a : b);
-    const years = (Date.now() - new Date(earliest.date)) / (365.25 * 86400000);
+    const earliest = txns.reduce((a,b) => {
+      const da = parseDate(a.date), db = parseDate(b.date);
+      return (da && db) ? (da < db ? a : b) : (da ? a : b);
+    });
+    const earlyDate = parseDate(earliest.date);
+    if (!earlyDate) return null;
+    const years = (Date.now() - earlyDate.getTime()) / (365.25 * 86400000);
     if (years < 0.1) return null;
     const cv = pos.qty * pos.currentPrice;
     const cc = pos.qty * pos.avgPrice;
@@ -4273,11 +4318,87 @@ function PortfolioPage({ positions, transactions, onOpenStock, priceLoading }) {
       border: color==='gray'?'1px solid var(--border)':'none'}}/>
   );
 
+  // ── Portfolio-level CAGR ──
+  const allCagrVals = vis.map(calcCAGR).filter(v => v != null);
+  const portfolioCAGR = allCagrVals.length ? allCagrVals.reduce((a,b)=>a+b,0)/allCagrVals.length : null;
+  const realCAGR = portfolioCAGR != null ? portfolioCAGR - EU_INFLATION : null;
+
   return (
     <div style={{padding:'26px 30px',overflow:'auto',height:'100%',boxSizing:'border-box'}}>
 
+      {/* ── KPI Cards ── */}
+      <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12,marginBottom:16}}>
+        {[
+          {label:'PORTFOLIO VALUE', val:`€${totalVal.toLocaleString('de-DE',{minimumFractionDigits:0,maximumFractionDigits:0})}`, sub:`${vis.length} positions`, color:null},
+          {label:'TOTAL P&L',       val:`${(totalVal-totalCost)>=0?'+':'-'}€${Math.abs(totalVal-totalCost).toLocaleString('de-DE',{minimumFractionDigits:0,maximumFractionDigits:0})}`, sub:`${totalCost>0?((totalVal-totalCost)/totalCost*100).toFixed(1):'—'}% total return`, color:(totalVal-totalCost)>=0?'var(--green)':'var(--red)'},
+          {label:'INVESTED',        val:`€${totalCost.toLocaleString('de-DE',{minimumFractionDigits:0,maximumFractionDigits:0})}`, sub:'Cost basis', color:null},
+          {label:'REAL RETURN',     val:realCAGR!=null?(realCAGR>=0?'+':'')+realCAGR.toFixed(1)+'% p.a.':'—', sub:`CAGR ${portfolioCAGR!=null?(portfolioCAGR>=0?'+':'')+portfolioCAGR.toFixed(1)+'%':'—'} − ${EU_INFLATION}% inflation`, color:realCAGR==null?null:realCAGR>=5?'var(--green)':realCAGR>=0?'var(--gold)':'var(--red)'},
+        ].map((k,i)=>(
+          <div key={i} className="card fu" style={{padding:'16px 18px',position:'relative',overflow:'hidden'}}>
+            <div style={{position:'absolute',top:0,left:0,right:0,height:2,background:k.color||'var(--border2)'}}/>
+            <div className="mono" style={{fontSize:9,color:'var(--text3)',letterSpacing:'0.12em',marginBottom:7}}>{k.label}</div>
+            <div className="mono" style={{fontSize:18,fontWeight:600,letterSpacing:'-0.02em',color:k.color||'var(--text)'}}>{k.val}</div>
+            <div style={{fontSize:11,color:'var(--text2)',marginTop:3}}>{k.sub}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Performance Chart ── */}
+      {(chartData?.length > 0 || investedChartData?.length > 0) && (
+        <div className="card fu2" style={{padding:'18px 20px 14px',marginBottom:16}}>
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:8,marginBottom:10}}>
+            <div style={{display:'flex',alignItems:'center',gap:10}}>
+              <div className="mono" style={{fontSize:10,color:'var(--text2)',letterSpacing:'0.1em'}}>PERFORMANCE</div>
+              {perfStats?.portfolio!=null&&<span className="mono" style={{fontSize:10,color:perfStats.portfolio>=0?'var(--green)':'var(--red)',fontWeight:600}}>{perfStats.portfolio>=0?'+':''}{perfStats.portfolio}%</span>}
+            </div>
+            <div style={{display:'flex',gap:5,flexWrap:'wrap'}}>
+              {BENCHMARKS?.map(b=>(
+                <button key={b.id} onClick={()=>setActiveBM(a=>a.includes(b.id)?a.filter(x=>x!==b.id):[...a,b.id])}
+                  className="btn" style={{fontSize:9,padding:'2px 8px',
+                    borderColor:activeBM?.includes(b.id)?b.color:'var(--border)',
+                    color:activeBM?.includes(b.id)?b.color:'var(--text3)',
+                    background:activeBM?.includes(b.id)?'rgba(100,100,200,0.06)':'transparent'}}>
+                  {b.label}
+                </button>
+              ))}
+              <div style={{width:1,background:'var(--border)',margin:'0 2px'}}/>
+              {["1M","3M","6M","YTD","1Y","ALL"].map(r=>(
+                <button key={r} onClick={()=>setRange(r)} className="btn"
+                  style={{fontSize:9,padding:'2px 8px',
+                    borderColor:range===r?'var(--green)':'var(--border)',
+                    color:range===r?'var(--green)':'var(--text3)',
+                    background:range===r?'rgba(0,229,160,0.08)':'transparent'}}>
+                  {r}
+                </button>
+              ))}
+            </div>
+          </div>
+          {chartLoading ? (
+            <div style={{height:200,display:'flex',alignItems:'center',justifyContent:'center'}}>
+              <span className="mono shimmer" style={{fontSize:11,color:'var(--text3)'}}>⟳ Loading…</span>
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height={200}>
+              <ComposedChart data={chartData?.length?chartData:investedChartData} margin={{top:4,right:4,left:0,bottom:0}}>
+                <defs>
+                  <linearGradient id="gPort2" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#00e5a0" stopOpacity={0.15}/><stop offset="95%" stopColor="#00e5a0" stopOpacity={0}/>
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1c2730" vertical={false}/>
+                <XAxis dataKey="date" tick={{fontFamily:"IBM Plex Mono",fontSize:9,fill:"#3d4f5e"}} axisLine={false} tickLine={false} interval="preserveStartEnd"/>
+                <YAxis tick={{fontFamily:"IBM Plex Mono",fontSize:9,fill:"#3d4f5e"}} axisLine={false} tickLine={false} tickFormatter={v=>"€"+(v/1000).toFixed(0)+"k"} width={44}/>
+                <Tooltip contentStyle={{background:'var(--surface)',border:'1px solid var(--border2)',borderRadius:8,fontFamily:'IBM Plex Mono',fontSize:11}}/>
+                {activeBM?.map(id=>{const b=BENCHMARKS?.find(x=>x.id===id);return b?<Line key={id} type="linear" dataKey={id} name={b.label} stroke={b.color} strokeWidth={1.5} strokeOpacity={0.75} dot={false} connectNulls isAnimationActive={false}/>:null;})}
+                <Area type="linear" dataKey="portfolio" name="Portfolio" stroke="#00e5a0" strokeWidth={2.5} fill="url(#gPort2)" dot={false}/>
+              </ComposedChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+      )}
+
       {/* ── Tabs ── */}
-      <div style={{display:'flex',gap:8,marginBottom:20}}>
+      <div style={{display:'flex',gap:8,marginBottom:16}}>
         {[['positions','Positions'],['analysis','Analysis']].map(([id,label])=>(
           <button key={id} onClick={()=>{setTab(id);setDrillFilter(null);}} className="mono"
             style={{padding:'7px 16px',borderRadius:6,cursor:'pointer',fontSize:11,letterSpacing:'0.06em',
@@ -4456,149 +4577,109 @@ function PortfolioPage({ positions, transactions, onOpenStock, priceLoading }) {
             ))}
           </div>
 
-          <div style={{display:'grid',gridTemplateColumns:'360px 1fr',gap:16,alignItems:'start'}}>
-
-            {/* ── Pie Chart ── */}
-            <div className="card" style={{padding:20}}>
-              <div className="mono" style={{fontSize:10,color:'var(--text2)',letterSpacing:'0.1em',marginBottom:14}}>
-                {currentPie.label.toUpperCase()}
-              </div>
-              {drillFilter && (
-                <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:12,padding:'6px 10px',
-                  background:'var(--green-dim)',borderRadius:6,border:'1px solid rgba(0,229,160,0.25)'}}>
-                  <span className="mono" style={{fontSize:10,color:'var(--green)'}}>
-                    Filtering: {drillFilter.value}
-                  </span>
-                  <button onClick={()=>setDrillFilter(null)}
-                    style={{marginLeft:'auto',background:'none',border:'none',cursor:'pointer',color:'var(--green)',fontSize:12}}>✕</button>
-                </div>
-              )}
-              <div style={{position:'relative',height:220}}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie data={currentPie.data} cx="50%" cy="50%" innerRadius={55} outerRadius={90}
-                      dataKey="value" paddingAngle={2}
-                      onMouseEnter={(_,i)=>setHoveredSlice(i)}
-                      onMouseLeave={()=>setHoveredSlice(null)}
-                      onClick={(entry)=>{
-                        if(currentPie.id==='alloc') return;
-                        setDrillFilter(df=>df?.value===entry.name?null:{type:currentPie.drillType,value:entry.name});
-                        setTab('positions');
-                      }}>
-                      {currentPie.data.map((entry,i)=>(
-                        <Cell key={i} fill={entry.color}
-                          opacity={hoveredSlice===null||hoveredSlice===i?1:0.5}
-                          style={{cursor:currentPie.id==='alloc'?'default':'pointer',outline:'none'}}/>
-                      ))}
-                    </Pie>
-                    <Tooltip contentStyle={{background:'var(--surface)',border:'1px solid var(--border2)',borderRadius:8,fontSize:11}}
-                      formatter={(v,n)=>[v+'%',n]}/>
-                  </PieChart>
-                </ResponsiveContainer>
-                {/* Centre label */}
-                <div style={{position:'absolute',inset:0,display:'flex',flexDirection:'column',
-                  alignItems:'center',justifyContent:'center',pointerEvents:'none'}}>
-                  <div className="mono" style={{fontSize:16,fontWeight:700,color:'var(--text)'}}>{currentPie.data.length}</div>
-                  <div className="mono" style={{fontSize:9,color:'var(--text3)'}}>groups</div>
-                </div>
-              </div>
-
-              {/* Legend */}
-              <div style={{display:'flex',flexDirection:'column',gap:7,marginTop:12}}>
-                {currentPie.data.map((d,i)=>(
-                  <div key={d.name} onClick={()=>{
-                    if(currentPie.id==='alloc') return;
-                    setDrillFilter(df=>df?.value===d.name?null:{type:currentPie.drillType,value:d.name});
-                    setTab('positions');
-                  }}
-                    style={{display:'flex',alignItems:'center',gap:8,cursor:currentPie.id!=='alloc'?'pointer':'default',
-                      padding:'3px 6px',borderRadius:4,transition:'background 0.1s',
-                      background:drillFilter?.value===d.name?'var(--green-dim)':'transparent'}}
-                    onMouseEnter={e=>{if(currentPie.id!=='alloc')e.currentTarget.style.background='var(--surface2)';}}
-                    onMouseLeave={e=>{e.currentTarget.style.background=drillFilter?.value===d.name?'var(--green-dim)':'transparent';}}>
-                    <div style={{width:8,height:8,borderRadius:2,background:d.color,flexShrink:0}}/>
-                    <span className="mono" style={{fontSize:10,color:'var(--text2)',flex:1,
-                      overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{d.name}</span>
-                    <span className="mono" style={{fontSize:10,color:'var(--text)',fontWeight:600}}>{d.value}%</span>
-                    <span className="mono" style={{fontSize:9,color:'var(--text3)'}}>€{(d.rawVal/1000).toFixed(0)}k</span>
-                  </div>
-                ))}
-              </div>
-              {currentPie.id !== 'alloc' && (
-                <div className="mono" style={{fontSize:9,color:'var(--text3)',marginTop:10,textAlign:'center'}}>
-                  Click a slice or legend item to filter positions →
-                </div>
-              )}
-            </div>
-
-            {/* ── Right: CAGR + inflation summary cards ── */}
-            <div style={{display:'flex',flexDirection:'column',gap:12}}>
-              {/* Portfolio CAGR summary */}
-              {(() => {
-                const cagrVals = vis.map(calcCAGR).filter(v=>v!=null);
-                const avgCagr = cagrVals.length ? cagrVals.reduce((a,b)=>a+b)/cagrVals.length : null;
-                const adjCagr = avgCagr != null ? avgCagr - EU_INFLATION : null;
-                return (
-                  <div className="card" style={{padding:18}}>
-                    <div className="mono" style={{fontSize:9,color:'var(--text3)',letterSpacing:'0.12em',marginBottom:12}}>PORTFOLIO RETURNS</div>
-                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12}}>
-                      {[
-                        {label:'Avg CAGR', val:avgCagr, suffix:'%', desc:'Compound annual growth'},
-                        {label:'EU Inflation', val:EU_INFLATION, suffix:'%', desc:'ECB target rate', fixed:true, neutral:true},
-                        {label:'Real Return', val:adjCagr, suffix:'%', desc:'CAGR – inflation'},
-                      ].map(({label,val,suffix,desc,fixed,neutral})=>(
-                        <div key={label} style={{textAlign:'center',padding:'12px 8px',background:'var(--surface2)',borderRadius:8}}>
-                          <div className="mono" style={{fontSize:9,color:'var(--text3)',letterSpacing:'0.1em',marginBottom:6}}>{label}</div>
-                          <div className="mono" style={{fontSize:20,fontWeight:700,
-                            color:neutral?'var(--text2)':val==null?'var(--text3)':val>=10?'var(--green)':val>=0?'var(--gold)':'var(--red)'}}>
-                            {val!=null?(val>=0&&!neutral?'+':'')+val.toFixed(1)+suffix:'—'}
-                          </div>
-                          <div style={{fontSize:10,color:'var(--text3)',marginTop:4}}>{desc}</div>
-                        </div>
-                      ))}
+          {/* ── Pie charts grid — all 7 side by side ── */}
+          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(260px,1fr))',gap:14,marginBottom:16}}>
+            {PIE_VIEWS.map(pv => {
+              const isActive = analysisView === pv.id;
+              return (
+                <div key={pv.id} className="card" style={{padding:16,cursor:'pointer',
+                  border:'1px solid',transition:'all 0.15s',
+                  borderColor:isActive?'rgba(0,229,160,0.35)':'var(--border)',
+                  background:isActive?'rgba(0,229,160,0.04)':'var(--surface)'}}
+                  onClick={()=>{setAnalysisView(pv.id);setDrillFilter(null);}}>
+                  <div className="mono" style={{fontSize:9,color:isActive?'var(--green)':'var(--text3)',
+                    letterSpacing:'0.1em',marginBottom:8}}>{pv.label.toUpperCase()}</div>
+                  <div style={{position:'relative',height:160}}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie data={pv.data} cx="50%" cy="50%" innerRadius={40} outerRadius={65}
+                          dataKey="value" paddingAngle={2}
+                          onClick={(entry)=>{
+                            if(pv.id==='alloc') return;
+                            setAnalysisView(pv.id);
+                            setDrillFilter(df=>(df?.value===entry.name&&analysisView===pv.id)?null:{type:pv.drillType,value:entry.name});
+                          }}>
+                          {pv.data.map((entry,i)=>(
+                            <Cell key={i} fill={entry.color}
+                              opacity={isActive&&drillFilter?.value===entry.name?1:
+                                       isActive&&drillFilter?0.35:1}
+                              style={{cursor:pv.id==='alloc'?'default':'pointer',outline:'none'}}/>
+                          ))}
+                        </Pie>
+                        <Tooltip contentStyle={{background:'var(--surface)',border:'1px solid var(--border2)',borderRadius:8,fontSize:10}}
+                          formatter={(v,n)=>[v+'%',n]}/>
+                      </PieChart>
+                    </ResponsiveContainer>
+                    <div style={{position:'absolute',inset:0,display:'flex',flexDirection:'column',
+                      alignItems:'center',justifyContent:'center',pointerEvents:'none'}}>
+                      <div className="mono" style={{fontSize:13,fontWeight:700,color:'var(--text)'}}>{pv.data.length}</div>
                     </div>
                   </div>
-                );
-              })()}
-
-              {/* Per-position CAGR table */}
-              <div className="card" style={{padding:0,overflow:'hidden'}}>
-                <div style={{padding:'12px 16px 10px',borderBottom:'1px solid var(--border)'}}>
-                  <div className="mono" style={{fontSize:9,color:'var(--text3)',letterSpacing:'0.12em'}}>POSITION RETURNS</div>
-                </div>
-                <div style={{maxHeight:320,overflow:'auto'}}>
-                  {[...vis].filter(p=>calcCAGR(p)!=null).sort((a,b)=>(calcCAGR(b)||0)-(calcCAGR(a)||0)).map(pos=>{
-                    const cagr = calcCAGR(pos);
-                    const real = cagr != null ? cagr - EU_INFLATION : null;
-                    return (
-                      <div key={pos.id} onClick={()=>onOpenStock(pos)}
-                        style={{display:'grid',gridTemplateColumns:'2fr 1fr 1fr 1fr',
-                          padding:'9px 16px',borderBottom:'1px solid var(--border)',
-                          cursor:'pointer',alignItems:'center',gap:8}}
-                        onMouseEnter={e=>e.currentTarget.style.background='var(--surface2)'}
-                        onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
-                        <div>
-                          <div className="mono" style={{fontSize:11,fontWeight:500}}>{pos.symbol}</div>
-                          <div style={{fontSize:9,color:'var(--text3)'}}>{pos.name?.slice(0,20)}</div>
-                        </div>
-                        <div className="mono" style={{fontSize:11,textAlign:'right',
-                          color:cagr>=15?'var(--green)':cagr>=5?'var(--gold)':'var(--red)'}}>
-                          {fmtPct(cagr)}
-                        </div>
-                        <div className="mono" style={{fontSize:9,textAlign:'right',color:'var(--text3)'}}>
-                          − {EU_INFLATION}%
-                        </div>
-                        <div className="mono" style={{fontSize:11,textAlign:'right',fontWeight:600,
-                          color:real>=5?'var(--green)':real>=0?'var(--gold)':'var(--red)'}}>
-                          {fmtPct(real)}
-                        </div>
+                  {/* Mini legend */}
+                  <div style={{display:'flex',flexDirection:'column',gap:4,marginTop:8}}>
+                    {pv.data.slice(0,4).map(d=>(
+                      <div key={d.name} style={{display:'flex',alignItems:'center',gap:6}}
+                        onClick={e=>{e.stopPropagation();if(pv.id==='alloc')return;setAnalysisView(pv.id);
+                          setDrillFilter(df=>(df?.value===d.name&&analysisView===pv.id)?null:{type:pv.drillType,value:d.name});}}>
+                        <div style={{width:7,height:7,borderRadius:2,background:d.color,flexShrink:0}}/>
+                        <span className="mono" style={{fontSize:9,color:'var(--text3)',flex:1,
+                          overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{d.name}</span>
+                        <span className="mono" style={{fontSize:9,color:'var(--text)',fontWeight:600}}>{d.value}%</span>
                       </div>
-                    );
-                  })}
+                    ))}
+                    {pv.data.length>4 && <div className="mono" style={{fontSize:8,color:'var(--text3)'}}>+{pv.data.length-4} more</div>}
+                  </div>
                 </div>
+              );
+            })}
+          </div>
+
+          {/* ── Drill-down: positions for selected slice ── */}
+          {drillFilter && (
+            <div className="card" style={{padding:0,overflow:'hidden'}}>
+              <div style={{padding:'12px 18px',borderBottom:'1px solid var(--border)',
+                display:'flex',alignItems:'center',gap:12}}>
+                <div className="mono" style={{fontSize:9,color:'var(--text3)',letterSpacing:'0.1em'}}>
+                  {currentPie.label.toUpperCase()}
+                </div>
+                <div style={{width:8,height:8,borderRadius:2,flexShrink:0,
+                  background:currentPie.data.find(d=>d.name===drillFilter.value)?.color||'var(--green)'}}/>
+                <div className="mono" style={{fontSize:11,color:'var(--text)',fontWeight:600}}>{drillFilter.value}</div>
+                <div className="mono" style={{fontSize:10,color:'var(--text3)'}}>
+                  — {displayRows.length} position{displayRows.length!==1?'s':''}
+                </div>
+                <button onClick={()=>setDrillFilter(null)}
+                  style={{marginLeft:'auto',background:'none',border:'none',cursor:'pointer',
+                    color:'var(--text3)',fontSize:14,lineHeight:1}}>✕</button>
+              </div>
+              <div style={{display:'flex',flexWrap:'wrap',gap:0}}>
+                {displayRows.map(pos => {
+                  const pnlpct = pos.avgPrice > 0 ? ((pos.currentPrice - pos.avgPrice) / pos.avgPrice * 100) : null;
+                  return (
+                    <div key={pos.id} onClick={()=>onOpenStock(pos)}
+                      style={{display:'flex',alignItems:'center',gap:10,padding:'11px 18px',
+                        borderBottom:'1px solid var(--border)',borderRight:'1px solid var(--border)',
+                        cursor:'pointer',transition:'background 0.1s',minWidth:220,flex:'1 1 220px'}}
+                      onMouseEnter={e=>e.currentTarget.style.background='var(--surface2)'}
+                      onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                      <AssetLogo pos={pos}/>
+                      <div style={{minWidth:0,flex:1}}>
+                        <div className="mono" style={{fontSize:12,fontWeight:600}}>{pos.symbol}</div>
+                        <div style={{fontSize:10,color:'var(--text3)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{pos.name}</div>
+                      </div>
+                      {pnlpct!=null && (
+                        <div className="mono" style={{fontSize:11,fontWeight:600,
+                          color:pnlpct>=0?'var(--green)':'var(--red)',flexShrink:0}}>
+                          {pnlpct>=0?'+':''}{pnlpct.toFixed(1)}%
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
-          </div>
+          )}
+
         </div>
       )}
     </div>
@@ -5125,7 +5206,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v55 · Portfolio page redesign + health score fix + daily chg% + smart ticker search</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v56 · CAGR fix, portfolio KPI cards, analysis drill-down inline, ticker search fixed</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
@@ -5400,7 +5481,12 @@ export default function App() {
 
           {nav==="portfolio"&&<PortfolioPage positions={positions} transactions={transactions}
             onOpenStock={pos=>{setSelectedPos(pos);setNav("stock")}}
-            priceLoading={priceLoading}/>}
+            priceLoading={priceLoading}
+            chartData={chartData} investedChartData={investedChartData}
+            chartLoading={chartLoading} chartError={chartError}
+            activeBM={activeBM} setActiveBM={setActiveBM}
+            range={range} setRange={setRange}
+            BENCHMARKS={BENCHMARKS} perfStats={perfStats}/>}
           {nav==="stock"&&selectedPos&&<StockDetail pos={selectedPos} onBack={()=>{setNav("dashboard");setSelectedPos(null)}} transactions={transactions}/> }
           {nav==="screener"&&<div className="fu card" style={{padding:40,textAlign:"center"}}><div className="serif" style={{fontSize:22,color:"var(--text2)",marginBottom:8}}>Stock Screener</div><div style={{fontSize:13,color:"var(--text3)"}}>Coming in Phase 3 — filter by P/E, dividend yield, sector, region & more</div></div>}
           {nav==="compare"&&<CompareView/>}
