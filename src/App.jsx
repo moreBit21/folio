@@ -4198,6 +4198,10 @@ function PortfolioPage({ positions, transactions, onOpenStock, priceLoading, cha
   }) : sorted;
 
   // ── Pie chart data builders ──
+  const PIE_PALETTE   = ['#00e5a0','#4d9fff','#f0b429','#a78bfa','#ff6b9d','#00d4ff','#ff4d6d','#7cfc00','#ff8c00','#9370db','#20b2aa','#dc143c'];
+  const ASSET_COLORS  = { stock:'#00e5a0', etf:'#4d9fff', crypto:'#f0b429', derivative:'#ff4d6d' };
+  const REGION_COLORS = { 'North America':'#4d9fff','Europe':'#00e5a0','Global':'#f0b429','Mixed':'#a78bfa','Asia':'#ff6b9d' };
+
   const makePie = (groupFn, colorMap) => {
     const groups = {};
     vis.forEach(p => {
@@ -4214,14 +4218,11 @@ function PortfolioPage({ positions, transactions, onOpenStock, priceLoading, cha
       }));
   };
 
-  const PIE_PALETTE = ['#00e5a0','#4d9fff','#f0b429','#a78bfa','#ff6b9d','#00d4ff','#ff4d6d','#7cfc00','#ff8c00','#9370db','#20b2aa','#dc143c'];
-  const ASSET_COLORS = { stock:'#00e5a0', etf:'#4d9fff', crypto:'#f0b429', derivative:'#ff4d6d' };
-  const REGION_COLORS = { 'North America':'#4d9fff','Europe':'#00e5a0','Global':'#f0b429','Mixed':'#a78bfa','Asia':'#ff6b9d' };
-
-  const assetPie  = makePie(p => p.type || 'stock', ASSET_COLORS);
-  const sectorPie = makePie(getSector, {});
-  const regionPie = makePie(getRegion, REGION_COLORS);
-  const allocPie  = makePie(p => p.symbol || p.name, {});
+  const assetPie     = makePie(p => p.type || 'stock', ASSET_COLORS);
+  const sectorPie    = makePie(getSector, {});
+  const regionPie    = makePie(getRegion, REGION_COLORS);
+  const allocPie     = makePie(p => p.symbol || p.name, {});
+  const currencyPie  = makePie(getCurrency, {'USD':'#4d9fff','EUR':'#00e5a0','GBP':'#a78bfa','JPY':'#f0b429','USD/Crypto':'#ff9f43','HKD':'#ff6b9d'});
 
 
   const cagrPie = (() => {
@@ -5257,7 +5258,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v57 · fix daily chg% URL encoding, currency pie crash, health sort, watchlist prices</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v57 · fix crash: PIE_PALETTE order, currencyPie, URL encoding, health sort</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
