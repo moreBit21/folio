@@ -10,7 +10,11 @@ export default async function handler(req, res) {
   if (!FMP_KEY) { res.status(500).json({ error: 'FMP_KEY not configured' }); return; }
 
   const sep = path.includes('?') ? '&' : '?';
-  const url = `https://financialmodelingprep.com/stable${path}${sep}apikey=${FMP_KEY}`;
+  // v3 paths (e.g. /v3/quote/AAPL) are free-tier — don't prepend /stable
+  const base = path.startsWith('/v3/') || path.startsWith('/api/')
+    ? 'https://financialmodelingprep.com'
+    : 'https://financialmodelingprep.com/stable';
+  const url = `${base}${path}${sep}apikey=${FMP_KEY}`;
 
   try {
     const r = await fetch(url);

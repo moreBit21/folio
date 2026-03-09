@@ -1553,8 +1553,8 @@ function calcCanonicalHealthScore(d) {
 
   const nmGood = isTech?0.15:isRetail?0.04:isEnergy?0.06:0.08;
   const nmOk   = isTech?0.06:isRetail?0.01:isEnergy?0.02:0.03;
-  const deGood = isFinance?2:isTech?0.5:1;
-  const deOk   = isFinance?4:isTech?1.5:2;
+  const deGood = isFinance?8:isTech?0.5:1;
+  const deOk   = isFinance?15:isTech?1.5:2;
 
   // Profitability
   const profitScores = [
@@ -1626,7 +1626,7 @@ function calcCanonicalHealthScore(d) {
   const dims=[profitColor,growthColor,moatColor,balanceColor,cashColor,valuationColor]
     .map(col=>colorScore[col]).filter(v=>v!==null);
   if(!dims.length) return null;
-  return Math.round(dims.reduce((a,b)=>a+b)/dims.length*5*10)/10; // 0-10 scale
+  return Math.round(dims.reduce((a,b)=>a+b)/dims.length*50);
 }
 
 // ── WatchlistPage ────────────────────────────────────────────────────────────
@@ -1663,7 +1663,7 @@ function WatchlistPage({ watchlists, setWatchlists, activeWLId, setActiveWLId, o
         for (let i = 0; i < syms.length; i += BATCH) {
           if (cancelled) return;
           const batch = syms.slice(i, i + BATCH).join(',');
-          const r = await fetch('/api/fmp?path=' + encodeURIComponent('/quote?symbol=' + batch));
+          const r = await fetch('/api/fmp?path=' + encodeURIComponent('/v3/quote/' + batch));
           if (!r.ok) continue;
           const data = await r.json().catch(() => null);
           if (!data || cancelled) continue;
@@ -1791,7 +1791,7 @@ function WatchlistPage({ watchlists, setWatchlists, activeWLId, setActiveWLId, o
     if (!wl || !allItems.length) return;
     const syms = [...new Set(allItems.map(i=>i.symbol).filter(s=>s&&!isISIN(s)))];
     if (!syms.length) return;
-    fetch('/api/fmp?path=' + encodeURIComponent('/quote?symbol=' + syms.join(',')))
+    fetch('/api/fmp?path=' + encodeURIComponent('/v3/quote/' + syms.join(',')))
       .then(r=>r.json())
       .then(data => {
         if (!Array.isArray(data)) return;
@@ -2213,12 +2213,12 @@ function WLRow({ item, catId, fundamentals, loadingFund, getHealthScore, getEPSG
       <div style={{textAlign:'right',display:'flex',alignItems:'center',justifyContent:'flex-end',gap:5}}>
         {score!=null ? (<>
           <div style={{width:32,height:4,borderRadius:2,background:'var(--surface2)',overflow:'hidden'}}>
-            <div style={{height:'100%',width:(score*10)+'%',borderRadius:2,
-              background:score>=7?'var(--green)':score>=4?'var(--gold)':'var(--red)',transition:'width 0.4s'}}/>
+            <div style={{height:'100%',width:score+'%',borderRadius:2,
+              background:score>=70?'var(--green)':score>=40?'var(--gold)':'var(--red)',transition:'width 0.4s'}}/>
           </div>
           <span className="mono" style={{fontSize:10,fontWeight:600,
-            color:score>=7?'var(--green)':score>=4?'var(--gold)':'var(--red)'}}>
-            {score?.toFixed(1)}<span style={{fontSize:7,opacity:0.6}}>/10</span>
+            color:score>=70?'var(--green)':score>=40?'var(--gold)':'var(--red)'}}>
+            {score}
           </span>
         </>) : <span className="mono" style={{fontSize:10,color:'var(--text3)'}}>{loading?<span className="shimmer">…</span>:'—'}</span>}
       </div>
@@ -2354,7 +2354,7 @@ function ChartsPage({ positions, watchlists, setWatchlists, activeWLId, setActiv
     if (!items.length) return;
     const syms = [...new Set(items.map(i => i.symbol))].filter(Boolean).join(',');
     if (!syms) return;
-    fetch('/api/fmp?path=' + encodeURIComponent('/quote?symbol=' + syms))
+    fetch('/api/fmp?path=' + encodeURIComponent('/v3/quote/' + syms))
       .then(r => r.json())
       .then(data => {
         if (!Array.isArray(data)) return;
@@ -3136,15 +3136,15 @@ function CompareView() {
                     <div style={{display:'flex',alignItems:'center',gap:8}}>
                       <span className="mono" style={{fontSize:10,color:COMPARE_COLORS[i],fontWeight:600}}>{s.ticker}</span>
                       {score!=null && <span className="mono" style={{fontSize:16,fontWeight:700,
-                        color:score>=7?'var(--green)':score>=4?'var(--gold)':'var(--red)'}}>
-                        {score?.toFixed(1)}<span style={{fontSize:9,color:'var(--text3)'}}>/10</span>
+                        color:score>=70?'var(--green)':score>=40?'var(--gold)':'var(--red)'}}>
+                        {score}<span style={{fontSize:9,color:'var(--text3)'}}>/100</span>
                       </span>}
                     </div>
                     {score!=null && (
                       <div style={{width:120,height:5,borderRadius:3,background:'var(--surface2)',overflow:'hidden'}}>
-                        <div style={{height:'100%',width:(score*10)+'%',borderRadius:3,
-                          background:score>=7?'var(--green)':score>=4?'var(--gold)':'var(--red)',
-                          boxShadow:`0 0 6px ${score>=7?'var(--green)':score>=4?'var(--gold)':'var(--red)'}60`}}/>
+                        <div style={{height:'100%',width:score+'%',borderRadius:3,
+                          background:score>=70?'var(--green)':score>=40?'var(--gold)':'var(--red)',
+                          boxShadow:`0 0 6px ${score>=70?'var(--green)':score>=40?'var(--gold)':'var(--red)'}60`}}/>
                       </div>
                     )}
                     {score==null && s.loading && <span className="mono shimmer" style={{fontSize:9,color:'var(--text3)'}}>Loading…</span>}
@@ -3166,8 +3166,8 @@ function CompareView() {
                             const isEnergy=/energy|oil|gas|util/i.test(sector);
                             const nmGood=isTech?0.15:isRetail?0.04:isEnergy?0.06:0.08;
                             const nmOk=isTech?0.06:isRetail?0.01:isEnergy?0.02:0.03;
-                            const deGood=isFinance?2:isTech?0.5:1;
-                            const deOk=isFinance?4:isTech?1.5:2;
+                            const deGood=isFinance?8:isTech?0.5:1;
+                            const deOk=isFinance?15:isTech?1.5:2;
                             const profitS=[last.netMargin!=null?(last.netMargin>=nmGood?2:last.netMargin>=nmOk?1:0):null,last.roe!=null?(last.roe>=0.15?2:last.roe>=0.08?1:0):null,last.roic!=null?(last.roic>=0.10?2:last.roic>=0.05?1:0):null,last.grossMargin!=null?(last.grossMargin>=(isTech?0.50:isRetail?0.25:0.35)?2:last.grossMargin>=(isTech?0.30:isRetail?0.15:0.20)?1:0):null].filter(s=>s!==null);
                             const profitC=profitS.length?(profitS.reduce((a,b)=>a+b)/profitS.length>=1.5?'green':profitS.reduce((a,b)=>a+b)/profitS.length>=0.8?'gold':'red'):'gray';
                             const g=(last.revenue&&prev.revenue&&prev.revenue>0)?(last.revenue/prev.revenue-1):null;
@@ -3512,8 +3512,8 @@ function StockDetail({ pos, onBack, transactions }) {
   const growthGood = isTech ? 0.10 : isFinance ? 0.05 : isRetail ? 0.03 : isEnergy ? 0.05 : 0.05;
   const growthOk   = isTech ? 0.02 : isFinance ? 0.00 : isRetail ? 0.00 : isEnergy ? 0.00 : 0.00;
   // D/E: utilities/banks carry more structural debt
-  const deGood = isFinance ? 2.0 : isEnergy || isRetail ? 1.5 : 1.0;
-  const deOk   = isFinance ? 4.0 : isEnergy || isRetail ? 3.0 : 2.0;
+  const deGood = isFinance ? 8 : isEnergy || isRetail ? 1.5 : 1.0;
+  const deOk   = isFinance ? 15 : isEnergy || isRetail ? 3.0 : 2.0;
 
   const grade    = (val, good, ok) => val==null?'gray': val>=good?'green': val>=ok?'gold':'red';
   const gradeInv = (val, good, ok) => val==null?'gray': val<=good?'green': val<=ok?'gold':'red';
@@ -3677,11 +3677,11 @@ function StockDetail({ pos, onBack, transactions }) {
   const colorScore = { green:2, gold:1, red:0, gray:null };
   const scoreDims = scorecard.map(s => colorScore[s.color]).filter(v => v !== null);
   const overallScore = scoreDims.length
-    ? Math.round(scoreDims.reduce((a,b)=>a+b,0) / scoreDims.length * 5 * 10) / 10 : null; // 0-10
+    ? Math.round(scoreDims.reduce((a,b)=>a+b,0) / scoreDims.length * 50) : null; // 0-100
   const overallColor = overallScore == null ? 'gray'
-    : overallScore >= 7 ? 'green' : overallScore >= 4 ? 'gold' : 'red';
+    : overallScore >= 70 ? 'green' : overallScore >= 40 ? 'gold' : 'red';
   const overallLabel = overallScore == null ? 'No Data'
-    : overallScore >= 7 ? 'Healthy' : overallScore >= 4 ? 'Mixed' : 'Weak';
+    : overallScore >= 70 ? 'Healthy' : overallScore >= 40 ? 'Mixed' : 'Weak';
 
   // ── Mini bar chart ──
   // Uses baseline from min value so small changes are visible between adjacent bars
@@ -3815,12 +3815,12 @@ function StockDetail({ pos, onBack, transactions }) {
               </div>
               <div style={{display:'flex',alignItems:'center',gap:10}}>
                 <div style={{flex:1,height:6,background:'var(--surface2)',borderRadius:3,overflow:'hidden'}}>
-                  <div style={{height:'100%',width:`${overallScore*10}%`,
+                  <div style={{height:'100%',width:`${overallScore}%`,
                     background:SCORE_COLOR[overallColor],borderRadius:3,
                     transition:'width 0.6s ease'}}/>
                 </div>
                 <span className="mono" style={{fontSize:13,fontWeight:700,color:SCORE_COLOR[overallColor],minWidth:46,textAlign:'right'}}>
-                  {overallScore?.toFixed(1)}<span style={{fontSize:9,opacity:0.6}}>/10</span>
+                  {overallScore}<span style={{fontSize:9,opacity:0.7,color:'var(--text3)'}}>/100</span>
                 </span>
               </div>
               {/* Dimension pills */}
@@ -4193,7 +4193,7 @@ function StockDetail({ pos, onBack, transactions }) {
 const EU_INFLATION = 2.6; // ECB target / recent avg %
 
 function PortfolioPage({ positions, transactions, onOpenStock, priceLoading, chartData, investedChartData, chartLoading, chartError, activeBM, setActiveBM, range, setRange, BENCHMARKS, perfStats }) {
-  const [collapsedGroups, setCollapsedGroups] = useState(new Set()); // all expanded by default
+  const [collapsedGroups, setCollapsedGroups] = useState(new Set(['stock','etf','crypto','derivative'])); // all collapsed by default
   const [tab, setTab] = React.useState('positions'); // positions | analysis
   const [analysisView, setAnalysisView] = React.useState('asset'); // asset|sector|region|cagr|volatility|alloc
   const [drillFilter, setDrillFilter] = React.useState(null); // {type, value} for click-through
@@ -4412,7 +4412,7 @@ function PortfolioPage({ positions, transactions, onOpenStock, priceLoading, cha
     const isFinance=/financ|bank/i.test(s);
     const isRetail=/retail|consumer/i.test(s);
     const nmGood=isTech?0.15:isRetail?0.04:0.08, nmOk=isTech?0.06:isRetail?0.01:0.03;
-    const deGood=isFinance?2:isTech?0.5:1, deOk=isFinance?4:isTech?1.5:2;
+    const deGood=isFinance?8:isTech?0.5:1, deOk=isFinance?15:isTech?1.5:2;
     const score2=(scores)=>{const f=scores.filter(s=>s!==null);return f.length?(f.reduce((a,b)=>a+b)/f.length>=1.5?'green':f.reduce((a,b)=>a+b)/f.length>=0.8?'gold':'red'):'gray';};
     const profitColor=score2([
       last.netMargin !=null?(last.netMargin >=nmGood?2:last.netMargin >=nmOk?1:0):null,
@@ -4649,6 +4649,11 @@ function PortfolioPage({ positions, transactions, onOpenStock, priceLoading, cha
                         transform:expanded?'rotate(90deg)':'rotate(0deg)',display:'inline-block'}}>▶</span>
                       <span className="mono" style={{fontSize:10,fontWeight:700,color:'var(--text2)',letterSpacing:'0.08em'}}>{label.toUpperCase()}</span>
                       <span className="mono" style={{fontSize:9,color:'var(--text3)',marginLeft:4}}>{rows.length} position{rows.length!==1?'s':''}</span>
+                      {(() => {
+                        const totalPortVal = positions.reduce((s,p)=>s+p.qty*p.currentPrice,0);
+                        const alloc = totalPortVal > 0 ? (groupVal/totalPortVal*100) : 0;
+                        return <span className="mono" style={{fontSize:9,color:'var(--green)',marginLeft:6,background:'rgba(0,229,160,0.1)',padding:'1px 6px',borderRadius:3}}>{alloc.toFixed(1)}%</span>;
+                      })()}
                     </div>
                     <div/>
                     <div/>
@@ -4751,14 +4756,14 @@ function PortfolioPage({ positions, transactions, onOpenStock, priceLoading, cha
                     )) : loading ? <span className="mono shimmer" style={{fontSize:9,color:'var(--text3)'}}>…</span>
                     : <span className="mono" style={{fontSize:9,color:'var(--text3)'}}>—</span>}
                     {score!=null && <span className="mono" style={{fontSize:10,fontWeight:700,marginLeft:4,
-                      color:score>=7?'var(--green)':score>=4?'var(--gold)':'var(--red)'}}>
-                      {score?.toFixed(1)}<span style={{fontSize:7,opacity:0.6}}>/10</span>
+                      color:score>=70?'var(--green)':score>=40?'var(--gold)':'var(--red)'}}>
+                      {score}
                     </span>}
                   </div>
                   {score!=null && (
                     <div style={{width:'100%',maxWidth:80,height:3,borderRadius:2,background:'var(--surface2)',overflow:'hidden'}}>
-                      <div style={{height:'100%',width:(score*10)+'%',borderRadius:2,
-                        background:score>=7?'var(--green)':score>=4?'var(--gold)':'var(--red)'}}/>
+                      <div style={{height:'100%',width:score+'%',borderRadius:2,
+                        background:score>=70?'var(--green)':score>=40?'var(--gold)':'var(--red)'}}/>
                     </div>
                   )}
                 </div>
@@ -4932,10 +4937,10 @@ function PortfolioPage({ positions, transactions, onOpenStock, priceLoading, cha
                               {score!=null&&(
                                 <div style={{display:'flex',alignItems:'center',gap:4,flexShrink:0}}>
                                   <div style={{width:28,height:4,borderRadius:2,background:'var(--surface2)',overflow:'hidden'}}>
-                                    <div style={{height:'100%',width:(score*10)+'%',background:score>=7?'var(--green)':score>=4?'var(--gold)':'var(--red)',borderRadius:2}}/>
+                                    <div style={{height:'100%',width:score+'%',background:score>=70?'var(--green)':score>=40?'var(--gold)':'var(--red)',borderRadius:2}}/>
                                   </div>
                                   <span className="mono" style={{fontSize:10,fontWeight:700,
-                                    color:score>=7?'var(--green)':score>=4?'var(--gold)':'var(--red)'}}>{score?.toFixed(1)}<span style={{fontSize:7,opacity:0.6}}>/10</span></span>
+                                    color:score>=70?'var(--green)':score>=40?'var(--gold)':'var(--red)'}}>{score}</span>
                                 </div>
                               )}
                             </div>
@@ -5037,7 +5042,7 @@ export default function App() {
     for (let i = 0; i < tickers.length; i += BATCH) {
       const batch = tickers.slice(i, i + BATCH);
       try {
-        const data = await fmpGet('/quote?symbol=' + batch.join(','));
+        const data = await fmpGet('/v3/quote/' + batch.join(','));
         const arr = Array.isArray(data) ? data : (data ? [data] : []);
         if (arr.length > 0) {
           // Debug: log actual field names returned by FMP to help diagnose missing chg%
@@ -5537,7 +5542,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v57 · correct FMP endpoint /quote?symbol=, changePercentage field, right-click overview</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v59 · fix chg% (v3 free endpoint), score 0-100, groups collapsed, alloc%, GS D/E threshold</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
