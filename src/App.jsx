@@ -1362,6 +1362,75 @@ function TxPriceChart({ ticker, txs, currentPrice }) {
   return <TVChart ticker={ticker} txs={txs} currentPrice={currentPrice} compact={true}/>;
 }
 
+// ── Shared ticker search: name + symbol search via /search-name ──────────────
+// Ranks results: primary US exchanges first, deduplicates by company name
+const PRIM_EXCHANGES = ['NASDAQ Global Select','New York Stock Exchange','NASDAQ Global Market','NYSE American','NYSE Arca'];
+function rankSearchResult(r) {
+  // Score 0 = best
+  if (PRIM_EXCHANGES.includes(r.exchangeFullName)) return 0;
+  if (r.exchange === 'NASDAQ' || r.exchange === 'NYSE') return 1;
+  if (!r.symbol?.includes('.')) return 2;  // plain ticker (likely US)
+  if (r.symbol?.endsWith('.DE') || r.symbol?.endsWith('.F')) return 3;
+  return 5;
+}
+function dedupeSearchResults(results) {
+  // Group by name, keep best-ranked per company, limit to 7 total
+  const seen = new Map(); // name → best result
+  results.forEach(r => {
+    const key = (r.name || r.symbol || '').toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,16);
+    const existing = seen.get(key);
+    if (!existing || rankSearchResult(r) < rankSearchResult(existing)) {
+      seen.set(key, r);
+    }
+  });
+  return [...seen.values()]
+    .sort((a, b) => rankSearchResult(a) - rankSearchResult(b))
+    .slice(0, 7);
+}
+async function fetchTickerSearch(query, limit = 12) {
+  if (!query || query.length < 1) return [];
+  // Use search-name for both name queries and ticker queries
+  // Fetch more results so deduplication still leaves enough
+  const r = await fetch('/api/fmp?path=' + encodeURIComponent('/search-name?query=' + query + '&limit=' + limit));
+  if (!r.ok) return [];
+  const data = await r.json();
+  if (!Array.isArray(data)) return [];
+  return dedupeSearchResults(data);
+}
+
+function TickerDropdown({ results, searching, onSelect }) {
+  if (!searching && !results.length) return null;
+  return (
+    <div style={{
+      position:'absolute', top:'110%', left:0, zIndex:9999,
+      background:'var(--surface)', border:'1px solid var(--border2)',
+      borderRadius:8, minWidth:280, maxWidth:360,
+      boxShadow:'0 16px 48px rgba(0,0,0,0.7)', overflow:'hidden',
+    }}>
+      {searching && <div className="mono" style={{padding:'10px 14px',fontSize:11,color:'var(--text3)'}}>Searching…</div>}
+      {results.map(r => (
+        <div key={r.symbol} onMouseDown={e => { e.preventDefault(); onSelect(r); }}
+          style={{display:'flex',alignItems:'center',justifyContent:'space-between',
+            padding:'10px 14px', cursor:'pointer', borderBottom:'1px solid var(--border)',
+            transition:'background 0.1s'}}
+          onMouseEnter={e=>e.currentTarget.style.background='var(--surface2)'}
+          onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+          <div style={{minWidth:0}}>
+            <div style={{display:'flex',alignItems:'center',gap:6}}>
+              <span className="mono" style={{fontSize:12,fontWeight:700,color:'var(--text)',flexShrink:0}}>{r.symbol}</span>
+              {rankSearchResult(r) === 0 && <span style={{fontSize:8,padding:'1px 5px',borderRadius:3,background:'var(--green-dim)',color:'var(--green)',fontFamily:'IBM Plex Mono'}}>PRIMARY</span>}
+            </div>
+            <div style={{fontSize:11,color:'var(--text3)',marginTop:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:200}}>{r.name}</div>
+          </div>
+          <div className="mono" style={{fontSize:9,color:'var(--text3)',flexShrink:0,marginLeft:8,textAlign:'right'}}>
+            {r.exchangeShortName || r.exchange || ''}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ── ChartsPage — 3e Full-screen chart with watchlist ──────────────────────────
 // MA helpers (client-side, from OHLCV data already fetched)
 function calcSMA(data, period) {
@@ -1615,37 +1684,27 @@ function ChartsPage({ positions }) {
     return () => { if (chartRef.current) { try { chartRef.current.remove(); } catch (e) { } chartRef.current = null; } };
   }, [allData, range, mode, activeMAs, drawTool]);
 
-  // ── Ticker search ──
-  const doSearch = React.useCallback(async (q) => {
-    if (q.length < 1) { setSearchRes([]); return; }
-    setSearching(true);
-    try {
-      const r = await fetch('/api/fmp?path=' + encodeURIComponent('/search?query=' + q + '&limit=8'));
-      const data = await r.json();
-      setSearchRes(Array.isArray(data) ? data.slice(0, 8) : []);
-    } catch (e) { setSearchRes([]); }
-    finally { setSearching(false); }
-  }, []);
-
+  // ── Ticker search (uses shared fetchTickerSearch) ──
   React.useEffect(() => {
-    const t = setTimeout(() => doSearch(searchQ), 300);
+    if (!searchQ) { setSearchRes([]); return; }
+    setSearching(true);
+    const t = setTimeout(() => {
+      fetchTickerSearch(searchQ, 14)
+        .then(r => setSearchRes(r))
+        .catch(() => setSearchRes([]))
+        .finally(() => setSearching(false));
+    }, 220);
     return () => clearTimeout(t);
-  }, [searchQ, doSearch]);
+  }, [searchQ]);
 
   // ── Add ticker search (watchlist) ──
-  const doAddTickerSearch = React.useCallback(async (q) => {
-    if (q.length < 1) { setAddTickerRes([]); return; }
-    try {
-      const r = await fetch('/api/fmp?path=' + encodeURIComponent('/search?query=' + q + '&limit=6'));
-      const data = await r.json();
-      setAddTickerRes(Array.isArray(data) ? data.slice(0, 6) : []);
-    } catch (e) { setAddTickerRes([]); }
-  }, []);
-
   React.useEffect(() => {
-    const t = setTimeout(() => doAddTickerSearch(addTickerQ), 300);
+    if (!addTickerQ) { setAddTickerRes([]); return; }
+    const t = setTimeout(() => {
+      fetchTickerSearch(addTickerQ, 10).then(r => setAddTickerRes(r)).catch(() => setAddTickerRes([]));
+    }, 220);
     return () => clearTimeout(t);
-  }, [addTickerQ, doAddTickerSearch]);
+  }, [addTickerQ]);
 
   const clearDrawings = () => {
     if (!chartRef.current) return;
@@ -1668,33 +1727,18 @@ function ChartsPage({ positions }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', borderBottom: '1px solid var(--border)', flexWrap: 'wrap', flexShrink: 0 }}>
 
           {/* Ticker search */}
-          <div style={{ position: 'relative', minWidth: 180 }} ref={searchRef}>
+          <div style={{ position: 'relative', minWidth: 200 }} ref={searchRef}>
             <input
               className="inp mono"
-              placeholder="Search ticker…"
+              placeholder="Search ticker or company…"
               value={searchQ}
-              onChange={e => { setSearchQ(e.target.value); }}
-              onFocus={() => { if (ticker) setSearchQ(ticker); }}
-              onBlur={() => setTimeout(() => { setSearchRes([]); setSearchQ(''); }, 180)}
-              style={{ fontSize: 12, padding: '5px 10px', width: 180 }}
+              onChange={e => setSearchQ(e.target.value)}
+              onFocus={() => { if (ticker && !searchQ) setSearchQ(ticker); }}
+              onBlur={() => setTimeout(() => { setSearchRes([]); setSearchQ(''); setSearching(false); }, 200)}
+              style={{ fontSize: 12, padding: '5px 10px', width: 200 }}
             />
-            {(searchRes.length > 0 || searching) && (
-              <div style={{ position: 'absolute', top: '110%', left: 0, zIndex: 50, background: 'var(--surface)', border: '1px solid var(--border2)', borderRadius: 8, minWidth: 260, boxShadow: '0 12px 40px rgba(0,0,0,0.6)', overflow: 'hidden' }}>
-                {searching && <div className="mono" style={{ padding: '10px 12px', fontSize: 11, color: 'var(--text3)' }}>Searching…</div>}
-                {searchRes.map(r => (
-                  <div key={r.symbol} onMouseDown={() => { setTicker(r.symbol); setSearchQ(''); setSearchRes([]); }}
-                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '9px 14px', cursor: 'pointer', borderBottom: '1px solid var(--border)', transition: 'background 0.12s' }}
-                    onMouseEnter={e => e.currentTarget.style.background = 'var(--surface2)'}
-                    onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-                    <div>
-                      <div className="mono" style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)' }}>{r.symbol}</div>
-                      <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 1 }}>{r.name?.slice(0, 28)}</div>
-                    </div>
-                    <div className="mono" style={{ fontSize: 10, color: 'var(--text3)' }}>{r.exchangeShortName}</div>
-                  </div>
-                ))}
-              </div>
-            )}
+            <TickerDropdown results={searchRes} searching={searching}
+              onSelect={r => { setTicker(r.symbol); setSearchQ(''); setSearchRes([]); }} />
           </div>
 
           {/* Current ticker badge */}
@@ -1888,28 +1932,18 @@ function ChartsPage({ positions }) {
               </button>
             ) : (
               <div style={{ position: 'relative' }}>
-                <input className="inp mono" autoFocus placeholder="Search symbol…" value={addTickerQ} onChange={e => setAddTickerQ(e.target.value)}
+                <input className="inp mono" autoFocus placeholder="Search name or ticker…" value={addTickerQ} onChange={e => setAddTickerQ(e.target.value)}
                   onBlur={() => setTimeout(() => { setAddTickerRes([]); setAddTickerQ(''); setAddingTicker(false); }, 200)}
                   style={{ fontSize: 11, padding: '6px 10px', width: '100%' }} />
-                {addTickerRes.length > 0 && (
-                  <div style={{ position: 'absolute', bottom: '110%', left: 0, right: 0, background: 'var(--surface)', border: '1px solid var(--border2)', borderRadius: 8, boxShadow: '0 -12px 40px rgba(0,0,0,0.6)', overflow: 'hidden', zIndex: 60 }}>
-                    {addTickerRes.map(r => (
-                      <div key={r.symbol} onMouseDown={() => {
-                        setWatchlists(prev => prev.map(wl => wl.id === activeWL ? { ...wl, tickers: [...wl.tickers.filter(t => t.symbol !== r.symbol), { symbol: r.symbol, name: r.name }] } : wl));
-                        setAddTickerQ(''); setAddTickerRes([]); setAddingTicker(false);
-                      }}
-                        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', cursor: 'pointer', borderBottom: '1px solid var(--border)' }}
-                        onMouseEnter={e => e.currentTarget.style.background = 'var(--surface2)'}
-                        onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-                        <div>
-                          <div className="mono" style={{ fontSize: 11, fontWeight: 600 }}>{r.symbol}</div>
-                          <div style={{ fontSize: 10, color: 'var(--text3)' }}>{r.name?.slice(0, 22)}</div>
-                        </div>
-                        <div className="mono" style={{ fontSize: 9, color: 'var(--text3)' }}>{r.exchangeShortName}</div>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                <div style={{position:'absolute',bottom:'110%',left:0,right:0}}>
+                  <TickerDropdown results={addTickerRes} searching={false}
+                    onSelect={r => {
+                      setWatchlists(prev => prev.map(wl => wl.id === activeWL
+                        ? { ...wl, tickers: [...wl.tickers.filter(t => t.symbol !== r.symbol), { symbol: r.symbol, name: r.name }] }
+                        : wl));
+                      setAddTickerQ(''); setAddTickerRes([]); setAddingTicker(false);
+                    }} />
+                </div>
               </div>
             )}
           </div>
@@ -2015,12 +2049,28 @@ function CompareView() {
   const [tickers, setTickers] = useState([]);
   const [input, setInput]     = useState('');
   const [stocks, setStocks]   = useState([]); // [{ticker, data, loading, error}]
+  const [cmpSearchRes, setCmpSearchRes] = useState([]);
+  const [cmpSearching, setCmpSearching] = useState(false);
+
+  // Live autocomplete for compare input
+  React.useEffect(() => {
+    if (!input || input.length < 1) { setCmpSearchRes([]); return; }
+    setCmpSearching(true);
+    const t = setTimeout(() => {
+      fetchTickerSearch(input, 12)
+        .then(r => setCmpSearchRes(r))
+        .catch(() => setCmpSearchRes([]))
+        .finally(() => setCmpSearching(false));
+    }, 220);
+    return () => clearTimeout(t);
+  }, [input]);
 
   const addTicker = async (raw) => {
-    const tk = raw.trim().toUpperCase();
+    const tk = (typeof raw === 'string' ? raw : raw?.symbol || '').trim().toUpperCase();
     if (!tk || tickers.includes(tk) || tickers.length >= 4) return;
     setTickers(prev => [...prev, tk]);
     setInput('');
+    setCmpSearchRes([]);
     setStocks(prev => [...prev, { ticker: tk, data: null, loading: true, error: null }]);
     try {
       const res = await fetch('/api/fundamentals?symbol=' + tk.split('.')[0]);
@@ -2128,15 +2178,23 @@ function CompareView() {
 
           {/* Input */}
           {tickers.length < 4 && (
-            <div style={{display:'flex',alignItems:'center',gap:6}}>
-              <input
-                className="inp"
-                placeholder="Add ticker… AAPL, MSFT"
-                value={input}
-                onChange={e => setInput(e.target.value.toUpperCase())}
-                onKeyDown={e => { if (e.key === 'Enter') addTicker(input); }}
-                style={{width:180,padding:'6px 10px',fontSize:12}}
-              />
+            <div style={{display:'flex',alignItems:'center',gap:6,position:'relative'}}>
+              <div style={{position:'relative'}}>
+                <input
+                  className="inp"
+                  placeholder="Search ticker or company name…"
+                  value={input}
+                  onChange={e => setInput(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') { addTicker(input); }
+                    if (e.key === 'Escape') { setCmpSearchRes([]); }
+                  }}
+                  onBlur={() => setTimeout(() => setCmpSearchRes([]), 200)}
+                  style={{width:240,padding:'6px 10px',fontSize:12}}
+                />
+                <TickerDropdown results={cmpSearchRes} searching={cmpSearching}
+                  onSelect={r => addTicker(r)} />
+              </div>
               <button className="btn btn-primary" onClick={() => addTicker(input)}
                 style={{padding:'6px 12px',fontSize:10}}>+ ADD</button>
             </div>
@@ -3648,7 +3706,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v51 · Phase 3e Charts page — full-screen TV chart, MAs, drawing tools, watchlists</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v52 · Fix ticker search: /search-name + smart dedup, autocomplete in Charts + Compare</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
