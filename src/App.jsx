@@ -166,13 +166,14 @@ const ALLOC_COLORS  = ["#00e5a0","#627eea","#f7931a","#9945ff","#f0b429","#76b90
 const BROKERS_OPT   = ["Bitvavo","Smartbroker+","Trade Republic","Manual"];
 const ASSET_TYPES   = ["stock","etf","crypto"];
 const NAV_ITEMS     = [
-  {id:"dashboard",label:"Dashboard",icon:"⬡"},
-  {id:"portfolio",label:"Portfolio", icon:"◈"},
-  {id:"charts",   label:"Charts",    icon:"📈"},
-  {id:"screener", label:"Screener",  icon:"⊞"},
-  {id:"compare",  label:"Compare",   icon:"⇌"},
-  {id:"news",     label:"News Feed", icon:"◎"},
-  {id:"settings", label:"Settings",  icon:"⚙"},
+  {id:"dashboard", label:"Dashboard", icon:"⬡"},
+  {id:"portfolio", label:"Portfolio",  icon:"◈"},
+  {id:"charts",    label:"Charts",     icon:"📈"},
+  {id:"watchlist", label:"Watchlist",  icon:"★"},
+  {id:"screener",  label:"Screener",   icon:"⊞"},
+  {id:"compare",   label:"Compare",    icon:"⇌"},
+  {id:"news",      label:"News Feed",  icon:"◎"},
+  {id:"settings",  label:"Settings",   icon:"⚙"},
 ];
 
 // ── Chart helpers ──
@@ -1431,6 +1432,547 @@ function TickerDropdown({ results, searching, onSelect }) {
   );
 }
 
+
+// ── Watchlist utilities ──────────────────────────────────────────────────────
+const FLAG_COLORS = {
+  red:    { bg:'rgba(255,77,109,0.15)',  border:'rgba(255,77,109,0.4)',  dot:'#ff4d6d' },
+  green:  { bg:'rgba(0,229,160,0.12)',  border:'rgba(0,229,160,0.35)',  dot:'#00e5a0' },
+  gold:   { bg:'rgba(240,180,41,0.12)', border:'rgba(240,180,41,0.35)', dot:'#f0b429' },
+  blue:   { bg:'rgba(77,159,255,0.12)', border:'rgba(77,159,255,0.35)', dot:'#4d9fff' },
+  violet: { bg:'rgba(167,139,250,0.12)',border:'rgba(167,139,250,0.35)',dot:'#a78bfa' },
+};
+
+// Context menu for right-click on watchlist items
+function WLContextMenu({ x, y, item, onFlag, onOpenStock, onRemove, onClose }) {
+  React.useEffect(() => {
+    const handler = () => onClose();
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [onClose]);
+  return (
+    <div onMouseDown={e => e.stopPropagation()}
+      style={{ position:'fixed', left:x, top:y, zIndex:9999,
+        background:'var(--surface)', border:'1px solid var(--border2)',
+        borderRadius:8, minWidth:180, boxShadow:'0 12px 40px rgba(0,0,0,0.7)',
+        overflow:'hidden', animation:'fadeUp 0.12s ease' }}>
+      {/* Flag row */}
+      <div style={{ padding:'8px 12px', borderBottom:'1px solid var(--border)' }}>
+        <div className="mono" style={{ fontSize:9, color:'var(--text3)', letterSpacing:'0.1em', marginBottom:6 }}>FLAG</div>
+        <div style={{ display:'flex', gap:6 }}>
+          {Object.entries(FLAG_COLORS).map(([key, col]) => (
+            <div key={key} onClick={() => { onFlag(item.symbol, item.flag === key ? null : key); onClose(); }}
+              style={{ width:18, height:18, borderRadius:'50%', background:col.dot, cursor:'pointer',
+                outline: item.flag===key ? '2px solid white' : 'none', outlineOffset:1,
+                transition:'transform 0.1s' }}
+              title={key}
+              onMouseEnter={e=>e.currentTarget.style.transform='scale(1.2)'}
+              onMouseLeave={e=>e.currentTarget.style.transform='scale(1)'}/>
+          ))}
+          {item.flag && (
+            <div onClick={() => { onFlag(item.symbol, null); onClose(); }}
+              style={{ width:18, height:18, borderRadius:'50%', background:'var(--surface2)',
+                border:'1px solid var(--border)', cursor:'pointer', display:'flex',
+                alignItems:'center', justifyContent:'center', fontSize:9, color:'var(--text3)' }}
+              title="Clear flag">✕</div>
+          )}
+        </div>
+      </div>
+      {/* Actions */}
+      {[
+        { label:'📊  Open Overview', action: onOpenStock },
+        { label:'🗑  Remove from list', action: onRemove, danger: true },
+      ].map(({ label, action, danger }) => (
+        <div key={label} onClick={() => { action(); onClose(); }}
+          style={{ padding:'10px 14px', cursor:'pointer', fontSize:12,
+            color: danger ? 'var(--red)' : 'var(--text)',
+            borderBottom:'1px solid var(--border)', transition:'background 0.1s' }}
+          onMouseEnter={e=>e.currentTarget.style.background='var(--surface2)'}
+          onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+          {label}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── WatchlistPage ────────────────────────────────────────────────────────────
+function WatchlistPage({ watchlists, setWatchlists, activeWLId, setActiveWLId, onOpenStock, onOpenChart, positions }) {
+  const [ctxMenu, setCtxMenu]         = React.useState(null); // {x,y,item,catId}
+  const [addingWL, setAddingWL]       = React.useState(false);
+  const [newWLName, setNewWLName]     = React.useState('');
+  const [addingCat, setAddingCat]     = React.useState(false);
+  const [newCatName, setNewCatName]   = React.useState('');
+  const [addTickerQ, setAddTickerQ]   = React.useState('');
+  const [addTickerRes, setAddTickerRes] = React.useState([]);
+  const [addingTocat, setAddingTocat] = React.useState(null); // catId
+  const [fundamentals, setFundamentals] = React.useState({}); // symbol → data
+  const [loadingFund, setLoadingFund] = React.useState({});
+  const [dragState, setDragState]     = React.useState(null); // {symbol,catId,fromCatId}
+  const [dragOverCat, setDragOverCat] = React.useState(null);
+  const [dragOverSym, setDragOverSym] = React.useState(null);
+
+  const wl = watchlists.find(w => w.id === activeWLId);
+  const allItems = wl ? wl.categories.flatMap(cat => cat.items) : [];
+
+  // Fetch fundamentals for all visible items (batched, cached)
+  React.useEffect(() => {
+    if (!wl) return;
+    const syms = allItems.map(i => i.symbol).filter(s => s && !isISIN(s) && !loadingFund[s] && !fundamentals[s]);
+    if (!syms.length) return;
+    const BATCH = 3;
+    (async () => {
+      for (let i = 0; i < syms.length; i += BATCH) {
+        const batch = syms.slice(i, i + BATCH);
+        batch.forEach(s => setLoadingFund(p => ({...p, [s]: true})));
+        await Promise.all(batch.map(async sym => {
+          try {
+            const r = await fetch('/api/fundamentals?symbol=' + sym.split('.')[0]);
+            const d = await r.json();
+            if (!d.error) setFundamentals(p => ({...p, [sym]: d}));
+          } catch(e) {}
+          finally { setLoadingFund(p => ({...p, [sym]: false})); }
+        }));
+        if (i + BATCH < syms.length) await new Promise(r => setTimeout(r, 400));
+      }
+    })();
+  }, [activeWLId, allItems.map(i=>i.symbol).join(',')]);
+
+  // Watchlist mutations
+  const mutateWL = fn => setWatchlists(prev => prev.map(w => w.id === activeWLId ? fn(w) : w));
+
+  const flagItem = (symbol, flag) => mutateWL(w => ({
+    ...w, categories: w.categories.map(cat => ({
+      ...cat, items: cat.items.map(it => it.symbol === symbol ? {...it, flag} : it)
+    }))
+  }));
+
+  const removeItem = (symbol) => mutateWL(w => ({
+    ...w, categories: w.categories.map(cat => ({
+      ...cat, items: cat.items.filter(it => it.symbol !== symbol)
+    }))
+  }));
+
+  const addCategory = (name) => mutateWL(w => ({
+    ...w, categories: [...w.categories, { id: 'cat_' + Date.now(), name, items: [] }]
+  }));
+
+  const renameCategory = (catId, name) => mutateWL(w => ({
+    ...w, categories: w.categories.map(cat => cat.id === catId ? {...cat, name} : cat)
+  }));
+
+  const deleteCategory = (catId) => mutateWL(w => {
+    const cats = w.categories.filter(c => c.id !== catId);
+    const orphans = w.categories.find(c => c.id === catId)?.items || [];
+    if (!cats.length) return w;
+    return { ...w, categories: cats.map((c, i) => i === 0 ? {...c, items: [...c.items, ...orphans]} : c) };
+  });
+
+  const addItemToCat = (catId, item) => mutateWL(w => {
+    const already = w.categories.some(cat => cat.items.some(it => it.symbol === item.symbol));
+    if (already) return w;
+    return { ...w, categories: w.categories.map(cat =>
+      cat.id === catId ? {...cat, items: [...cat.items, {...item, flag: null, order: cat.items.length}]} : cat
+    )};
+  });
+
+  // Drag & drop
+  const handleDragStart = (e, symbol, fromCatId) => {
+    setDragState({ symbol, fromCatId });
+    e.dataTransfer.effectAllowed = 'move';
+  };
+  const handleDragOver = (e, catId, overSym) => {
+    e.preventDefault(); e.dataTransfer.dropEffect = 'move';
+    setDragOverCat(catId); setDragOverSym(overSym || null);
+  };
+  const handleDrop = (e, toCatId, beforeSym) => {
+    e.preventDefault();
+    if (!dragState) return;
+    const { symbol, fromCatId } = dragState;
+    setDragState(null); setDragOverCat(null); setDragOverSym(null);
+    mutateWL(w => {
+      let draggedItem = null;
+      const cats = w.categories.map(cat => {
+        if (cat.id === fromCatId) {
+          draggedItem = cat.items.find(it => it.symbol === symbol);
+          return {...cat, items: cat.items.filter(it => it.symbol !== symbol)};
+        }
+        return cat;
+      });
+      if (!draggedItem) return w;
+      return { ...w, categories: cats.map(cat => {
+        if (cat.id !== toCatId) return cat;
+        const items = [...cat.items];
+        if (beforeSym) {
+          const idx = items.findIndex(it => it.symbol === beforeSym);
+          items.splice(idx >= 0 ? idx : items.length, 0, draggedItem);
+        } else {
+          items.push(draggedItem);
+        }
+        return {...cat, items};
+      })};
+    });
+  };
+  const handleDragEnd = () => { setDragState(null); setDragOverCat(null); setDragOverSym(null); };
+
+  // Compute health score from fundamentals
+  const getHealthScore = (sym) => {
+    const d = fundamentals[sym];
+    if (!d) return null;
+    const yrs = d.byYear?.slice(-3) || [];
+    const last = yrs[yrs.length-1] || {};
+    const sector = (d.sector || '').toLowerCase();
+    const isTech = /tech|software|semi/i.test(sector);
+    const isFinance = /financ|bank/i.test(sector);
+    const scores = [];
+    if (last.netMargin != null) scores.push(last.netMargin > (isTech?0.15:0.08) ? 2 : last.netMargin > 0 ? 1 : 0);
+    if (last.roe != null) scores.push(last.roe > 0.15 ? 2 : last.roe > 0.05 ? 1 : 0);
+    if (last.debtEquity != null) scores.push(last.debtEquity < (isFinance?2:1) ? 2 : last.debtEquity < (isFinance?4:2) ? 1 : 0);
+    if (last.freeCashFlow != null) scores.push(last.freeCashFlow > 0 ? 2 : 0);
+    const pe = d.peRatio;
+    if (pe != null && pe > 0) scores.push(pe < (isTech?30:20) ? 2 : pe < (isTech?50:35) ? 1 : 0);
+    if (!scores.length) return null;
+    return Math.round(scores.reduce((a,b)=>a+b,0)/scores.length*50);
+  };
+
+  const getEPSGrowth = (sym) => {
+    const d = fundamentals[sym];
+    if (!d) return null;
+    const yrs = d.byYear?.slice(-3) || [];
+    const last = yrs[yrs.length-1];
+    const prev = yrs[yrs.length-2];
+    if (!last?.eps || !prev?.eps || prev.eps === 0) return null;
+    return (last.eps / prev.eps - 1) * 100;
+  };
+
+  // Add ticker search
+  React.useEffect(() => {
+    if (!addTickerQ) { setAddTickerRes([]); return; }
+    const t = setTimeout(() => {
+      fetchTickerSearch(addTickerQ, 10).then(r => setAddTickerRes(r)).catch(() => setAddTickerRes([]));
+    }, 220);
+    return () => clearTimeout(t);
+  }, [addTickerQ]);
+
+  const fmtMktCap = v => {
+    if (v == null) return '—';
+    if (v >= 1e12) return (v/1e12).toFixed(1) + 'T';
+    if (v >= 1e9)  return (v/1e9).toFixed(1)  + 'B';
+    if (v >= 1e6)  return (v/1e6).toFixed(0)  + 'M';
+    return v.toFixed(0);
+  };
+
+  const getItemPrice = sym => {
+    const pos = positions.find(p => (p.fmpTicker || p.symbol) === sym);
+    return pos ? { price: pos.currentPrice, change: pos.currentPrice && pos.avgPrice ? ((pos.currentPrice/pos.avgPrice)-1)*100 : null } : null;
+  };
+
+  if (!wl) return null;
+
+  return (
+    <div style={{ display:'flex', height:'100%', overflow:'hidden', background:'var(--bg)' }}>
+
+      {/* ── Left: WL selector ── */}
+      <div style={{ width:200, flexShrink:0, borderRight:'1px solid var(--border)', background:'var(--surface)',
+        display:'flex', flexDirection:'column', padding:'14px 10px', gap:4 }}>
+        <div className="mono" style={{ fontSize:9, color:'var(--text3)', letterSpacing:'0.12em', marginBottom:6, paddingLeft:4 }}>WATCHLISTS</div>
+        {watchlists.map(w => (
+          <button key={w.id} onClick={() => setActiveWLId(w.id)}
+            className="mono" style={{ textAlign:'left', padding:'7px 10px', borderRadius:6, cursor:'pointer',
+              border:'1px solid', fontSize:11, letterSpacing:'0.04em', transition:'all 0.12s',
+              borderColor: activeWLId===w.id ? 'rgba(0,229,160,0.35)' : 'var(--border)',
+              background:  activeWLId===w.id ? 'var(--green-dim)' : 'transparent',
+              color:       activeWLId===w.id ? 'var(--green)' : 'var(--text2)' }}>
+            {w.name}
+            <span style={{ float:'right', opacity:0.5, fontSize:10 }}>{w.categories.flatMap(c=>c.items).length}</span>
+          </button>
+        ))}
+        {/* New watchlist */}
+        {addingWL ? (
+          <input className="inp mono" autoFocus placeholder="List name…" value={newWLName}
+            onChange={e=>setNewWLName(e.target.value)}
+            onKeyDown={e=>{
+              if(e.key==='Enter'&&newWLName.trim()){
+                const id='wl_'+Date.now();
+                setWatchlists(p=>[...p,{id,name:newWLName.trim(),categories:[{id:'cat_default',name:'Uncategorized',items:[]}]}]);
+                setActiveWLId(id); setNewWLName(''); setAddingWL(false);
+              }
+              if(e.key==='Escape'){setAddingWL(false);setNewWLName('');}
+            }}
+            style={{fontSize:11,padding:'6px 8px',marginTop:4}}/>
+        ) : (
+          <button onClick={()=>setAddingWL(true)} className="mono"
+            style={{textAlign:'left',padding:'6px 10px',borderRadius:6,cursor:'pointer',
+              border:'1px dashed var(--border)',background:'transparent',color:'var(--text3)',fontSize:10,marginTop:4}}>
+            + New watchlist
+          </button>
+        )}
+        <div style={{flex:1}}/>
+        {activeWLId!=='portfolio' && (
+          <button onClick={()=>{
+            if(!window.confirm('Delete "'+wl.name+'"?')) return;
+            setWatchlists(p=>p.filter(w=>w.id!==activeWLId));
+            setActiveWLId('portfolio');
+          }} className="mono"
+            style={{padding:'5px 10px',borderRadius:5,border:'1px solid var(--red-dim)',background:'transparent',
+              color:'var(--red)',cursor:'pointer',fontSize:9,letterSpacing:'0.06em',opacity:0.6}}>
+            Delete list
+          </button>
+        )}
+      </div>
+
+      {/* ── Right: Table + categories ── */}
+      <div style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden', minWidth:0 }}>
+
+        {/* Header bar */}
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between',
+          padding:'12px 20px', borderBottom:'1px solid var(--border)', flexShrink:0 }}>
+          <div>
+            <div className="serif" style={{ fontSize:20, letterSpacing:'-0.02em' }}>{wl.name}</div>
+            <div className="mono" style={{ fontSize:10, color:'var(--text3)', marginTop:2 }}>
+              {allItems.length} item{allItems.length!==1?'s':''} · {wl.categories.length} categor{wl.categories.length!==1?'ies':'y'}
+            </div>
+          </div>
+          <div style={{ display:'flex', gap:8 }}>
+            {/* Add category */}
+            {addingCat ? (
+              <input className="inp mono" autoFocus placeholder="Category name…" value={newCatName}
+                onChange={e=>setNewCatName(e.target.value)}
+                onKeyDown={e=>{
+                  if(e.key==='Enter'&&newCatName.trim()){addCategory(newCatName.trim());setNewCatName('');setAddingCat(false);}
+                  if(e.key==='Escape'){setAddingCat(false);setNewCatName('');}
+                }}
+                style={{fontSize:11,padding:'6px 10px',width:160}}
+                onBlur={()=>setTimeout(()=>{setAddingCat(false);setNewCatName('');},150)}/>
+            ) : (
+              <button onClick={()=>setAddingCat(true)} className="btn btn-ghost"
+                style={{fontSize:10,padding:'6px 12px'}}>+ Category</button>
+            )}
+          </div>
+        </div>
+
+        {/* Column headers */}
+        <div style={{ display:'grid', gridTemplateColumns:'2fr 1fr 1fr 1fr 1fr 1fr 0.9fr',
+          padding:'7px 20px', borderBottom:'1px solid var(--border)',
+          background:'var(--surface)', flexShrink:0 }}>
+          {['ASSET','PRICE','CHG %','MKT CAP','EPS GROWTH','SECTOR','HEALTH'].map(h=>(
+            <div key={h} className="mono" style={{ fontSize:9, color:'var(--text3)', letterSpacing:'0.1em',
+              textAlign: h==='ASSET'?'left':'right' }}>{h}</div>
+          ))}
+        </div>
+
+        {/* Categories + rows */}
+        <div style={{ flex:1, overflow:'auto' }}>
+          {wl.categories.map((cat, catIdx) => (
+            <div key={cat.id}
+              onDragOver={e=>handleDragOver(e,cat.id,null)}
+              onDrop={e=>handleDrop(e,cat.id,null)}>
+
+              {/* Category header */}
+              <div style={{ display:'flex', alignItems:'center', gap:8,
+                padding:'8px 20px 6px', background:'var(--surface2)',
+                borderTop: catIdx>0?'1px solid var(--border)':'none',
+                borderBottom:'1px solid var(--border)' }}>
+                <CategoryLabel cat={cat} onRename={name=>renameCategory(cat.id,name)}/>
+                <div style={{flex:1}}/>
+                <span className="mono" style={{fontSize:9,color:'var(--text3)'}}>{cat.items.length}</span>
+                {wl.categories.length>1 && (
+                  <button onClick={()=>deleteCategory(cat.id)}
+                    style={{background:'none',border:'none',cursor:'pointer',color:'var(--text3)',fontSize:11,opacity:0.5}}>✕</button>
+                )}
+                {/* Add ticker to this category */}
+                {addingTocat===cat.id ? (
+                  <div style={{position:'relative'}}>
+                    <input className="inp mono" autoFocus placeholder="Search…" value={addTickerQ}
+                      onChange={e=>setAddTickerQ(e.target.value)}
+                      onBlur={()=>setTimeout(()=>{setAddTickerRes([]);setAddTickerQ('');setAddingTocat(null);},200)}
+                      style={{fontSize:10,padding:'3px 8px',width:140}}/>
+                    <div style={{position:'absolute',top:'110%',right:0,zIndex:50}}>
+                      <TickerDropdown results={addTickerRes} searching={false}
+                        onSelect={r=>{addItemToCat(cat.id,{symbol:r.symbol,name:r.name});setAddTickerQ('');setAddTickerRes([]);setAddingTocat(null);}}/>
+                    </div>
+                  </div>
+                ) : (
+                  <button onClick={()=>setAddingTocat(cat.id)} className="mono"
+                    style={{fontSize:9,padding:'2px 7px',borderRadius:4,border:'1px solid var(--border)',
+                      background:'transparent',color:'var(--text3)',cursor:'pointer',letterSpacing:'0.05em'}}>
+                    + Add
+                  </button>
+                )}
+              </div>
+
+              {/* Rows */}
+              {cat.items.length === 0 && (
+                <div className="mono" style={{padding:'16px 20px',fontSize:10,color:'var(--text3)',fontStyle:'italic',
+                  background: dragOverCat===cat.id ? 'rgba(0,229,160,0.04)' : 'transparent',
+                  borderBottom:'1px solid var(--border)'}}>
+                  Drop items here…
+                </div>
+              )}
+              {cat.items.map((item) => {
+                const fund = fundamentals[item.symbol];
+                const loading = loadingFund[item.symbol];
+                const priceData = getItemPrice(item.symbol);
+                const score = getHealthScore(item.symbol);
+                const epsGrowth = getEPSGrowth(item.symbol);
+                const flagCol = item.flag ? FLAG_COLORS[item.flag] : null;
+                const isDragging = dragState?.symbol === item.symbol;
+                const isDropTarget = dragOverCat===cat.id && dragOverSym===item.symbol;
+                return (
+                  <div key={item.symbol}
+                    draggable
+                    onDragStart={e=>handleDragStart(e,item.symbol,cat.id)}
+                    onDragOver={e=>handleDragOver(e,cat.id,item.symbol)}
+                    onDrop={e=>handleDrop(e,cat.id,item.symbol)}
+                    onDragEnd={handleDragEnd}
+                    onContextMenu={e=>{
+                      e.preventDefault();
+                      setCtxMenu({x:e.clientX,y:e.clientY,item,catId:cat.id});
+                    }}
+                    onClick={()=>onOpenChart(item.symbol)}
+                    style={{ display:'grid', gridTemplateColumns:'2fr 1fr 1fr 1fr 1fr 1fr 0.9fr',
+                      padding:'10px 20px', borderBottom:'1px solid var(--border)',
+                      cursor:'grab', transition:'background 0.1s, opacity 0.15s',
+                      opacity: isDragging ? 0.35 : 1,
+                      background: isDropTarget ? 'rgba(0,229,160,0.06)'
+                        : flagCol ? flagCol.bg : 'transparent',
+                      borderLeft: flagCol ? '3px solid '+flagCol.dot : '3px solid transparent' }}
+                    onMouseEnter={e=>{if(!isDragging)e.currentTarget.style.background=flagCol?flagCol.bg:'var(--surface2)';}}
+                    onMouseLeave={e=>{e.currentTarget.style.background=flagCol?flagCol.bg:'transparent';}}>
+
+                    {/* Asset */}
+                    <div style={{display:'flex',alignItems:'center',gap:8,minWidth:0}}>
+                      <span style={{fontSize:10,color:'var(--text3)',cursor:'grab',opacity:0.4}}>⠿</span>
+                      {flagCol && <span style={{width:6,height:6,borderRadius:'50%',background:flagCol.dot,flexShrink:0,display:'inline-block'}}/>}
+                      <div style={{minWidth:0}}>
+                        <div className="mono" style={{fontSize:12,fontWeight:600,color:'var(--text)'}}>{item.symbol}</div>
+                        <div style={{fontSize:10,color:'var(--text3)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:120}}>
+                          {item.name || fund?.companyName || '—'}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Price */}
+                    <div style={{textAlign:'right'}}>
+                      {loading ? <span className="mono shimmer" style={{fontSize:11,color:'var(--text3)'}}>…</span>
+                        : priceData?.price != null
+                        ? <span className="mono" style={{fontSize:12,fontWeight:500}}>{priceData.price.toFixed(2)}</span>
+                        : <span className="mono" style={{fontSize:12,color:'var(--text3)'}}>—</span>}
+                    </div>
+
+                    {/* Change % */}
+                    <div style={{textAlign:'right'}}>
+                      {priceData?.change != null ? (
+                        <span className="mono" style={{fontSize:11,fontWeight:600,
+                          color:priceData.change>=0?'var(--green)':'var(--red)'}}>
+                          {priceData.change>=0?'+':''}{priceData.change.toFixed(2)}%
+                        </span>
+                      ) : <span className="mono" style={{fontSize:11,color:'var(--text3)'}}>—</span>}
+                    </div>
+
+                    {/* Mkt Cap */}
+                    <div style={{textAlign:'right'}}>
+                      <span className="mono" style={{fontSize:11,color:'var(--text2)'}}>
+                        {fund?.marketCap ? fmtMktCap(fund.marketCap) : loading ? '…' : '—'}
+                      </span>
+                    </div>
+
+                    {/* EPS Growth YoY */}
+                    <div style={{textAlign:'right'}}>
+                      {epsGrowth != null ? (
+                        <span className="mono" style={{fontSize:11,fontWeight:600,
+                          color:epsGrowth>=0?'var(--green)':'var(--red)'}}>
+                          {epsGrowth>=0?'+':''}{epsGrowth.toFixed(1)}%
+                        </span>
+                      ) : <span className="mono" style={{fontSize:11,color:'var(--text3)'}}>{loading?'…':'—'}</span>}
+                    </div>
+
+                    {/* Sector */}
+                    <div style={{textAlign:'right'}}>
+                      {fund?.sector ? (
+                        <span className="mono" style={{fontSize:9,padding:'2px 6px',borderRadius:4,
+                          background:'var(--surface2)',border:'1px solid var(--border)',color:'var(--text3)'}}>
+                          {fund.sector.length>10?fund.sector.slice(0,10)+'…':fund.sector}
+                        </span>
+                      ) : <span style={{fontSize:11,color:'var(--text3)'}}>{loading?'…':'—'}</span>}
+                    </div>
+
+                    {/* Health Score */}
+                    <div style={{textAlign:'right',display:'flex',alignItems:'center',justifyContent:'flex-end',gap:5}}>
+                      {score != null ? (<>
+                        <div style={{width:36,height:4,borderRadius:2,background:'var(--surface2)',overflow:'hidden'}}>
+                          <div style={{height:'100%',width:score+'%',borderRadius:2,
+                            background:score>=70?'var(--green)':score>=40?'var(--gold)':'var(--red)',transition:'width 0.4s'}}/>
+                        </div>
+                        <span className="mono" style={{fontSize:10,fontWeight:600,
+                          color:score>=70?'var(--green)':score>=40?'var(--gold)':'var(--red)'}}>
+                          {score}
+                        </span>
+                      </>) : <span className="mono" style={{fontSize:10,color:'var(--text3)'}}>{loading?'…':'—'}</span>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+
+          {/* Drop zone at bottom */}
+          {dragState && (
+            <div onDragOver={e=>{e.preventDefault();setDragOverCat('__bottom__');}}
+              onDrop={e=>{handleDrop(e,wl.categories[wl.categories.length-1]?.id,null);}}
+              style={{height:60,display:'flex',alignItems:'center',justifyContent:'center',
+                background: dragOverCat==='__bottom__'?'rgba(0,229,160,0.06)':'transparent',
+                border:'2px dashed',borderColor: dragOverCat==='__bottom__'?'var(--green)':'var(--border)',
+                borderRadius:8,margin:'12px 20px',transition:'all 0.15s'}}>
+              <span className="mono" style={{fontSize:10,color:'var(--text3)'}}>Drop here</span>
+            </div>
+          )}
+
+          {allItems.length===0 && (
+            <div style={{padding:'60px 20px',textAlign:'center'}}>
+              <div style={{fontSize:36,marginBottom:12}}>★</div>
+              <div className="serif" style={{fontSize:18,color:'var(--text2)',marginBottom:8}}>Your watchlist is empty</div>
+              <div className="mono" style={{fontSize:11,color:'var(--text3)'}}>Click "+ Add" on a category to add stocks</div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Context menu */}
+      {ctxMenu && (
+        <WLContextMenu
+          x={ctxMenu.x} y={ctxMenu.y} item={ctxMenu.item}
+          onFlag={(sym,flag)=>flagItem(sym,flag)}
+          onOpenStock={()=>{
+            const pos = positions.find(p=>(p.fmpTicker||p.symbol)===ctxMenu.item.symbol);
+            if(pos) onOpenStock(pos);
+          }}
+          onRemove={()=>removeItem(ctxMenu.item.symbol)}
+          onClose={()=>setCtxMenu(null)}/>
+      )}
+    </div>
+  );
+}
+
+// Inline-editable category label
+function CategoryLabel({ cat, onRename }) {
+  const [editing, setEditing] = React.useState(false);
+  const [val, setVal] = React.useState(cat.name);
+  if (editing) return (
+    <input className="inp mono" autoFocus value={val}
+      onChange={e=>setVal(e.target.value)}
+      onKeyDown={e=>{if(e.key==='Enter'){onRename(val);setEditing(false);}if(e.key==='Escape')setEditing(false);}}
+      onBlur={()=>{onRename(val);setEditing(false);}}
+      style={{fontSize:10,padding:'2px 6px',width:120}}/>
+  );
+  return (
+    <span className="mono" onDoubleClick={()=>setEditing(true)}
+      style={{fontSize:9,letterSpacing:'0.12em',color:'var(--text2)',cursor:'text',padding:'2px 0',
+        textTransform:'uppercase'}}>
+      {cat.name}
+    </span>
+  );
+}
+
 // ── ChartsPage — 3e Full-screen chart with watchlist ──────────────────────────
 // MA helpers (client-side, from OHLCV data already fetched)
 function calcSMA(data, period) {
@@ -1473,9 +2015,13 @@ const DRAW_TOOLS = [
   { key: 'rect',       icon: '▭',  label: 'Rectangle'   },
 ];
 
-function ChartsPage({ positions }) {
-  // ── Ticker / search ──
-  const [ticker, setTicker]         = React.useState('');
+function ChartsPage({ positions, watchlists, setWatchlists, activeWLId, setActiveWLId, chartTicker, setChartTicker }) {
+  // Use shared state from App
+  const ticker = chartTicker;
+  const setTicker = setChartTicker;
+  const activeWL = activeWLId;
+  const setActiveWL = setActiveWLId;
+
   const [searchQ, setSearchQ]       = React.useState('');
   const [searchRes, setSearchRes]   = React.useState([]);
   const [searching, setSearching]   = React.useState(false);
@@ -1496,33 +2042,19 @@ function ChartsPage({ positions }) {
   const containerRef  = React.useRef(null);
   const chartRef      = React.useRef(null);
   const maSeriesRef   = React.useRef({});
-  const drawingsRef   = React.useRef([]);      // drawn series refs
+  const drawingsRef   = React.useRef([]);
   const drawStateRef  = React.useRef({ active: false, firstPoint: null, tempSeries: null });
 
-  // ── Watchlist state ──
-  const [watchlists, setWatchlists]   = React.useState([{ id: 'portfolio', name: 'Portfolio', tickers: [] }]);
-  const [activeWL, setActiveWL]       = React.useState('portfolio');
+  // ── Watchlist UI state (local only) ──
   const [addingWL, setAddingWL]       = React.useState(false);
   const [newWLName, setNewWLName]     = React.useState('');
   const [addTickerQ, setAddTickerQ]   = React.useState('');
   const [addTickerRes, setAddTickerRes] = React.useState([]);
   const [addingTicker, setAddingTicker] = React.useState(false);
+  const [ctxMenu, setCtxMenu]         = React.useState(null);
   const [wlPrices, setWlPrices]       = React.useState({});
 
   const RANGES = [['1W',7],['1M',30],['3M',90],['6M',180],['1Y',365],['2Y',730],['ALL',3650]];
-
-  // ── Sync Portfolio watchlist from positions ──
-  React.useEffect(() => {
-    const portfolioTickers = positions
-      .filter(p => p.type !== 'crypto' && p.type !== 'derivative')
-      .map(p => ({ symbol: p.fmpTicker || p.symbol, name: p.name, change: null }))
-      .filter(t => t.symbol && !isISIN(t.symbol));
-    setWatchlists(prev => prev.map(wl =>
-      wl.id === 'portfolio' ? { ...wl, tickers: portfolioTickers } : wl
-    ));
-    // Set initial ticker to first portfolio stock
-    if (!ticker && portfolioTickers.length) setTicker(portfolioTickers[0].symbol);
-  }, [positions]);
 
   // ── Fetch price data when ticker changes ──
   React.useEffect(() => {
@@ -1545,8 +2077,10 @@ function ChartsPage({ positions }) {
   // ── Fetch live prices for watchlist items ──
   React.useEffect(() => {
     const wl = watchlists.find(w => w.id === activeWL);
-    if (!wl?.tickers?.length) return;
-    const syms = wl.tickers.map(t => t.symbol).join(',');
+    const items = wl?.categories?.flatMap(c => c.items) || [];
+    if (!items.length) return;
+    const syms = [...new Set(items.map(i => i.symbol))].filter(Boolean).join(',');
+    if (!syms) return;
     fetch(`/api/fmp?path=/quotes?symbols=${syms}`)
       .then(r => r.json())
       .then(data => {
@@ -1845,122 +2379,160 @@ function ChartsPage({ positions }) {
       </div>
 
       {/* ══ RIGHT: Watchlist Panel ══ */}
-      <div style={{ width: 260, flexShrink: 0, borderLeft: '1px solid var(--border)', display: 'flex', flexDirection: 'column', background: 'var(--surface)', overflow: 'hidden' }}>
+      {(() => {
+        const activeWLData = watchlists.find(w => w.id === activeWL);
+        const allWLItems = activeWLData?.categories?.flatMap(cat => cat.items) || [];
+        return (
+        <div style={{ width: 260, flexShrink: 0, borderLeft: '1px solid var(--border)', display: 'flex', flexDirection: 'column', background: 'var(--surface)', overflow: 'hidden' }}>
 
-        {/* Watchlist tabs */}
-        <div style={{ borderBottom: '1px solid var(--border)', padding: '10px 10px 0', flexShrink: 0 }}>
-          <div className="mono" style={{ fontSize: 8, color: 'var(--text3)', letterSpacing: '0.12em', marginBottom: 8, paddingLeft: 4 }}>WATCHLISTS</div>
-          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', paddingBottom: 10 }}>
-            {watchlists.map(wl => (
-              <button key={wl.id} onClick={() => setActiveWL(wl.id)} className="mono"
-                style={{ fontSize: 10, padding: '4px 9px', borderRadius: 4, cursor: 'pointer', border: '1px solid', letterSpacing: '0.04em', transition: 'all 0.15s',
-                  borderColor: activeWL === wl.id ? 'rgba(0,229,160,0.35)' : 'var(--border)',
-                  background: activeWL === wl.id ? 'var(--green-dim)' : 'transparent',
-                  color: activeWL === wl.id ? 'var(--green)' : 'var(--text3)' }}>
-                {wl.name}
-              </button>
-            ))}
-            {/* Add watchlist */}
-            {!addingWL ? (
-              <button onClick={() => setAddingWL(true)} className="mono"
-                style={{ fontSize: 10, padding: '4px 8px', borderRadius: 4, cursor: 'pointer', border: '1px dashed var(--border)', background: 'transparent', color: 'var(--text3)', letterSpacing: '0.04em' }}>
-                + List
-              </button>
-            ) : (
-              <div style={{ display: 'flex', gap: 4, width: '100%', marginTop: 4 }}>
-                <input className="inp mono" autoFocus placeholder="List name…" value={newWLName} onChange={e => setNewWLName(e.target.value)}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter' && newWLName.trim()) {
-                      const id = 'wl_' + Date.now();
-                      setWatchlists(prev => [...prev, { id, name: newWLName.trim(), tickers: [] }]);
-                      setActiveWL(id); setNewWLName(''); setAddingWL(false);
-                    }
-                    if (e.key === 'Escape') { setAddingWL(false); setNewWLName(''); }
-                  }}
-                  style={{ flex: 1, fontSize: 11, padding: '4px 8px' }} />
-                <button onClick={() => { setAddingWL(false); setNewWLName(''); }}
-                  style={{ background: 'none', border: 'none', color: 'var(--text3)', cursor: 'pointer', fontSize: 14 }}>✕</button>
+          {/* Watchlist tabs */}
+          <div style={{ borderBottom: '1px solid var(--border)', padding: '10px 10px 0', flexShrink: 0 }}>
+            <div className="mono" style={{ fontSize: 8, color: 'var(--text3)', letterSpacing: '0.12em', marginBottom: 8, paddingLeft: 4 }}>WATCHLISTS</div>
+            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', paddingBottom: 10 }}>
+              {watchlists.map(wl => (
+                <button key={wl.id} onClick={() => setActiveWL(wl.id)} className="mono"
+                  style={{ fontSize: 10, padding: '4px 9px', borderRadius: 4, cursor: 'pointer', border: '1px solid', letterSpacing: '0.04em', transition: 'all 0.15s',
+                    borderColor: activeWL === wl.id ? 'rgba(0,229,160,0.35)' : 'var(--border)',
+                    background: activeWL === wl.id ? 'var(--green-dim)' : 'transparent',
+                    color: activeWL === wl.id ? 'var(--green)' : 'var(--text3)' }}>
+                  {wl.name}
+                </button>
+              ))}
+              {!addingWL ? (
+                <button onClick={() => setAddingWL(true)} className="mono"
+                  style={{ fontSize: 10, padding: '4px 8px', borderRadius: 4, cursor: 'pointer', border: '1px dashed var(--border)', background: 'transparent', color: 'var(--text3)', letterSpacing: '0.04em' }}>
+                  + List
+                </button>
+              ) : (
+                <div style={{ display: 'flex', gap: 4, width: '100%', marginTop: 4 }}>
+                  <input className="inp mono" autoFocus placeholder="List name…" value={newWLName} onChange={e => setNewWLName(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' && newWLName.trim()) {
+                        const id = 'wl_' + Date.now();
+                        setWatchlists(prev => [...prev, { id, name: newWLName.trim(), categories: [{id:'cat_default',name:'Uncategorized',items:[]}] }]);
+                        setActiveWL(id); setNewWLName(''); setAddingWL(false);
+                      }
+                      if (e.key === 'Escape') { setAddingWL(false); setNewWLName(''); }
+                    }}
+                    style={{ flex: 1, fontSize: 11, padding: '4px 8px' }} />
+                  <button onClick={() => { setAddingWL(false); setNewWLName(''); }} style={{ background: 'none', border: 'none', color: 'var(--text3)', cursor: 'pointer', fontSize: 14 }}>✕</button>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Items by category */}
+          <div style={{ flex: 1, overflow: 'auto' }}>
+            {allWLItems.length === 0 && (
+              <div style={{ padding: '30px 16px', textAlign: 'center' }}>
+                <div style={{ fontSize: 24, marginBottom: 8 }}>📋</div>
+                <div className="mono" style={{ fontSize: 10, color: 'var(--text3)' }}>
+                  {activeWL === 'portfolio' ? 'Import your portfolio to auto-populate' : 'Add tickers to this watchlist'}
+                </div>
               </div>
             )}
-          </div>
-        </div>
-
-        {/* Watchlist items */}
-        <div style={{ flex: 1, overflow: 'auto' }}>
-          {activeWLData?.tickers?.length === 0 && (
-            <div style={{ padding: '30px 16px', textAlign: 'center' }}>
-              <div style={{ fontSize: 24, marginBottom: 8 }}>📋</div>
-              <div className="mono" style={{ fontSize: 10, color: 'var(--text3)' }}>
-                {activeWL === 'portfolio' ? 'Import your portfolio to auto-populate' : 'Add tickers to this watchlist'}
+            {activeWLData?.categories?.map((cat, catIdx) => (
+              <div key={cat.id}>
+                {activeWLData.categories.length > 1 && (
+                  <div className="mono" style={{ fontSize: 8, color: 'var(--text3)', letterSpacing: '0.1em',
+                    padding: '6px 12px 4px', background: 'var(--surface2)',
+                    borderTop: catIdx > 0 ? '1px solid var(--border)' : 'none',
+                    borderBottom: '1px solid var(--border)', textTransform: 'uppercase' }}>
+                    {cat.name}
+                  </div>
+                )}
+                {cat.items.map((item) => {
+                  const q = wlPrices[item.symbol];
+                  const isActive = ticker === item.symbol;
+                  const up = q?.change >= 0;
+                  const flagCol = item.flag ? FLAG_COLORS[item.flag] : null;
+                  return (
+                    <div key={item.symbol}
+                      onClick={() => setTicker(item.symbol)}
+                      onContextMenu={e => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, item, catId: cat.id, wlId: activeWL }); }}
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                        padding: '9px 12px', borderBottom: '1px solid var(--border)', cursor: 'pointer',
+                        transition: 'background 0.12s',
+                        background: isActive ? 'var(--green-dim)' : flagCol ? flagCol.bg : 'transparent',
+                        borderLeft: isActive ? '2px solid var(--green)' : flagCol ? '2px solid '+flagCol.dot : '2px solid transparent' }}
+                      onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = flagCol ? flagCol.bg : 'var(--surface2)'; }}
+                      onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = flagCol ? flagCol.bg : 'transparent'; }}>
+                      <div style={{ minWidth: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
+                        {flagCol && <span style={{ width: 6, height: 6, borderRadius: '50%', background: flagCol.dot, flexShrink: 0 }}/>}
+                        <div style={{ minWidth: 0 }}>
+                          <div className="mono" style={{ fontSize: 12, fontWeight: 600, color: isActive ? 'var(--green)' : 'var(--text)' }}>{item.symbol}</div>
+                          <div style={{ fontSize: 10, color: 'var(--text3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 120 }}>{item.name}</div>
+                        </div>
+                      </div>
+                      <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                        {q ? (<>
+                          <div className="mono" style={{ fontSize: 11, fontWeight: 600, color: 'var(--text)' }}>{q.price?.toFixed(2)}</div>
+                          <div className="mono" style={{ fontSize: 10, color: up ? 'var(--green)' : 'var(--red)' }}>{up ? '+' : ''}{q.change?.toFixed(2)}%</div>
+                        </>) : <div className="mono" style={{ fontSize: 10, color: 'var(--text3)' }}>—</div>}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
+            ))}
+          </div>
+
+          {/* Add ticker */}
+          {activeWL !== 'portfolio' && (
+            <div style={{ borderTop: '1px solid var(--border)', padding: 10, flexShrink: 0 }}>
+              {!addingTicker ? (
+                <button onClick={() => setAddingTicker(true)} className="mono"
+                  style={{ width: '100%', padding: '7px', borderRadius: 6, border: '1px dashed var(--border2)', background: 'transparent', color: 'var(--text3)', cursor: 'pointer', fontSize: 10, letterSpacing: '0.06em' }}>
+                  + Add ticker
+                </button>
+              ) : (
+                <div style={{ position: 'relative' }}>
+                  <input className="inp mono" autoFocus placeholder="Search name or ticker…" value={addTickerQ} onChange={e => setAddTickerQ(e.target.value)}
+                    onBlur={() => setTimeout(() => { setAddTickerRes([]); setAddTickerQ(''); setAddingTicker(false); }, 200)}
+                    style={{ fontSize: 11, padding: '6px 10px', width: '100%' }} />
+                  <div style={{ position: 'absolute', bottom: '110%', left: 0, right: 0 }}>
+                    <TickerDropdown results={addTickerRes} searching={false}
+                      onSelect={r => {
+                        setWatchlists(prev => prev.map(wl => wl.id === activeWL ? {
+                          ...wl, categories: wl.categories.map((cat, i) => i === 0
+                            ? { ...cat, items: [...cat.items.filter(t => t.symbol !== r.symbol), { symbol: r.symbol, name: r.name, flag: null }] }
+                            : cat)
+                        } : wl));
+                        setAddTickerQ(''); setAddTickerRes([]); setAddingTicker(false);
+                      }} />
+                  </div>
+                </div>
+              )}
             </div>
           )}
-          {activeWLData?.tickers?.map((item, i) => {
-            const q = wlPrices[item.symbol];
-            const isActive = ticker === item.symbol;
-            const up = q?.change >= 0;
-            return (
-              <div key={item.symbol + i} onClick={() => setTicker(item.symbol)}
-                style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderBottom: '1px solid var(--border)', cursor: 'pointer', transition: 'background 0.12s',
-                  background: isActive ? 'var(--green-dim)' : 'transparent', borderLeft: isActive ? '2px solid var(--green)' : '2px solid transparent' }}
-                onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = 'var(--surface2)'; }}
-                onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = 'transparent'; }}>
-                <div style={{ minWidth: 0 }}>
-                  <div className="mono" style={{ fontSize: 12, fontWeight: 600, color: isActive ? 'var(--green)' : 'var(--text)' }}>{item.symbol}</div>
-                  <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 130 }}>{item.name}</div>
-                </div>
-                <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                  {q ? (<>
-                    <div className="mono" style={{ fontSize: 11, fontWeight: 600, color: 'var(--text)' }}>{q.price?.toFixed(2)}</div>
-                    <div className="mono" style={{ fontSize: 10, color: up ? 'var(--green)' : 'var(--red)' }}>{up ? '+' : ''}{q.change?.toFixed(2)}%</div>
-                  </>) : (
-                    <div className="mono" style={{ fontSize: 10, color: 'var(--text3)' }}>—</div>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
 
-        {/* Add ticker to watchlist */}
-        {activeWL !== 'portfolio' && (
-          <div style={{ borderTop: '1px solid var(--border)', padding: 10, flexShrink: 0 }}>
-            {!addingTicker ? (
-              <button onClick={() => setAddingTicker(true)} className="mono"
-                style={{ width: '100%', padding: '7px', borderRadius: 6, border: '1px dashed var(--border2)', background: 'transparent', color: 'var(--text3)', cursor: 'pointer', fontSize: 10, letterSpacing: '0.06em' }}>
-                + Add ticker
+          {/* Delete watchlist */}
+          {activeWL !== 'portfolio' && activeWLData && (
+            <div style={{ padding: '0 10px 10px', flexShrink: 0 }}>
+              <button onClick={() => { setWatchlists(prev => prev.filter(w => w.id !== activeWL)); setActiveWL('portfolio'); }}
+                className="mono" style={{ width: '100%', padding: '5px', borderRadius: 5, border: '1px solid var(--red-dim)', background: 'transparent', color: 'var(--red)', cursor: 'pointer', fontSize: 9, letterSpacing: '0.06em', opacity: 0.6 }}>
+                Delete "{activeWLData.name}"
               </button>
-            ) : (
-              <div style={{ position: 'relative' }}>
-                <input className="inp mono" autoFocus placeholder="Search name or ticker…" value={addTickerQ} onChange={e => setAddTickerQ(e.target.value)}
-                  onBlur={() => setTimeout(() => { setAddTickerRes([]); setAddTickerQ(''); setAddingTicker(false); }, 200)}
-                  style={{ fontSize: 11, padding: '6px 10px', width: '100%' }} />
-                <div style={{position:'absolute',bottom:'110%',left:0,right:0}}>
-                  <TickerDropdown results={addTickerRes} searching={false}
-                    onSelect={r => {
-                      setWatchlists(prev => prev.map(wl => wl.id === activeWL
-                        ? { ...wl, tickers: [...wl.tickers.filter(t => t.symbol !== r.symbol), { symbol: r.symbol, name: r.name }] }
-                        : wl));
-                      setAddTickerQ(''); setAddTickerRes([]); setAddingTicker(false);
-                    }} />
-                </div>
-              </div>
-            )}
-          </div>
-        )}
+            </div>
+          )}
 
-        {/* Delete watchlist (not portfolio) */}
-        {activeWL !== 'portfolio' && activeWLData && (
-          <div style={{ padding: '0 10px 10px', flexShrink: 0 }}>
-            <button onClick={() => {
-              setWatchlists(prev => prev.filter(w => w.id !== activeWL));
-              setActiveWL('portfolio');
-            }} className="mono" style={{ width: '100%', padding: '5px', borderRadius: 5, border: '1px solid var(--red-dim)', background: 'transparent', color: 'var(--red)', cursor: 'pointer', fontSize: 9, letterSpacing: '0.06em', opacity: 0.6 }}>
-              Delete "{activeWLData.name}"
-            </button>
-          </div>
-        )}
-      </div>
+          {/* Context menu */}
+          {ctxMenu && (
+            <WLContextMenu x={ctxMenu.x} y={ctxMenu.y} item={ctxMenu.item}
+              onFlag={(sym, flag) => setWatchlists(prev => prev.map(wl => wl.id === activeWL ? {
+                ...wl, categories: wl.categories.map(cat => ({
+                  ...cat, items: cat.items.map(it => it.symbol === sym ? {...it, flag} : it)
+                }))
+              } : wl))}
+              onOpenStock={() => {}}
+              onRemove={() => setWatchlists(prev => prev.map(wl => wl.id === activeWL ? {
+                ...wl, categories: wl.categories.map(cat => ({...cat, items: cat.items.filter(it => it.symbol !== ctxMenu.item.symbol)}))
+              } : wl))}
+              onClose={() => setCtxMenu(null)}/>
+          )}
+        </div>
+        );
+      })()}
     </div>
   );
 }
@@ -3249,6 +3821,42 @@ export default function App() {
   const [newPos,      setNewPos]      = useState({symbol:"",name:"",type:"stock",qty:"",avgPrice:"",currentPrice:"",broker:"Smartbroker+"});
   const [selectedPos,  setSelectedPos]  = useState(null);
 
+  // ── Shared Watchlist state (lifted from ChartsPage so WatchlistPage can share) ──
+  const mkDefaultWL = () => ([{
+    id: 'portfolio', name: 'Portfolio',
+    categories: [{ id: 'cat_default', name: 'Uncategorized', items: [] }]
+  }]);
+  const [watchlists,    setWatchlists]    = useState(mkDefaultWL);
+  const [activeWLId,    setActiveWLId]    = useState('portfolio');
+  const [chartTicker,   setChartTicker]   = useState('');
+
+  // Keep Portfolio watchlist in sync with positions
+  React.useEffect(() => {
+    const pts = positions
+      .filter(p => p.type !== 'crypto' && p.type !== 'derivative' && p.symbol && !isISIN(p.symbol))
+      .map(p => ({ symbol: p.fmpTicker || p.symbol, name: p.name || p.symbol, flag: null, order: 0 }));
+    setWatchlists(prev => prev.map(wl => {
+      if (wl.id !== 'portfolio') return wl;
+      // Merge: preserve flags/order for existing items, add new ones to Uncategorized
+      const allItems = wl.categories.flatMap(cat => cat.items);
+      const existingMap = Object.fromEntries(allItems.map(it => [it.symbol, it]));
+      const newItems = pts.map(p => existingMap[p.symbol] ? existingMap[p.symbol] : p);
+      // Put all back in first category (Uncategorized) if structure is empty
+      const hasItems = wl.categories.some(cat => cat.items.length > 0);
+      if (!hasItems) {
+        return { ...wl, categories: [{ id: 'cat_default', name: 'Uncategorized', items: newItems }] };
+      }
+      // Add newly imported positions to Uncategorized that aren't already anywhere
+      const everywhere = new Set(allItems.map(i => i.symbol));
+      const brandNew = newItems.filter(i => !everywhere.has(i.symbol));
+      if (!brandNew.length) return wl;
+      return { ...wl, categories: wl.categories.map((cat, idx) =>
+        idx === 0 ? { ...cat, items: [...cat.items, ...brandNew] } : cat
+      )};
+    }));
+    if (!chartTicker && pts.length) setChartTicker(pts[0].symbol);
+  }, [positions]);
+
   // ── Fetch live prices ──
   // ── Data fetching — powered by FMP (Financial Modeling Prep) ──
   // All calls go through /api/fmp Vercel proxy to keep key server-side
@@ -3706,7 +4314,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v52 · Fix ticker search: /search-name + smart dedup, autocomplete in Charts + Compare</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v53 · Watchlist v2: dedicated page, categories, drag & drop, right-click flags, shared state</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
@@ -3735,7 +4343,20 @@ export default function App() {
         {/* ── Main ── */}
         {nav==="charts" && (
           <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",minWidth:0}}>
-            <ChartsPage positions={positions}/>
+            <ChartsPage positions={positions}
+              watchlists={watchlists} setWatchlists={setWatchlists}
+              activeWLId={activeWLId} setActiveWLId={setActiveWLId}
+              chartTicker={chartTicker} setChartTicker={setChartTicker}/>
+          </div>
+        )}
+        {nav==="watchlist" && (
+          <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",minWidth:0}}>
+            <WatchlistPage
+              watchlists={watchlists} setWatchlists={setWatchlists}
+              activeWLId={activeWLId} setActiveWLId={setActiveWLId}
+              onOpenStock={pos=>{ setSelectedPos(pos); setNav("stock"); }}
+              onOpenChart={sym=>{ setChartTicker(sym); setNav("charts"); }}
+              positions={positions}/>
           </div>
         )}
         <div className="main-scroll" style={{flex:1,overflow:"auto",padding:"26px 30px",display:nav==="charts"?"none":"block"}}>
@@ -3744,7 +4365,7 @@ export default function App() {
           <div className="fu" style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:22}}>
             <div>
               <div className="serif" style={{fontSize:24,letterSpacing:"-0.02em"}}>
-                {nav==="dashboard"?"Overview":nav==="portfolio"?"Portfolio":nav==="charts"?"Charts":nav==="stock"&&selectedPos?selectedPos.symbol:nav==="screener"?"Screener":nav==="news"?"News Feed":"Settings"}
+                {nav==="dashboard"?"Overview":nav==="portfolio"?"Portfolio":nav==="charts"?"Charts":nav==="watchlist"?"Watchlist":nav==="stock"&&selectedPos?selectedPos.symbol:nav==="screener"?"Screener":nav==="news"?"News Feed":"Settings"}
               </div>
               <div style={{display:"flex",alignItems:"center",gap:8,marginTop:3}}>
                 <span className="ldot"/>
