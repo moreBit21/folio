@@ -1652,13 +1652,14 @@ function WatchlistPage({ watchlists, setWatchlists, activeWLId, setActiveWLId, o
   const allItems = wl ? wl.categories.flatMap(cat => cat.items) : [];
 
   // ── Fetch live FMP prices for all watchlist items ──
+  const symKey = allItems.map(i => i.symbol).filter(Boolean).sort().join(',');
   React.useEffect(() => {
     const syms = [...new Set(allItems.map(i => i.symbol).filter(Boolean))];
     if (!syms.length) return;
     let cancelled = false;
-    const fetchPrices = async () => {
+    const doFetch = async () => {
       try {
-        const BATCH = 10;
+        const BATCH = 15;
         for (let i = 0; i < syms.length; i += BATCH) {
           if (cancelled) return;
           const batch = syms.slice(i, i + BATCH).join(',');
@@ -1666,14 +1667,20 @@ function WatchlistPage({ watchlists, setWatchlists, activeWLId, setActiveWLId, o
           const data = await r.json();
           if (!Array.isArray(data) || cancelled) continue;
           const map = {};
-          data.forEach(q => { map[q.symbol] = { price: q.price, change: q.changesPercentage, mktcap: q.marketCap }; });
+          data.forEach(q => {
+            let chg = q.changesPercentage ?? null;
+            if (chg == null && q.previousClose && q.previousClose > 0 && q.price != null) {
+              chg = (q.price - q.previousClose) / q.previousClose * 100;
+            }
+            map[q.symbol] = { price: q.price, change: chg, mktcap: q.marketCap };
+          });
           setLivePrices(p => ({...p, ...map}));
         }
-      } catch(e) {}
+      } catch(e) { console.warn('WL price fetch error:', e); }
     };
-    fetchPrices();
+    doFetch();
     return () => { cancelled = true; };
-  }, [activeWLId, allItems.map(i=>i.symbol).join(',')]);
+  }, [activeWLId, symKey]);
 
   // Fetch fundamentals — batched, cached
   React.useEffect(() => {
@@ -4327,12 +4334,13 @@ function PortfolioPage({ positions, transactions, onOpenStock, priceLoading, cha
     <div style={{padding:'26px 30px',overflow:'auto',height:'100%',boxSizing:'border-box'}}>
 
       {/* ── KPI Cards ── */}
-      <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12,marginBottom:16}}>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:12,marginBottom:16}}>
         {[
           {label:'PORTFOLIO VALUE', val:`€${totalVal.toLocaleString('de-DE',{minimumFractionDigits:0,maximumFractionDigits:0})}`, sub:`${vis.length} positions`, color:null},
           {label:'TOTAL P&L',       val:`${(totalVal-totalCost)>=0?'+':'-'}€${Math.abs(totalVal-totalCost).toLocaleString('de-DE',{minimumFractionDigits:0,maximumFractionDigits:0})}`, sub:`${totalCost>0?((totalVal-totalCost)/totalCost*100).toFixed(1):'—'}% total return`, color:(totalVal-totalCost)>=0?'var(--green)':'var(--red)'},
           {label:'INVESTED',        val:`€${totalCost.toLocaleString('de-DE',{minimumFractionDigits:0,maximumFractionDigits:0})}`, sub:'Cost basis', color:null},
-          {label:'REAL RETURN',     val:realCAGR!=null?(realCAGR>=0?'+':'')+realCAGR.toFixed(1)+'% p.a.':'—', sub:`CAGR ${portfolioCAGR!=null?(portfolioCAGR>=0?'+':'')+portfolioCAGR.toFixed(1)+'%':'—'} − ${EU_INFLATION}% inflation`, color:realCAGR==null?null:realCAGR>=5?'var(--green)':realCAGR>=0?'var(--gold)':'var(--red)'},
+          {label:'PORTFOLIO CAGR',  val:portfolioCAGR!=null?(portfolioCAGR>=0?'+':'')+portfolioCAGR.toFixed(1)+'% p.a.':'—', sub:'Avg compound annual growth', color:portfolioCAGR==null?null:portfolioCAGR>=10?'var(--green)':portfolioCAGR>=5?'var(--gold)':'var(--red)'},
+          {label:'REAL RETURN',     val:realCAGR!=null?(realCAGR>=0?'+':'')+realCAGR.toFixed(1)+'% p.a.':'—', sub:`After ${EU_INFLATION}% EU inflation`, color:realCAGR==null?null:realCAGR>=5?'var(--green)':realCAGR>=0?'var(--gold)':'var(--red)'},
         ].map((k,i)=>(
           <div key={i} className="card fu" style={{padding:'16px 18px',position:'relative',overflow:'hidden'}}>
             <div style={{position:'absolute',top:0,left:0,right:0,height:2,background:k.color||'var(--border2)'}}/>
@@ -4416,11 +4424,11 @@ function PortfolioPage({ positions, transactions, onOpenStock, priceLoading, cha
         <div className="card" style={{padding:0,overflow:'hidden'}}>
           {/* Table header */}
           <div style={{display:'grid',
-            gridTemplateColumns:'2fr 0.7fr 0.9fr 0.9fr 0.7fr 0.9fr 0.9fr 0.5fr 0.9fr 1.4fr 0.8fr',
+            gridTemplateColumns:'2fr 0.7fr 0.9fr 0.9fr 0.7fr 0.9fr 0.9fr 0.9fr 1.4fr 0.8fr',
             padding:'9px 18px',background:'var(--surface2)',borderBottom:'1px solid var(--border2)',gap:8}}>
             {[
               ['name','ASSET'],['qty','QTY'],['price','AVG €'],['value','VALUE'],
-              ['daily','DAY%'],['pnl','P&L'],['pnlpct','P&L%'],['cagr','CAGR'],
+              ['daily','DAY%'],['pnl','P&L'],['pnlpct','P&L%'],
               ['breakeven','BREAK-EVEN'],
               ['health','HEALTH SCORECARD'],['score','SCORE'],
             ].map(([col,label])=>(
@@ -4446,7 +4454,7 @@ function PortfolioPage({ positions, transactions, onOpenStock, priceLoading, cha
             return (
               <div key={pos.id} onClick={()=>onOpenStock(pos)}
                 style={{display:'grid',
-                  gridTemplateColumns:'2fr 0.7fr 0.9fr 0.9fr 0.7fr 0.9fr 0.9fr 0.5fr 0.9fr 1.4fr 0.8fr',
+                  gridTemplateColumns:'2fr 0.7fr 0.9fr 0.9fr 0.7fr 0.9fr 0.9fr 0.9fr 1.4fr 0.8fr',
                   padding:'11px 18px',borderBottom:'1px solid var(--border)',
                   cursor:'pointer',transition:'background 0.12s',gap:8,alignItems:'center'}}
                 onMouseEnter={e=>e.currentTarget.style.background='var(--surface2)'}
@@ -4488,11 +4496,6 @@ function PortfolioPage({ positions, transactions, onOpenStock, priceLoading, cha
                 {/* P&L % */}
                 <div className="mono" style={{fontSize:11,fontWeight:600,color:up?'var(--green)':'var(--red)'}}>
                   {fmtPct(pnlpct)}
-                </div>
-
-                {/* CAGR */}
-                <div className="mono" style={{fontSize:11,color:cagr==null?'var(--text3)':cagr>=15?'var(--green)':cagr>=5?'var(--gold)':'var(--red)'}}>
-                  {cagr!=null?fmtPct(cagr):'—'}
                 </div>
 
                 {/* Break-even */}
@@ -4563,11 +4566,11 @@ function PortfolioPage({ positions, transactions, onOpenStock, priceLoading, cha
       {/* ══════════ ANALYSIS TAB ══════════ */}
       {tab==='analysis' && (
         <div>
-          {/* Sub-tabs */}
-          <div style={{display:'flex',gap:6,marginBottom:16,flexWrap:'wrap'}}>
+          {/* ── View selector tabs ── */}
+          <div style={{display:'flex',gap:6,marginBottom:20,flexWrap:'wrap'}}>
             {PIE_VIEWS.map(v=>(
               <button key={v.id} onClick={()=>{setAnalysisView(v.id);setDrillFilter(null);}} className="mono"
-                style={{padding:'5px 12px',borderRadius:5,cursor:'pointer',fontSize:10,letterSpacing:'0.06em',
+                style={{padding:'6px 14px',borderRadius:6,cursor:'pointer',fontSize:10,letterSpacing:'0.06em',
                   border:'1px solid',transition:'all 0.15s',
                   borderColor:analysisView===v.id?'rgba(0,229,160,0.35)':'var(--border)',
                   background:analysisView===v.id?'var(--green-dim)':'transparent',
@@ -4577,109 +4580,150 @@ function PortfolioPage({ positions, transactions, onOpenStock, priceLoading, cha
             ))}
           </div>
 
-          {/* ── Pie charts grid — all 7 side by side ── */}
-          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(260px,1fr))',gap:14,marginBottom:16}}>
-            {PIE_VIEWS.map(pv => {
-              const isActive = analysisView === pv.id;
-              return (
-                <div key={pv.id} className="card" style={{padding:16,cursor:'pointer',
-                  border:'1px solid',transition:'all 0.15s',
-                  borderColor:isActive?'rgba(0,229,160,0.35)':'var(--border)',
-                  background:isActive?'rgba(0,229,160,0.04)':'var(--surface)'}}
-                  onClick={()=>{setAnalysisView(pv.id);setDrillFilter(null);}}>
-                  <div className="mono" style={{fontSize:9,color:isActive?'var(--green)':'var(--text3)',
-                    letterSpacing:'0.1em',marginBottom:8}}>{pv.label.toUpperCase()}</div>
-                  <div style={{position:'relative',height:160}}>
+          {/* ── Single big pie + drill-down ── */}
+          {(() => {
+            const pv = currentPie;
+            return (
+              <div style={{display:'grid',gridTemplateColumns:'380px 1fr',gap:16,alignItems:'start'}}>
+
+                {/* Pie card */}
+                <div className="card" style={{padding:24}}>
+                  <div className="mono" style={{fontSize:10,color:'var(--text2)',letterSpacing:'0.12em',marginBottom:16}}>
+                    {pv.label.toUpperCase()}
+                  </div>
+
+                  {/* Pie chart */}
+                  <div style={{position:'relative',height:260}}>
                     <ResponsiveContainer width="100%" height="100%">
                       <PieChart>
-                        <Pie data={pv.data} cx="50%" cy="50%" innerRadius={40} outerRadius={65}
+                        <Pie
+                          data={pv.data}
+                          cx="50%" cy="50%"
+                          innerRadius={70} outerRadius={110}
                           dataKey="value" paddingAngle={2}
-                          onClick={(entry)=>{
-                            if(pv.id==='alloc') return;
-                            setAnalysisView(pv.id);
-                            setDrillFilter(df=>(df?.value===entry.name&&analysisView===pv.id)?null:{type:pv.drillType,value:entry.name});
+                          onClick={(entry, index, event) => {
+                            event?.stopPropagation?.();
+                            if (pv.id === 'alloc') return;
+                            setDrillFilter(df =>
+                              df?.value === entry.name ? null : {type: pv.drillType, value: entry.name}
+                            );
                           }}>
-                          {pv.data.map((entry,i)=>(
+                          {pv.data.map((entry, i) => (
                             <Cell key={i} fill={entry.color}
-                              opacity={isActive&&drillFilter?.value===entry.name?1:
-                                       isActive&&drillFilter?0.35:1}
-                              style={{cursor:pv.id==='alloc'?'default':'pointer',outline:'none'}}/>
+                              opacity={drillFilter ? (drillFilter.value === entry.name ? 1 : 0.35) : 1}
+                              style={{cursor: pv.id==='alloc'?'default':'pointer', outline:'none',
+                                filter: drillFilter?.value===entry.name?'brightness(1.2)':'none'}}/>
                           ))}
                         </Pie>
-                        <Tooltip contentStyle={{background:'var(--surface)',border:'1px solid var(--border2)',borderRadius:8,fontSize:10}}
-                          formatter={(v,n)=>[v+'%',n]}/>
+                        <Tooltip
+                          contentStyle={{background:'var(--surface)',border:'1px solid var(--border2)',borderRadius:8,fontSize:11}}
+                          formatter={(v, n) => [v + '%', n]}/>
                       </PieChart>
                     </ResponsiveContainer>
+                    {/* Centre label */}
                     <div style={{position:'absolute',inset:0,display:'flex',flexDirection:'column',
                       alignItems:'center',justifyContent:'center',pointerEvents:'none'}}>
-                      <div className="mono" style={{fontSize:13,fontWeight:700,color:'var(--text)'}}>{pv.data.length}</div>
+                      <div className="mono" style={{fontSize:22,fontWeight:700,color:'var(--text)'}}>{pv.data.length}</div>
+                      <div className="mono" style={{fontSize:9,color:'var(--text3)',letterSpacing:'0.08em'}}>GROUPS</div>
                     </div>
                   </div>
-                  {/* Mini legend */}
-                  <div style={{display:'flex',flexDirection:'column',gap:4,marginTop:8}}>
-                    {pv.data.slice(0,4).map(d=>(
-                      <div key={d.name} style={{display:'flex',alignItems:'center',gap:6}}
-                        onClick={e=>{e.stopPropagation();if(pv.id==='alloc')return;setAnalysisView(pv.id);
-                          setDrillFilter(df=>(df?.value===d.name&&analysisView===pv.id)?null:{type:pv.drillType,value:d.name});}}>
-                        <div style={{width:7,height:7,borderRadius:2,background:d.color,flexShrink:0}}/>
-                        <span className="mono" style={{fontSize:9,color:'var(--text3)',flex:1,
+
+                  {/* Legend */}
+                  <div style={{display:'flex',flexDirection:'column',gap:6,marginTop:16}}>
+                    {pv.data.map(d => (
+                      <div key={d.name}
+                        onClick={() => {
+                          if (pv.id === 'alloc') return;
+                          setDrillFilter(df => df?.value === d.name ? null : {type: pv.drillType, value: d.name});
+                        }}
+                        style={{display:'flex',alignItems:'center',gap:8,padding:'5px 8px',borderRadius:6,
+                          cursor: pv.id==='alloc'?'default':'pointer', transition:'background 0.1s',
+                          background: drillFilter?.value===d.name ? 'var(--green-dim)' : 'transparent',
+                          border: '1px solid', borderColor: drillFilter?.value===d.name ? 'rgba(0,229,160,0.25)' : 'transparent'}}
+                        onMouseEnter={e=>{if(pv.id!=='alloc')e.currentTarget.style.background='var(--surface2)';}}
+                        onMouseLeave={e=>{e.currentTarget.style.background=drillFilter?.value===d.name?'var(--green-dim)':'transparent';
+                          e.currentTarget.style.borderColor=drillFilter?.value===d.name?'rgba(0,229,160,0.25)':'transparent';}}>
+                        <div style={{width:10,height:10,borderRadius:3,background:d.color,flexShrink:0}}/>
+                        <span className="mono" style={{fontSize:11,color:'var(--text2)',flex:1,
                           overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{d.name}</span>
-                        <span className="mono" style={{fontSize:9,color:'var(--text)',fontWeight:600}}>{d.value}%</span>
+                        <span className="mono" style={{fontSize:11,color:'var(--text)',fontWeight:600}}>{d.value}%</span>
+                        <span className="mono" style={{fontSize:10,color:'var(--text3)'}}>€{(d.rawVal/1000).toFixed(0)}k</span>
                       </div>
                     ))}
-                    {pv.data.length>4 && <div className="mono" style={{fontSize:8,color:'var(--text3)'}}>+{pv.data.length-4} more</div>}
                   </div>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* ── Drill-down: positions for selected slice ── */}
-          {drillFilter && (
-            <div className="card" style={{padding:0,overflow:'hidden'}}>
-              <div style={{padding:'12px 18px',borderBottom:'1px solid var(--border)',
-                display:'flex',alignItems:'center',gap:12}}>
-                <div className="mono" style={{fontSize:9,color:'var(--text3)',letterSpacing:'0.1em'}}>
-                  {currentPie.label.toUpperCase()}
-                </div>
-                <div style={{width:8,height:8,borderRadius:2,flexShrink:0,
-                  background:currentPie.data.find(d=>d.name===drillFilter.value)?.color||'var(--green)'}}/>
-                <div className="mono" style={{fontSize:11,color:'var(--text)',fontWeight:600}}>{drillFilter.value}</div>
-                <div className="mono" style={{fontSize:10,color:'var(--text3)'}}>
-                  — {displayRows.length} position{displayRows.length!==1?'s':''}
-                </div>
-                <button onClick={()=>setDrillFilter(null)}
-                  style={{marginLeft:'auto',background:'none',border:'none',cursor:'pointer',
-                    color:'var(--text3)',fontSize:14,lineHeight:1}}>✕</button>
-              </div>
-              <div style={{display:'flex',flexWrap:'wrap',gap:0}}>
-                {displayRows.map(pos => {
-                  const pnlpct = pos.avgPrice > 0 ? ((pos.currentPrice - pos.avgPrice) / pos.avgPrice * 100) : null;
-                  return (
-                    <div key={pos.id} onClick={()=>onOpenStock(pos)}
-                      style={{display:'flex',alignItems:'center',gap:10,padding:'11px 18px',
-                        borderBottom:'1px solid var(--border)',borderRight:'1px solid var(--border)',
-                        cursor:'pointer',transition:'background 0.1s',minWidth:220,flex:'1 1 220px'}}
-                      onMouseEnter={e=>e.currentTarget.style.background='var(--surface2)'}
-                      onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
-                      <AssetLogo pos={pos}/>
-                      <div style={{minWidth:0,flex:1}}>
-                        <div className="mono" style={{fontSize:12,fontWeight:600}}>{pos.symbol}</div>
-                        <div style={{fontSize:10,color:'var(--text3)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{pos.name}</div>
-                      </div>
-                      {pnlpct!=null && (
-                        <div className="mono" style={{fontSize:11,fontWeight:600,
-                          color:pnlpct>=0?'var(--green)':'var(--red)',flexShrink:0}}>
-                          {pnlpct>=0?'+':''}{pnlpct.toFixed(1)}%
-                        </div>
-                      )}
+                  {pv.id !== 'alloc' && !drillFilter && (
+                    <div className="mono" style={{fontSize:9,color:'var(--text3)',marginTop:12,textAlign:'center',opacity:0.7}}>
+                      ↑ Click a slice or item to filter
                     </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
+                  )}
+                </div>
 
+                {/* Drill-down panel */}
+                <div className="card" style={{padding:0,overflow:'hidden',alignSelf:'start'}}>
+                  {!drillFilter ? (
+                    <div style={{padding:'48px 24px',textAlign:'center'}}>
+                      <div style={{fontSize:32,marginBottom:12,opacity:0.4}}>◎</div>
+                      <div className="mono" style={{fontSize:11,color:'var(--text3)'}}>
+                        Click a slice to see positions
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div style={{padding:'12px 18px',borderBottom:'1px solid var(--border)',
+                        display:'flex',alignItems:'center',gap:10}}>
+                        <div style={{width:10,height:10,borderRadius:3,flexShrink:0,
+                          background:pv.data.find(d=>d.name===drillFilter.value)?.color||'var(--green)'}}/>
+                        <div>
+                          <div className="mono" style={{fontSize:9,color:'var(--text3)',letterSpacing:'0.1em'}}>{pv.label.toUpperCase()}</div>
+                          <div className="mono" style={{fontSize:13,color:'var(--text)',fontWeight:600}}>{drillFilter.value}</div>
+                        </div>
+                        <div className="mono" style={{fontSize:10,color:'var(--text3)',marginLeft:4}}>
+                          {displayRows.length} position{displayRows.length!==1?'s':''}
+                        </div>
+                        <button onClick={()=>setDrillFilter(null)}
+                          style={{marginLeft:'auto',background:'none',border:'none',cursor:'pointer',
+                            color:'var(--text3)',fontSize:16,lineHeight:1,padding:'2px 6px'}}>✕</button>
+                      </div>
+                      <div>
+                        {displayRows.map(pos => {
+                          const val = pos.qty * pos.currentPrice;
+                          const pnlpct = pos.avgPrice > 0 ? ((pos.currentPrice - pos.avgPrice) / pos.avgPrice * 100) : null;
+                          const score = getScore(pos);
+                          return (
+                            <div key={pos.id} onClick={()=>onOpenStock(pos)}
+                              style={{display:'flex',alignItems:'center',gap:12,padding:'12px 18px',
+                                borderBottom:'1px solid var(--border)',cursor:'pointer',transition:'background 0.1s'}}
+                              onMouseEnter={e=>e.currentTarget.style.background='var(--surface2)'}
+                              onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                              <AssetLogo pos={pos}/>
+                              <div style={{flex:1,minWidth:0}}>
+                                <div className="mono" style={{fontSize:12,fontWeight:600}}>{pos.symbol}</div>
+                                <div style={{fontSize:10,color:'var(--text3)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{pos.name}</div>
+                              </div>
+                              <div style={{textAlign:'right',flexShrink:0}}>
+                                <div className="mono" style={{fontSize:12,fontWeight:600}}>€{(val/1000).toFixed(0)}k</div>
+                                {pnlpct!=null&&<div className="mono" style={{fontSize:10,color:pnlpct>=0?'var(--green)':'var(--red)'}}>{pnlpct>=0?'+':''}{pnlpct.toFixed(1)}%</div>}
+                              </div>
+                              {score!=null&&(
+                                <div style={{display:'flex',alignItems:'center',gap:4,flexShrink:0}}>
+                                  <div style={{width:28,height:4,borderRadius:2,background:'var(--surface2)',overflow:'hidden'}}>
+                                    <div style={{height:'100%',width:score+'%',background:score>=70?'var(--green)':score>=40?'var(--gold)':'var(--red)',borderRadius:2}}/>
+                                  </div>
+                                  <span className="mono" style={{fontSize:10,fontWeight:700,
+                                    color:score>=70?'var(--green)':score>=40?'var(--gold)':'var(--red)'}}>{score}</span>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </>
+                  )}
+                </div>
+
+              </div>
+            );
+          })()}
         </div>
       )}
     </div>
@@ -4776,8 +4820,12 @@ export default function App() {
       if(cryptoPos.length){
         const ids=[...new Set(cryptoPos.map(p=>p.coinId))].join(',');
         try {
-          const cg = await fetch('https://api.coingecko.com/api/v3/simple/price?ids='+ids+'&vs_currencies=eur').then(r=>r.json());
-          setPositions(prev=>prev.map(p=>p.type==='crypto'&&p.coinId&&cg[p.coinId]?.eur?{...p,currentPrice:cg[p.coinId].eur}:p));
+          const cg = await fetch('https://api.coingecko.com/api/v3/simple/price?ids='+ids+'&vs_currencies=eur&include_24hr_change=true').then(r=>r.json());
+          setPositions(prev=>prev.map(p=>p.type==='crypto'&&p.coinId&&cg[p.coinId]?.eur?{
+            ...p,
+            currentPrice:cg[p.coinId].eur,
+            dailyChange:cg[p.coinId]?.eur_24h_change??null
+          }:p));
         } catch(e){}
       }
 
@@ -4839,7 +4887,13 @@ export default function App() {
       const dc={}; // daily change %
       (Array.isArray(quotes)?quotes:[]).forEach(q=>{
         pm[q.symbol]=q.currency==='USD'?q.price/eurUsd:q.price;
-        dc[q.symbol]=q.changesPercentage??null;
+        // changesPercentage = daily % change from FMP
+        // Fallback: compute from previousClose if changesPercentage is null
+        let chg = q.changesPercentage??null;
+        if (chg == null && q.previousClose && q.previousClose > 0 && q.price != null) {
+          chg = (q.price - q.previousClose) / q.previousClose * 100;
+        }
+        dc[q.symbol] = chg;
       });
       setPositions(prev=>prev.map(p=>{
         if(p.type==='crypto'||p.type==='derivative') return p;
@@ -5206,7 +5260,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v56 · CAGR fix, portfolio KPI cards, analysis drill-down inline, ticker search fixed</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v56 · single-view analysis, pie drill-down, CAGR+real return cards, no CAGR col</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
