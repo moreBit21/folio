@@ -1497,24 +1497,26 @@ function WLContextMenu({ x, y, item, onFlag, onOpenStock, onRemove, onClose }) {
 
 // ── WatchlistPage ────────────────────────────────────────────────────────────
 function WatchlistPage({ watchlists, setWatchlists, activeWLId, setActiveWLId, onOpenStock, onOpenChart, positions }) {
-  const [ctxMenu, setCtxMenu]         = React.useState(null); // {x,y,item,catId}
+  const [ctxMenu, setCtxMenu]         = React.useState(null);
   const [addingWL, setAddingWL]       = React.useState(false);
   const [newWLName, setNewWLName]     = React.useState('');
   const [addingCat, setAddingCat]     = React.useState(false);
   const [newCatName, setNewCatName]   = React.useState('');
   const [addTickerQ, setAddTickerQ]   = React.useState('');
   const [addTickerRes, setAddTickerRes] = React.useState([]);
-  const [addingTocat, setAddingTocat] = React.useState(null); // catId
-  const [fundamentals, setFundamentals] = React.useState({}); // symbol → data
+  const [addingTocat, setAddingTocat] = React.useState(null); // catId or 'top'
+  const [fundamentals, setFundamentals] = React.useState({});
   const [loadingFund, setLoadingFund] = React.useState({});
-  const [dragState, setDragState]     = React.useState(null); // {symbol,catId,fromCatId}
+  const [dragState, setDragState]     = React.useState(null);
   const [dragOverCat, setDragOverCat] = React.useState(null);
   const [dragOverSym, setDragOverSym] = React.useState(null);
+  const [sortCol, setSortCol]         = React.useState(null); // 'price'|'change'|'mktcap'|'eps'|'health'
+  const [sortDir, setSortDir]         = React.useState('desc');
 
   const wl = watchlists.find(w => w.id === activeWLId);
   const allItems = wl ? wl.categories.flatMap(cat => cat.items) : [];
 
-  // Fetch fundamentals for all visible items (batched, cached)
+  // Fetch fundamentals — batched, cached
   React.useEffect(() => {
     if (!wl) return;
     const syms = allItems.map(i => i.symbol).filter(s => s && !isISIN(s) && !loadingFund[s] && !fundamentals[s]);
@@ -1537,48 +1539,39 @@ function WatchlistPage({ watchlists, setWatchlists, activeWLId, setActiveWLId, o
     })();
   }, [activeWLId, allItems.map(i=>i.symbol).join(',')]);
 
-  // Watchlist mutations
+  // ── Mutations ──
   const mutateWL = fn => setWatchlists(prev => prev.map(w => w.id === activeWLId ? fn(w) : w));
-
   const flagItem = (symbol, flag) => mutateWL(w => ({
     ...w, categories: w.categories.map(cat => ({
       ...cat, items: cat.items.map(it => it.symbol === symbol ? {...it, flag} : it)
     }))
   }));
-
   const removeItem = (symbol) => mutateWL(w => ({
     ...w, categories: w.categories.map(cat => ({
       ...cat, items: cat.items.filter(it => it.symbol !== symbol)
     }))
   }));
-
   const addCategory = (name) => mutateWL(w => ({
     ...w, categories: [...w.categories, { id: 'cat_' + Date.now(), name, items: [] }]
   }));
-
-  const renameCategory = (catId, name) => mutateWL(w => ({
-    ...w, categories: w.categories.map(cat => cat.id === catId ? {...cat, name} : cat)
-  }));
-
   const deleteCategory = (catId) => mutateWL(w => {
     const cats = w.categories.filter(c => c.id !== catId);
     const orphans = w.categories.find(c => c.id === catId)?.items || [];
     if (!cats.length) return w;
     return { ...w, categories: cats.map((c, i) => i === 0 ? {...c, items: [...c.items, ...orphans]} : c) };
   });
-
   const addItemToCat = (catId, item) => mutateWL(w => {
     const already = w.categories.some(cat => cat.items.some(it => it.symbol === item.symbol));
     if (already) return w;
+    const targetCat = catId || w.categories[0]?.id;
     return { ...w, categories: w.categories.map(cat =>
-      cat.id === catId ? {...cat, items: [...cat.items, {...item, flag: null, order: cat.items.length}]} : cat
+      cat.id === targetCat ? {...cat, items: [...cat.items, {...item, flag: null}]} : cat
     )};
   });
 
-  // Drag & drop
+  // ── Drag & drop ──
   const handleDragStart = (e, symbol, fromCatId) => {
-    setDragState({ symbol, fromCatId });
-    e.dataTransfer.effectAllowed = 'move';
+    setDragState({ symbol, fromCatId }); e.dataTransfer.effectAllowed = 'move';
   };
   const handleDragOver = (e, catId, overSym) => {
     e.preventDefault(); e.dataTransfer.dropEffect = 'move';
@@ -1605,16 +1598,14 @@ function WatchlistPage({ watchlists, setWatchlists, activeWLId, setActiveWLId, o
         if (beforeSym) {
           const idx = items.findIndex(it => it.symbol === beforeSym);
           items.splice(idx >= 0 ? idx : items.length, 0, draggedItem);
-        } else {
-          items.push(draggedItem);
-        }
+        } else { items.push(draggedItem); }
         return {...cat, items};
       })};
     });
   };
   const handleDragEnd = () => { setDragState(null); setDragOverCat(null); setDragOverSym(null); };
 
-  // Compute health score from fundamentals
+  // ── Data helpers ──
   const getHealthScore = (sym) => {
     const d = fundamentals[sym];
     if (!d) return null;
@@ -1630,21 +1621,55 @@ function WatchlistPage({ watchlists, setWatchlists, activeWLId, setActiveWLId, o
     if (last.freeCashFlow != null) scores.push(last.freeCashFlow > 0 ? 2 : 0);
     const pe = d.peRatio;
     if (pe != null && pe > 0) scores.push(pe < (isTech?30:20) ? 2 : pe < (isTech?50:35) ? 1 : 0);
-    if (!scores.length) return null;
-    return Math.round(scores.reduce((a,b)=>a+b,0)/scores.length*50);
+    return scores.length ? Math.round(scores.reduce((a,b)=>a+b,0)/scores.length*50) : null;
   };
-
   const getEPSGrowth = (sym) => {
     const d = fundamentals[sym];
     if (!d) return null;
     const yrs = d.byYear?.slice(-3) || [];
-    const last = yrs[yrs.length-1];
-    const prev = yrs[yrs.length-2];
+    const last = yrs[yrs.length-1]; const prev = yrs[yrs.length-2];
     if (!last?.eps || !prev?.eps || prev.eps === 0) return null;
     return (last.eps / prev.eps - 1) * 100;
   };
+  const getItemPrice = sym => {
+    const pos = positions.find(p => (p.fmpTicker || p.symbol) === sym);
+    return pos ? { price: pos.currentPrice, change: pos.currentPrice && pos.avgPrice ? ((pos.currentPrice/pos.avgPrice)-1)*100 : null } : null;
+  };
+  const fmtMktCap = v => {
+    if (v == null) return null;
+    if (v >= 1e12) return (v/1e12).toFixed(1) + 'T';
+    if (v >= 1e9)  return (v/1e9).toFixed(1)  + 'B';
+    if (v >= 1e6)  return (v/1e6).toFixed(0)  + 'M';
+    return v.toFixed(0);
+  };
 
-  // Add ticker search
+  // ── Sorting ──
+  const toggleSort = (col) => {
+    if (sortCol === col) setSortDir(d => d === 'desc' ? 'asc' : 'desc');
+    else { setSortCol(col); setSortDir('desc'); }
+  };
+  const getSortVal = (sym, col) => {
+    const fund = fundamentals[sym];
+    const pd = getItemPrice(sym);
+    if (col === 'price')  return pd?.price ?? -Infinity;
+    if (col === 'change') return pd?.change ?? -Infinity;
+    if (col === 'mktcap') return fund?.marketCap ?? -Infinity;
+    if (col === 'eps')    return getEPSGrowth(sym) ?? -Infinity;
+    if (col === 'health') return getHealthScore(sym) ?? -Infinity;
+    if (col === 'sector') return fund?.sector ?? '';
+    return 0;
+  };
+  const sortItems = (items) => {
+    if (!sortCol) return items;
+    return [...items].sort((a, b) => {
+      const va = getSortVal(a.symbol, sortCol);
+      const vb = getSortVal(b.symbol, sortCol);
+      if (typeof va === 'string') return sortDir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
+      return sortDir === 'asc' ? va - vb : vb - va;
+    });
+  };
+
+  // Ticker search
   React.useEffect(() => {
     if (!addTickerQ) { setAddTickerRes([]); return; }
     const t = setTimeout(() => {
@@ -1653,31 +1678,30 @@ function WatchlistPage({ watchlists, setWatchlists, activeWLId, setActiveWLId, o
     return () => clearTimeout(t);
   }, [addTickerQ]);
 
-  const fmtMktCap = v => {
-    if (v == null) return '—';
-    if (v >= 1e12) return (v/1e12).toFixed(1) + 'T';
-    if (v >= 1e9)  return (v/1e9).toFixed(1)  + 'B';
-    if (v >= 1e6)  return (v/1e6).toFixed(0)  + 'M';
-    return v.toFixed(0);
+  const SortIcon = ({ col }) => {
+    if (sortCol !== col) return <span style={{opacity:0.25,fontSize:9,marginLeft:2}}>⇅</span>;
+    return <span style={{color:'var(--green)',fontSize:9,marginLeft:2}}>{sortDir==='desc'?'↓':'↑'}</span>;
   };
 
-  const getItemPrice = sym => {
-    const pos = positions.find(p => (p.fmpTicker || p.symbol) === sym);
-    return pos ? { price: pos.currentPrice, change: pos.currentPrice && pos.avgPrice ? ((pos.currentPrice/pos.avgPrice)-1)*100 : null } : null;
-  };
+  const COL_HDR = { fontSize:9, color:'var(--text3)', letterSpacing:'0.1em', cursor:'pointer',
+    userSelect:'none', display:'flex', alignItems:'center', gap:2, transition:'color 0.12s' };
 
   if (!wl) return null;
+
+  // Flatten all items for sorted "flat" view vs per-category
+  const isSorted = !!sortCol;
+  const flatSortedItems = isSorted ? sortItems(allItems) : null;
 
   return (
     <div style={{ display:'flex', height:'100%', overflow:'hidden', background:'var(--bg)' }}>
 
-      {/* ── Left: WL selector ── */}
-      <div style={{ width:200, flexShrink:0, borderRight:'1px solid var(--border)', background:'var(--surface)',
-        display:'flex', flexDirection:'column', padding:'14px 10px', gap:4 }}>
+      {/* ── Left sidebar: WL selector ── */}
+      <div style={{ width:200, flexShrink:0, borderRight:'1px solid var(--border)',
+        background:'var(--surface)', display:'flex', flexDirection:'column', padding:'14px 10px', gap:4 }}>
         <div className="mono" style={{ fontSize:9, color:'var(--text3)', letterSpacing:'0.12em', marginBottom:6, paddingLeft:4 }}>WATCHLISTS</div>
         {watchlists.map(w => (
-          <button key={w.id} onClick={() => setActiveWLId(w.id)}
-            className="mono" style={{ textAlign:'left', padding:'7px 10px', borderRadius:6, cursor:'pointer',
+          <button key={w.id} onClick={() => setActiveWLId(w.id)} className="mono"
+            style={{ textAlign:'left', padding:'7px 10px', borderRadius:6, cursor:'pointer',
               border:'1px solid', fontSize:11, letterSpacing:'0.04em', transition:'all 0.12s',
               borderColor: activeWLId===w.id ? 'rgba(0,229,160,0.35)' : 'var(--border)',
               background:  activeWLId===w.id ? 'var(--green-dim)' : 'transparent',
@@ -1686,7 +1710,6 @@ function WatchlistPage({ watchlists, setWatchlists, activeWLId, setActiveWLId, o
             <span style={{ float:'right', opacity:0.5, fontSize:10 }}>{w.categories.flatMap(c=>c.items).length}</span>
           </button>
         ))}
-        {/* New watchlist */}
         {addingWL ? (
           <input className="inp mono" autoFocus placeholder="List name…" value={newWLName}
             onChange={e=>setNewWLName(e.target.value)}
@@ -1714,26 +1737,58 @@ function WatchlistPage({ watchlists, setWatchlists, activeWLId, setActiveWLId, o
             setActiveWLId('portfolio');
           }} className="mono"
             style={{padding:'5px 10px',borderRadius:5,border:'1px solid var(--red-dim)',background:'transparent',
-              color:'var(--red)',cursor:'pointer',fontSize:9,letterSpacing:'0.06em',opacity:0.6}}>
+              color:'var(--red)',cursor:'pointer',fontSize:9,letterSpacing:'0.06em',opacity:0.7}}>
             Delete list
           </button>
         )}
       </div>
 
-      {/* ── Right: Table + categories ── */}
+      {/* ── Right: table ── */}
       <div style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden', minWidth:0 }}>
 
-        {/* Header bar */}
+        {/* ── Toolbar ── */}
         <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between',
-          padding:'12px 20px', borderBottom:'1px solid var(--border)', flexShrink:0 }}>
+          padding:'11px 20px', borderBottom:'1px solid var(--border)', flexShrink:0, gap:12 }}>
           <div>
             <div className="serif" style={{ fontSize:20, letterSpacing:'-0.02em' }}>{wl.name}</div>
-            <div className="mono" style={{ fontSize:10, color:'var(--text3)', marginTop:2 }}>
+            <div className="mono" style={{ fontSize:10, color:'var(--text3)', marginTop:1 }}>
               {allItems.length} item{allItems.length!==1?'s':''} · {wl.categories.length} categor{wl.categories.length!==1?'ies':'y'}
+              {sortCol && <span style={{color:'var(--green)'}}> · sorted by {sortCol}</span>}
             </div>
           </div>
-          <div style={{ display:'flex', gap:8 }}>
-            {/* Add category */}
+          <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+            {/* ── Global add item button ── */}
+            <div style={{position:'relative'}}>
+              {addingTocat==='top' ? (
+                <div style={{display:'flex',gap:6,alignItems:'center'}}>
+                  <div style={{position:'relative'}}>
+                    <input className="inp mono" autoFocus placeholder="Search stock, ETF, crypto…"
+                      value={addTickerQ} onChange={e=>setAddTickerQ(e.target.value)}
+                      onBlur={()=>setTimeout(()=>{setAddTickerRes([]);setAddTickerQ('');setAddingTocat(null);},200)}
+                      style={{fontSize:11,padding:'6px 10px',width:220}}/>
+                    {addTickerRes.length > 0 && (
+                      <div style={{position:'absolute',top:'110%',right:0,zIndex:999}}>
+                        <TickerDropdown results={addTickerRes} searching={false}
+                          onSelect={r=>{
+                            addItemToCat(wl.categories[0]?.id, {symbol:r.symbol,name:r.name});
+                            setAddTickerQ('');setAddTickerRes([]);setAddingTocat(null);
+                          }}/>
+                      </div>
+                    )}
+                  </div>
+                  <button onClick={()=>{setAddingTocat(null);setAddTickerQ('');setAddTickerRes([]);}}
+                    style={{background:'none',border:'none',cursor:'pointer',color:'var(--text3)',fontSize:14}}>✕</button>
+                </div>
+              ) : (
+                <button onClick={()=>setAddingTocat('top')}
+                  style={{padding:'7px 14px',borderRadius:6,border:'1px solid rgba(0,229,160,0.35)',
+                    background:'var(--green-dim)',color:'var(--green)',cursor:'pointer',
+                    fontSize:11,fontFamily:'IBM Plex Mono,monospace',letterSpacing:'0.04em'}}>
+                  + Add Item
+                </button>
+              )}
+            </div>
+            {/* ── Add category ── */}
             {addingCat ? (
               <input className="inp mono" autoFocus placeholder="Category name…" value={newCatName}
                 onChange={e=>setNewCatName(e.target.value)}
@@ -1741,206 +1796,134 @@ function WatchlistPage({ watchlists, setWatchlists, activeWLId, setActiveWLId, o
                   if(e.key==='Enter'&&newCatName.trim()){addCategory(newCatName.trim());setNewCatName('');setAddingCat(false);}
                   if(e.key==='Escape'){setAddingCat(false);setNewCatName('');}
                 }}
-                style={{fontSize:11,padding:'6px 10px',width:160}}
+                style={{fontSize:11,padding:'6px 10px',width:150}}
                 onBlur={()=>setTimeout(()=>{setAddingCat(false);setNewCatName('');},150)}/>
             ) : (
-              <button onClick={()=>setAddingCat(true)} className="btn btn-ghost"
-                style={{fontSize:10,padding:'6px 12px'}}>+ Category</button>
+              <button onClick={()=>setAddingCat(true)}
+                style={{padding:'7px 14px',borderRadius:6,border:'1px solid var(--border2)',
+                  background:'transparent',color:'var(--text2)',cursor:'pointer',
+                  fontSize:11,fontFamily:'IBM Plex Mono,monospace',letterSpacing:'0.04em'}}>
+                + Category
+              </button>
+            )}
+            {sortCol && (
+              <button onClick={()=>setSortCol(null)}
+                style={{padding:'5px 10px',borderRadius:5,border:'1px solid var(--border)',
+                  background:'transparent',color:'var(--text3)',cursor:'pointer',
+                  fontSize:9,fontFamily:'IBM Plex Mono,monospace',letterSpacing:'0.06em'}}>
+                ✕ Clear sort
+              </button>
             )}
           </div>
         </div>
 
-        {/* Column headers */}
-        <div style={{ display:'grid', gridTemplateColumns:'2fr 1fr 1fr 1fr 1fr 1fr 0.9fr',
+        {/* ── Column headers ── */}
+        <div style={{ display:'grid', gridTemplateColumns:'24px 2fr 1fr 1fr 1fr 1fr 1fr 0.9fr',
           padding:'7px 20px', borderBottom:'1px solid var(--border)',
-          background:'var(--surface)', flexShrink:0 }}>
-          {['ASSET','PRICE','CHG %','MKT CAP','EPS GROWTH','SECTOR','HEALTH'].map(h=>(
-            <div key={h} className="mono" style={{ fontSize:9, color:'var(--text3)', letterSpacing:'0.1em',
-              textAlign: h==='ASSET'?'left':'right' }}>{h}</div>
+          background:'var(--surface)', flexShrink:0, gap:8 }}>
+          <div/>{/* drag handle col */}
+          <div className="mono" style={{fontSize:9,color:'var(--text3)',letterSpacing:'0.1em'}}>ASSET</div>
+          {[['price','PRICE'],['change','CHG %'],['mktcap','MKT CAP'],['eps','EPS YoY'],['sector','SECTOR'],['health','HEALTH']].map(([col,label])=>(
+            <div key={col} className="mono" style={{...COL_HDR, justifyContent:'flex-end'}}
+              onClick={()=>toggleSort(col)}
+              onMouseEnter={e=>e.currentTarget.style.color='var(--text)'}
+              onMouseLeave={e=>e.currentTarget.style.color='var(--text3)'}>
+              {sortCol===col ? <span style={{color:'var(--green)'}}>{label}</span> : label}
+              <SortIcon col={col}/>
+            </div>
           ))}
         </div>
 
-        {/* Categories + rows */}
+        {/* ── Rows ── */}
         <div style={{ flex:1, overflow:'auto' }}>
-          {wl.categories.map((cat, catIdx) => (
-            <div key={cat.id}
-              onDragOver={e=>handleDragOver(e,cat.id,null)}
-              onDrop={e=>handleDrop(e,cat.id,null)}>
-
-              {/* Category header */}
-              <div style={{ display:'flex', alignItems:'center', gap:8,
-                padding:'8px 20px 6px', background:'var(--surface2)',
-                borderTop: catIdx>0?'1px solid var(--border)':'none',
-                borderBottom:'1px solid var(--border)' }}>
-                <CategoryLabel cat={cat} onRename={name=>renameCategory(cat.id,name)}/>
-                <div style={{flex:1}}/>
-                <span className="mono" style={{fontSize:9,color:'var(--text3)'}}>{cat.items.length}</span>
-                {wl.categories.length>1 && (
-                  <button onClick={()=>deleteCategory(cat.id)}
-                    style={{background:'none',border:'none',cursor:'pointer',color:'var(--text3)',fontSize:11,opacity:0.5}}>✕</button>
-                )}
-                {/* Add ticker to this category */}
-                {addingTocat===cat.id ? (
-                  <div style={{position:'relative'}}>
-                    <input className="inp mono" autoFocus placeholder="Search…" value={addTickerQ}
-                      onChange={e=>setAddTickerQ(e.target.value)}
-                      onBlur={()=>setTimeout(()=>{setAddTickerRes([]);setAddTickerQ('');setAddingTocat(null);},200)}
-                      style={{fontSize:10,padding:'3px 8px',width:140}}/>
-                    <div style={{position:'absolute',top:'110%',right:0,zIndex:50}}>
-                      <TickerDropdown results={addTickerRes} searching={false}
-                        onSelect={r=>{addItemToCat(cat.id,{symbol:r.symbol,name:r.name});setAddTickerQ('');setAddTickerRes([]);setAddingTocat(null);}}/>
-                    </div>
-                  </div>
-                ) : (
-                  <button onClick={()=>setAddingTocat(cat.id)} className="mono"
-                    style={{fontSize:9,padding:'2px 7px',borderRadius:4,border:'1px solid var(--border)',
-                      background:'transparent',color:'var(--text3)',cursor:'pointer',letterSpacing:'0.05em'}}>
-                    + Add
-                  </button>
-                )}
-              </div>
-
-              {/* Rows */}
-              {cat.items.length === 0 && (
-                <div className="mono" style={{padding:'16px 20px',fontSize:10,color:'var(--text3)',fontStyle:'italic',
-                  background: dragOverCat===cat.id ? 'rgba(0,229,160,0.04)' : 'transparent',
-                  borderBottom:'1px solid var(--border)'}}>
-                  Drop items here…
-                </div>
-              )}
-              {cat.items.map((item) => {
-                const fund = fundamentals[item.symbol];
-                const loading = loadingFund[item.symbol];
-                const priceData = getItemPrice(item.symbol);
-                const score = getHealthScore(item.symbol);
-                const epsGrowth = getEPSGrowth(item.symbol);
-                const flagCol = item.flag ? FLAG_COLORS[item.flag] : null;
-                const isDragging = dragState?.symbol === item.symbol;
-                const isDropTarget = dragOverCat===cat.id && dragOverSym===item.symbol;
-                return (
-                  <div key={item.symbol}
-                    draggable
-                    onDragStart={e=>handleDragStart(e,item.symbol,cat.id)}
-                    onDragOver={e=>handleDragOver(e,cat.id,item.symbol)}
-                    onDrop={e=>handleDrop(e,cat.id,item.symbol)}
-                    onDragEnd={handleDragEnd}
-                    onContextMenu={e=>{
-                      e.preventDefault();
-                      setCtxMenu({x:e.clientX,y:e.clientY,item,catId:cat.id});
-                    }}
-                    onClick={()=>onOpenChart(item.symbol)}
-                    style={{ display:'grid', gridTemplateColumns:'2fr 1fr 1fr 1fr 1fr 1fr 0.9fr',
-                      padding:'10px 20px', borderBottom:'1px solid var(--border)',
-                      cursor:'grab', transition:'background 0.1s, opacity 0.15s',
-                      opacity: isDragging ? 0.35 : 1,
-                      background: isDropTarget ? 'rgba(0,229,160,0.06)'
-                        : flagCol ? flagCol.bg : 'transparent',
-                      borderLeft: flagCol ? '3px solid '+flagCol.dot : '3px solid transparent' }}
-                    onMouseEnter={e=>{if(!isDragging)e.currentTarget.style.background=flagCol?flagCol.bg:'var(--surface2)';}}
-                    onMouseLeave={e=>{e.currentTarget.style.background=flagCol?flagCol.bg:'transparent';}}>
-
-                    {/* Asset */}
-                    <div style={{display:'flex',alignItems:'center',gap:8,minWidth:0}}>
-                      <span style={{fontSize:10,color:'var(--text3)',cursor:'grab',opacity:0.4}}>⠿</span>
-                      {flagCol && <span style={{width:6,height:6,borderRadius:'50%',background:flagCol.dot,flexShrink:0,display:'inline-block'}}/>}
-                      <div style={{minWidth:0}}>
-                        <div className="mono" style={{fontSize:12,fontWeight:600,color:'var(--text)'}}>{item.symbol}</div>
-                        <div style={{fontSize:10,color:'var(--text3)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:120}}>
-                          {item.name || fund?.companyName || '—'}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Price */}
-                    <div style={{textAlign:'right'}}>
-                      {loading ? <span className="mono shimmer" style={{fontSize:11,color:'var(--text3)'}}>…</span>
-                        : priceData?.price != null
-                        ? <span className="mono" style={{fontSize:12,fontWeight:500}}>{priceData.price.toFixed(2)}</span>
-                        : <span className="mono" style={{fontSize:12,color:'var(--text3)'}}>—</span>}
-                    </div>
-
-                    {/* Change % */}
-                    <div style={{textAlign:'right'}}>
-                      {priceData?.change != null ? (
-                        <span className="mono" style={{fontSize:11,fontWeight:600,
-                          color:priceData.change>=0?'var(--green)':'var(--red)'}}>
-                          {priceData.change>=0?'+':''}{priceData.change.toFixed(2)}%
-                        </span>
-                      ) : <span className="mono" style={{fontSize:11,color:'var(--text3)'}}>—</span>}
-                    </div>
-
-                    {/* Mkt Cap */}
-                    <div style={{textAlign:'right'}}>
-                      <span className="mono" style={{fontSize:11,color:'var(--text2)'}}>
-                        {fund?.marketCap ? fmtMktCap(fund.marketCap) : loading ? '…' : '—'}
-                      </span>
-                    </div>
-
-                    {/* EPS Growth YoY */}
-                    <div style={{textAlign:'right'}}>
-                      {epsGrowth != null ? (
-                        <span className="mono" style={{fontSize:11,fontWeight:600,
-                          color:epsGrowth>=0?'var(--green)':'var(--red)'}}>
-                          {epsGrowth>=0?'+':''}{epsGrowth.toFixed(1)}%
-                        </span>
-                      ) : <span className="mono" style={{fontSize:11,color:'var(--text3)'}}>{loading?'…':'—'}</span>}
-                    </div>
-
-                    {/* Sector */}
-                    <div style={{textAlign:'right'}}>
-                      {fund?.sector ? (
-                        <span className="mono" style={{fontSize:9,padding:'2px 6px',borderRadius:4,
-                          background:'var(--surface2)',border:'1px solid var(--border)',color:'var(--text3)'}}>
-                          {fund.sector.length>10?fund.sector.slice(0,10)+'…':fund.sector}
-                        </span>
-                      ) : <span style={{fontSize:11,color:'var(--text3)'}}>{loading?'…':'—'}</span>}
-                    </div>
-
-                    {/* Health Score */}
-                    <div style={{textAlign:'right',display:'flex',alignItems:'center',justifyContent:'flex-end',gap:5}}>
-                      {score != null ? (<>
-                        <div style={{width:36,height:4,borderRadius:2,background:'var(--surface2)',overflow:'hidden'}}>
-                          <div style={{height:'100%',width:score+'%',borderRadius:2,
-                            background:score>=70?'var(--green)':score>=40?'var(--gold)':'var(--red)',transition:'width 0.4s'}}/>
-                        </div>
-                        <span className="mono" style={{fontSize:10,fontWeight:600,
-                          color:score>=70?'var(--green)':score>=40?'var(--gold)':'var(--red)'}}>
-                          {score}
-                        </span>
-                      </>) : <span className="mono" style={{fontSize:10,color:'var(--text3)'}}>{loading?'…':'—'}</span>}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          ))}
-
-          {/* Drop zone at bottom */}
-          {dragState && (
-            <div onDragOver={e=>{e.preventDefault();setDragOverCat('__bottom__');}}
-              onDrop={e=>{handleDrop(e,wl.categories[wl.categories.length-1]?.id,null);}}
-              style={{height:60,display:'flex',alignItems:'center',justifyContent:'center',
-                background: dragOverCat==='__bottom__'?'rgba(0,229,160,0.06)':'transparent',
-                border:'2px dashed',borderColor: dragOverCat==='__bottom__'?'var(--green)':'var(--border)',
-                borderRadius:8,margin:'12px 20px',transition:'all 0.15s'}}>
-              <span className="mono" style={{fontSize:10,color:'var(--text3)'}}>Drop here</span>
-            </div>
-          )}
-
-          {allItems.length===0 && (
+          {allItems.length === 0 && (
             <div style={{padding:'60px 20px',textAlign:'center'}}>
               <div style={{fontSize:36,marginBottom:12}}>★</div>
               <div className="serif" style={{fontSize:18,color:'var(--text2)',marginBottom:8}}>Your watchlist is empty</div>
-              <div className="mono" style={{fontSize:11,color:'var(--text3)'}}>Click "+ Add" on a category to add stocks</div>
+              <div className="mono" style={{fontSize:11,color:'var(--text3)'}}>Click "+ Add Item" to add stocks, ETFs or crypto</div>
             </div>
           )}
+
+          {/* ── Sorted flat view (no categories shown) ── */}
+          {isSorted && flatSortedItems.map(item => (
+            <WLRow key={item.symbol} item={item} catId={null}
+              fundamentals={fundamentals} loadingFund={loadingFund}
+              getHealthScore={getHealthScore} getEPSGrowth={getEPSGrowth}
+              getItemPrice={getItemPrice} fmtMktCap={fmtMktCap}
+              dragState={dragState} dragOverSym={dragOverSym} dragOverCat={dragOverCat}
+              handleDragStart={handleDragStart} handleDragOver={handleDragOver}
+              handleDrop={handleDrop} handleDragEnd={handleDragEnd}
+              setCtxMenu={setCtxMenu} onOpenChart={onOpenChart}/>
+          ))}
+
+          {/* ── Category grouped view ── */}
+          {!isSorted && wl.categories.map((cat, catIdx) => (
+            <div key={cat.id} onDragOver={e=>handleDragOver(e,cat.id,null)} onDrop={e=>handleDrop(e,cat.id,null)}>
+              {/* Category header */}
+              {wl.categories.length > 1 && (
+                <div style={{ display:'flex', alignItems:'center', gap:8, padding:'7px 20px 5px',
+                  background:'var(--surface2)',
+                  borderTop: catIdx>0?'1px solid var(--border)':'none',
+                  borderBottom:'1px solid var(--border)' }}>
+                  <CategoryLabel cat={cat} onRename={name=>setWatchlists(prev=>prev.map(w=>w.id!==activeWLId?w:{
+                    ...w,categories:w.categories.map(c=>c.id===cat.id?{...c,name}:c)
+                  }))}/>
+                  <span className="mono" style={{fontSize:9,color:'var(--text3)',marginLeft:4}}>{cat.items.length}</span>
+                  <div style={{flex:1}}/>
+                  {/* Per-category add button */}
+                  <div style={{position:'relative'}}>
+                    {addingTocat===cat.id ? (
+                      <div style={{display:'flex',gap:4,alignItems:'center'}}>
+                        <input className="inp mono" autoFocus placeholder="Search…" value={addTickerQ}
+                          onChange={e=>setAddTickerQ(e.target.value)}
+                          onBlur={()=>setTimeout(()=>{setAddTickerRes([]);setAddTickerQ('');setAddingTocat(null);},200)}
+                          style={{fontSize:10,padding:'3px 8px',width:140}}/>
+                        {addTickerRes.length > 0 && (
+                          <div style={{position:'absolute',top:'110%',right:0,zIndex:50}}>
+                            <TickerDropdown results={addTickerRes} searching={false}
+                              onSelect={r=>{addItemToCat(cat.id,{symbol:r.symbol,name:r.name});setAddTickerQ('');setAddTickerRes([]);setAddingTocat(null);}}/>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <button onClick={()=>setAddingTocat(cat.id)} className="mono"
+                        style={{fontSize:9,padding:'2px 7px',borderRadius:4,border:'1px solid var(--border)',
+                          background:'transparent',color:'var(--text3)',cursor:'pointer'}}>
+                        + Add
+                      </button>
+                    )}
+                  </div>
+                  {wl.categories.length>1 && (
+                    <button onClick={()=>deleteCategory(cat.id)}
+                      style={{background:'none',border:'none',cursor:'pointer',color:'var(--text3)',fontSize:11,opacity:0.5}}>✕</button>
+                  )}
+                </div>
+              )}
+              {cat.items.length===0 && (
+                <div className="mono" style={{padding:'14px 20px',fontSize:10,color:'var(--text3)',fontStyle:'italic',
+                  background:dragOverCat===cat.id?'rgba(0,229,160,0.04)':'transparent',
+                  borderBottom:'1px solid var(--border)'}}>
+                  Drop items here or click + Add
+                </div>
+              )}
+              {cat.items.map(item => (
+                <WLRow key={item.symbol} item={item} catId={cat.id}
+                  fundamentals={fundamentals} loadingFund={loadingFund}
+                  getHealthScore={getHealthScore} getEPSGrowth={getEPSGrowth}
+                  getItemPrice={getItemPrice} fmtMktCap={fmtMktCap}
+                  dragState={dragState} dragOverSym={dragOverSym} dragOverCat={dragOverCat}
+                  handleDragStart={handleDragStart} handleDragOver={handleDragOver}
+                  handleDrop={handleDrop} handleDragEnd={handleDragEnd}
+                  setCtxMenu={setCtxMenu} onOpenChart={onOpenChart}/>
+              ))}
+            </div>
+          ))}
         </div>
       </div>
 
-      {/* Context menu */}
+      {/* ── Context menu ── */}
       {ctxMenu && (
-        <WLContextMenu
-          x={ctxMenu.x} y={ctxMenu.y} item={ctxMenu.item}
+        <WLContextMenu x={ctxMenu.x} y={ctxMenu.y} item={ctxMenu.item}
           onFlag={(sym,flag)=>flagItem(sym,flag)}
           onOpenStock={()=>{
             const pos = positions.find(p=>(p.fmpTicker||p.symbol)===ctxMenu.item.symbol);
@@ -1949,6 +1932,112 @@ function WatchlistPage({ watchlists, setWatchlists, activeWLId, setActiveWLId, o
           onRemove={()=>removeItem(ctxMenu.item.symbol)}
           onClose={()=>setCtxMenu(null)}/>
       )}
+    </div>
+  );
+}
+
+// ── Shared WatchlistRow ───────────────────────────────────────────────────────
+function WLRow({ item, catId, fundamentals, loadingFund, getHealthScore, getEPSGrowth,
+  getItemPrice, fmtMktCap, dragState, dragOverSym, dragOverCat,
+  handleDragStart, handleDragOver, handleDrop, handleDragEnd, setCtxMenu, onOpenChart }) {
+  const fund = fundamentals[item.symbol];
+  const loading = loadingFund[item.symbol];
+  const priceData = getItemPrice(item.symbol);
+  const score = getHealthScore(item.symbol);
+  const epsGrowth = getEPSGrowth(item.symbol);
+  const flagCol = item.flag ? FLAG_COLORS[item.flag] : null;
+  const isDragging = dragState?.symbol === item.symbol;
+  const isDropTarget = dragOverCat===catId && dragOverSym===item.symbol;
+  const mktcap = fund?.marketCap ? fmtMktCap(fund.marketCap) : null;
+  return (
+    <div
+      draggable={!!catId}
+      onDragStart={catId ? e=>handleDragStart(e,item.symbol,catId) : undefined}
+      onDragOver={catId ? e=>handleDragOver(e,catId,item.symbol) : undefined}
+      onDrop={catId ? e=>handleDrop(e,catId,item.symbol) : undefined}
+      onDragEnd={catId ? handleDragEnd : undefined}
+      onContextMenu={e=>{e.preventDefault();setCtxMenu({x:e.clientX,y:e.clientY,item,catId});}}
+      onClick={()=>onOpenChart(item.symbol)}
+      style={{ display:'grid', gridTemplateColumns:'24px 2fr 1fr 1fr 1fr 1fr 1fr 0.9fr',
+        padding:'10px 20px', borderBottom:'1px solid var(--border)', gap:8,
+        cursor: catId ? 'grab' : 'pointer', transition:'background 0.1s, opacity 0.15s',
+        opacity: isDragging ? 0.35 : 1,
+        background: isDropTarget ? 'rgba(0,229,160,0.06)' : flagCol ? flagCol.bg : 'transparent',
+        borderLeft: flagCol ? '3px solid '+flagCol.dot : '3px solid transparent' }}
+      onMouseEnter={e=>{if(!isDragging)e.currentTarget.style.background=flagCol?flagCol.bg:'var(--surface2)';}}
+      onMouseLeave={e=>{e.currentTarget.style.background=flagCol?flagCol.bg:'transparent';}}>
+
+      {/* Drag handle */}
+      <div style={{display:'flex',alignItems:'center',justifyContent:'center',
+        opacity:catId?0.3:0,fontSize:11,color:'var(--text3)',cursor:'grab'}}>⠿</div>
+
+      {/* Asset */}
+      <div style={{display:'flex',alignItems:'center',gap:8,minWidth:0}}>
+        {flagCol && <span style={{width:6,height:6,borderRadius:'50%',background:flagCol.dot,flexShrink:0}}/>}
+        <div style={{minWidth:0}}>
+          <div className="mono" style={{fontSize:12,fontWeight:600,color:'var(--text)'}}>{item.symbol}</div>
+          <div style={{fontSize:10,color:'var(--text3)',overflow:'hidden',textOverflow:'ellipsis',
+            whiteSpace:'nowrap',maxWidth:150}}>{item.name||fund?.companyName||'—'}</div>
+        </div>
+      </div>
+
+      {/* Price */}
+      <div style={{textAlign:'right',display:'flex',alignItems:'center',justifyContent:'flex-end'}}>
+        {loading ? <span className="mono shimmer" style={{fontSize:11,color:'var(--text3)'}}>…</span>
+          : priceData?.price!=null
+          ? <span className="mono" style={{fontSize:12,fontWeight:500}}>{priceData.price.toFixed(2)}</span>
+          : <span className="mono" style={{fontSize:12,color:'var(--text3)'}}>—</span>}
+      </div>
+
+      {/* Chg % */}
+      <div style={{textAlign:'right',display:'flex',alignItems:'center',justifyContent:'flex-end'}}>
+        {priceData?.change!=null
+          ? <span className="mono" style={{fontSize:11,fontWeight:600,color:priceData.change>=0?'var(--green)':'var(--red)'}}>
+              {priceData.change>=0?'+':''}{priceData.change.toFixed(2)}%
+            </span>
+          : <span className="mono" style={{fontSize:11,color:'var(--text3)'}}>—</span>}
+      </div>
+
+      {/* Mkt Cap */}
+      <div style={{textAlign:'right',display:'flex',alignItems:'center',justifyContent:'flex-end'}}>
+        <span className="mono" style={{fontSize:11,color:'var(--text2)'}}>
+          {mktcap || (loading?<span className="shimmer">…</span>:'—')}
+        </span>
+      </div>
+
+      {/* EPS Growth */}
+      <div style={{textAlign:'right',display:'flex',alignItems:'center',justifyContent:'flex-end'}}>
+        {epsGrowth!=null
+          ? <span className="mono" style={{fontSize:11,fontWeight:600,color:epsGrowth>=0?'var(--green)':'var(--red)'}}>
+              {epsGrowth>=0?'+':''}{epsGrowth.toFixed(1)}%
+            </span>
+          : <span className="mono" style={{fontSize:11,color:'var(--text3)'}}>{loading?<span className="shimmer">…</span>:'—'}</span>}
+      </div>
+
+      {/* Sector */}
+      <div style={{textAlign:'right',display:'flex',alignItems:'center',justifyContent:'flex-end'}}>
+        {fund?.sector
+          ? <span className="mono" style={{fontSize:9,padding:'2px 6px',borderRadius:4,
+              background:'var(--surface2)',border:'1px solid var(--border)',color:'var(--text3)',
+              whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',maxWidth:90}}>
+              {fund.sector}
+            </span>
+          : <span style={{fontSize:11,color:'var(--text3)'}}>{loading?<span className="shimmer">…</span>:'—'}</span>}
+      </div>
+
+      {/* Health */}
+      <div style={{textAlign:'right',display:'flex',alignItems:'center',justifyContent:'flex-end',gap:5}}>
+        {score!=null ? (<>
+          <div style={{width:32,height:4,borderRadius:2,background:'var(--surface2)',overflow:'hidden'}}>
+            <div style={{height:'100%',width:score+'%',borderRadius:2,
+              background:score>=70?'var(--green)':score>=40?'var(--gold)':'var(--red)',transition:'width 0.4s'}}/>
+          </div>
+          <span className="mono" style={{fontSize:10,fontWeight:600,
+            color:score>=70?'var(--green)':score>=40?'var(--gold)':'var(--red)'}}>
+            {score}
+          </span>
+        </>) : <span className="mono" style={{fontSize:10,color:'var(--text3)'}}>{loading?<span className="shimmer">…</span>:'—'}</span>}
+      </div>
     </div>
   );
 }
@@ -2015,7 +2104,7 @@ const DRAW_TOOLS = [
   { key: 'rect',       icon: '▭',  label: 'Rectangle'   },
 ];
 
-function ChartsPage({ positions, watchlists, setWatchlists, activeWLId, setActiveWLId, chartTicker, setChartTicker }) {
+function ChartsPage({ positions, watchlists, setWatchlists, activeWLId, setActiveWLId, chartTicker, setChartTicker, onOpenStock }) {
   // Use shared state from App
   const ticker = chartTicker;
   const setTicker = setChartTicker;
@@ -2524,7 +2613,10 @@ function ChartsPage({ positions, watchlists, setWatchlists, activeWLId, setActiv
                   ...cat, items: cat.items.map(it => it.symbol === sym ? {...it, flag} : it)
                 }))
               } : wl))}
-              onOpenStock={() => {}}
+              onOpenStock={() => {
+                const pos = positions.find(p => (p.fmpTicker||p.symbol)===ctxMenu.item.symbol);
+                if (pos && onOpenStock) onOpenStock(pos);
+              }}
               onRemove={() => setWatchlists(prev => prev.map(wl => wl.id === activeWL ? {
                 ...wl, categories: wl.categories.map(cat => ({...cat, items: cat.items.filter(it => it.symbol !== ctxMenu.item.symbol)}))
               } : wl))}
@@ -4314,7 +4406,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v53 · Watchlist v2: dedicated page, categories, drag & drop, right-click flags, shared state</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v54 · Watchlist fixes: layout, sorting, add-item, open-overview from right-click</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
@@ -4346,7 +4438,8 @@ export default function App() {
             <ChartsPage positions={positions}
               watchlists={watchlists} setWatchlists={setWatchlists}
               activeWLId={activeWLId} setActiveWLId={setActiveWLId}
-              chartTicker={chartTicker} setChartTicker={setChartTicker}/>
+              chartTicker={chartTicker} setChartTicker={setChartTicker}
+              onOpenStock={pos=>{ setSelectedPos(pos); setNav("stock"); }}/>
           </div>
         )}
         {nav==="watchlist" && (
@@ -4359,7 +4452,7 @@ export default function App() {
               positions={positions}/>
           </div>
         )}
-        <div className="main-scroll" style={{flex:1,overflow:"auto",padding:"26px 30px",display:nav==="charts"?"none":"block"}}>
+        <div className="main-scroll" style={{flex:1,overflow:"auto",padding:"26px 30px",display:(nav==="charts"||nav==="watchlist")?"none":"block"}}>
 
           {/* Header */}
           <div className="fu" style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:22}}>
