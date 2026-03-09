@@ -1806,7 +1806,11 @@ function WatchlistPage({ watchlists, setWatchlists, activeWLId, setActiveWLId, o
     const lp = livePrices[sym];
     if (lp) return { price: lp.price, change: lp.change, mktcap: lp.mktcap };
     // Fallback to portfolio position while live prices load
-    const pos = positions.find(p => (p.fmpTicker || p.symbol) === sym);
+    // Match on full fmpTicker, base ticker (SAP.DE → SAP), or symbol
+    const pos = positions.find(p => {
+      const ft = p.fmpTicker || p.symbol;
+      return ft === sym || ft.split('.')[0] === sym || p.symbol === sym;
+    });
     return pos?.currentPrice ? { price: pos.currentPrice, change: pos.dailyChange ?? null, mktcap: null } : null;
   };
   const fmtMktCap = v => {
@@ -4924,13 +4928,17 @@ export default function App() {
           if(i+BATCH2 < needsResolution.length) await delay2(300);
         }
       }
-      const tickerList=[...new Set(stockPos.map(getT).filter(Boolean))];
+      // Build ticker list: try full ticker (SAP.DE) AND base ticker (SAP) for better FMP coverage
+      const rawTickers = stockPos.map(getT).filter(Boolean);
+      const baseTickers = rawTickers.map(t => t.split('.')[0]).filter(t => !rawTickers.includes(t));
+      const tickerList = [...new Set([...rawTickers, ...baseTickers])];
       if(!tickerList.length){ setLastUpdated(new Date()); return; }
       const qmap = await fetchQuotes(tickerList);
       setPositions(prev=>prev.map(p=>{
         if(p.type==='crypto'||p.type==='derivative') return p;
         const t=getT(p);
-        const q=qmap[t];
+        // Try full ticker (SAP.DE), then base ticker (SAP), then raw symbol
+        const q=qmap[t] || qmap[t?.split('.')[0]] || qmap[p.symbol];
         if(!q?.price) return p;
         const price = (p.isin?.startsWith('US') || (!t?.includes('.') && p.type!=='etf'))
           ? q.price / eurUsd  // USD stocks → EUR
