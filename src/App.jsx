@@ -4984,12 +4984,12 @@ let _sessionCryptoKey = null;
 let _sessionSalt      = null; // hex string, persisted in DB (not secret)
 
 // ── WebCrypto helpers (pure functions, no React) ──────────
-const _enc = new TextEncoder();
-const _dec = new TextDecoder();
-
+// TextEncoder/Decoder instantiated inside each function to avoid
+// Vite minifier temporal dead zone issues with module-level const.
 async function _deriveCryptoKey(password, saltHex) {
+  const enc       = new TextEncoder();
   const saltBytes = Uint8Array.from(saltHex.match(/../g).map(h => parseInt(h, 16)));
-  const baseKey   = await crypto.subtle.importKey('raw', _enc.encode(password), 'PBKDF2', false, ['deriveKey']);
+  const baseKey   = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveKey']);
   return crypto.subtle.deriveKey(
     { name: 'PBKDF2', salt: saltBytes, iterations: 100000, hash: 'SHA-256' },
     baseKey,
@@ -4999,8 +4999,9 @@ async function _deriveCryptoKey(password, saltHex) {
 }
 
 async function _encryptPayload(key, obj) {
+  const enc       = new TextEncoder();
   const iv        = crypto.getRandomValues(new Uint8Array(12));
-  const plainBuf  = _enc.encode(JSON.stringify(obj));
+  const plainBuf  = enc.encode(JSON.stringify(obj));
   const cipherBuf = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, plainBuf);
   const ivHex     = Array.from(iv).map(b => b.toString(16).padStart(2, '0')).join('');
   const ctB64     = btoa(String.fromCharCode(...new Uint8Array(cipherBuf)));
@@ -5008,10 +5009,11 @@ async function _encryptPayload(key, obj) {
 }
 
 async function _decryptPayload(key, ivHex, ctB64) {
+  const dec      = new TextDecoder();
   const iv       = Uint8Array.from(ivHex.match(/../g).map(h => parseInt(h, 16)));
   const ctBytes  = Uint8Array.from(atob(ctB64), ch => ch.charCodeAt(0));
   const plainBuf = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ctBytes);
-  return JSON.parse(_dec.decode(plainBuf));
+  return JSON.parse(dec.decode(plainBuf));
 }
 
 function _randomSaltHex() {
