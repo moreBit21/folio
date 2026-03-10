@@ -103,7 +103,7 @@ export default async function handler(req, res) {
 
   try {
     const [income, cashflow, balance, keyMetrics, profile, analystEstimates, analystEstQ,
-           incomeQ, cashflowQ, quote] = await Promise.all([
+           incomeQ, cashflowQ, quoteData] = await Promise.all([
       fmp(`/income-statement?symbol=${symbol}&limit=5`),
       fmp(`/cash-flow-statement?symbol=${symbol}&limit=5`),
       fmp(`/balance-sheet-statement?symbol=${symbol}&limit=5`),
@@ -113,12 +113,10 @@ export default async function handler(req, res) {
       fmp(`/analyst-estimates?symbol=${symbol}&limit=6&period=quarter`),
       fmp(`/income-statement?symbol=${symbol}&limit=12&period=quarter`),
       fmp(`/cash-flow-statement?symbol=${symbol}&limit=12&period=quarter`),
-      fmpV3(`/quote/${symbol}`),
+      fmp(`/quote?symbol=${symbol}`),
     ]);
 
     const p = profile[0] || {};
-    const q = quote[0] || {};
-    console.log('[DEAL] quote fields:', JSON.stringify({ price: q.price, priceAvg50: q.priceAvg50, yearHigh: q.yearHigh, quoteLength: quote.length }));
 
     const years = [...new Set([
       ...income.map(r => r.calendarYear || r.date?.slice(0,4)).filter(Boolean),
@@ -329,9 +327,12 @@ export default async function handler(req, res) {
       fy1Date: fwdEst?.date?.slice(0,7) ?? null,
       fy2Date: fwd2Est?.date?.slice(0,7) ?? null,
       beta: p.beta ?? null, dividendYield: p.lastDividend ?? null,
-      priceAvg50: quote[0]?.priceAvg50 ?? null, priceAvg200: quote[0]?.priceAvg200 ?? null,
-      yearHigh: quote[0]?.yearHigh ?? null, yearLow: quote[0]?.yearLow ?? null,
-      currentPrice: quote[0]?.price ?? p.price ?? null,
+      // Price trend fields from stable /quote endpoint
+      currentPrice:  quoteData[0]?.price      ?? p.price  ?? null,
+      priceAvg50:    quoteData[0]?.priceAvg50  ?? null,
+      priceAvg200:   quoteData[0]?.priceAvg200 ?? null,
+      yearHigh:      quoteData[0]?.yearHigh    ?? null,
+      yearLow:       quoteData[0]?.yearLow     ?? null,
       description: isLite ? undefined : (p.description || null),
       byYear,
       byQuarter,
