@@ -1385,60 +1385,49 @@ function dedupeSearchResults(results) {
     return true;
   }).slice(0, 7);
 }
-async function fetchTickerSearch(query, limit = 12) {
+async function fetchTickerSearch(query, limit = 12, signal) {
   if (!query || query.length < 1) return [];
   const looksLikeTicker = query.length <= 6 && !/\s/.test(query);
   const q = query.toUpperCase();
   const searchLimit = Math.max(limit, 20);
+  const opts = signal ? { signal } : {};
 
-  // 1) Name search
-  const namePromise = fetch('/api/fmp?path=' + encodeURIComponent('/search-name?query=' + query + '&limit=' + searchLimit))
-    .then(r => r.ok ? r.json() : []).catch(() => []);
+  const safeFetch = (url) => fetch(url, opts).then(r => r.ok ? r.json() : []).catch(() => []);
 
-  // 2) Symbol/ticker search (matches on symbol prefix like "APP" → AAPL, APPN…)
-  const symbolPromise = fetch('/api/fmp?path=' + encodeURIComponent('/search?query=' + q + '&limit=' + searchLimit))
-    .then(r => r.ok ? r.json() : []).catch(() => []);
+  const [nameData, symbolData, quoteData] = await Promise.all([
+    safeFetch('/api/fmp?path=' + encodeURIComponent('/search-name?query=' + query + '&limit=' + searchLimit)),
+    safeFetch('/api/fmp?path=' + encodeURIComponent('/search?query=' + q + '&limit=' + searchLimit)),
+    looksLikeTicker
+      ? safeFetch('/api/fmp?path=' + encodeURIComponent('/quote/' + q))
+      : Promise.resolve([]),
+  ]);
 
-  // 3) Exact quote lookup for short ticker-like queries
-  const quotePromise = looksLikeTicker
-    ? fetch('/api/fmp?path=' + encodeURIComponent('/quote/' + q))
-        .then(r => r.ok ? r.json() : []).catch(() => [])
-    : Promise.resolve([]);
+  if (signal?.aborted) return [];
 
-  try {
-    const [nameData, symbolData, quoteData] = await Promise.all([namePromise, symbolPromise, quotePromise]);
+  const normalize = (arr) => (Array.isArray(arr) ? arr : []).filter(t => t?.symbol);
+  const quoteResults  = normalize(quoteData).map(t => ({ symbol: t.symbol, name: t.name, exchangeShortName: t.exchange || '', exchange: t.exchange || '' }));
+  const symbolResults = normalize(symbolData);
+  const nameResults   = normalize(nameData);
 
-    const normalize = (arr) => (Array.isArray(arr) ? arr : []).filter(t => t?.symbol);
-    const nameResults   = normalize(nameData);
-    const symbolResults = normalize(symbolData);
-    const quoteResults  = normalize(quoteData).map(t => ({
-      symbol: t.symbol, name: t.name,
-      exchangeShortName: t.exchange || '', exchange: t.exchange || ''
-    }));
+  // Merge: exact quote first, then symbol search, then name search
+  const seen = new Set();
+  const merged = [];
+  for (const r of [...quoteResults, ...symbolResults, ...nameResults]) {
+    if (r?.symbol && !seen.has(r.symbol)) { seen.add(r.symbol); merged.push(r); }
+  }
 
-    // Merge with priority: exact quote → symbol search → name search
-    const seen = new Set();
-    const merged = [];
-    for (const r of [...quoteResults, ...symbolResults, ...nameResults]) {
-      if (r?.symbol && !seen.has(r.symbol)) { seen.add(r.symbol); merged.push(r); }
-    }
+  merged.sort((a, b) => {
+    const aExact  = a.symbol?.toUpperCase() === q ? -20 : 0;
+    const bExact  = b.symbol?.toUpperCase() === q ? -20 : 0;
+    const aStarts = a.symbol?.toUpperCase().startsWith(q) ? -8 : 0;
+    const bStarts = b.symbol?.toUpperCase().startsWith(q) ? -8 : 0;
+    const aLen    = a.symbol?.length || 99;
+    const bLen    = b.symbol?.length || 99;
+    return (aExact + aStarts + (aStarts ? aLen * 0.1 : 0) + rankSearchResult(a))
+         - (bExact + bStarts + (bStarts ? bLen * 0.1 : 0) + rankSearchResult(b));
+  });
 
-    // Sort: exact match first, then starts-with on symbol, then exchange rank
-    merged.sort((a, b) => {
-      const aExact = a.symbol?.toUpperCase() === q ? -20 : 0;
-      const bExact = b.symbol?.toUpperCase() === q ? -20 : 0;
-      const aStarts = a.symbol?.toUpperCase().startsWith(q) ? -8 : 0;
-      const bStarts = b.symbol?.toUpperCase().startsWith(q) ? -8 : 0;
-      // prefer shorter symbols (NVDA over NVDAX)
-      const aLen = a.symbol?.length || 99;
-      const bLen = b.symbol?.length || 99;
-      const aScore = aExact + aStarts + (aStarts ? aLen * 0.1 : 0) + rankSearchResult(a);
-      const bScore = bExact + bStarts + (bStarts ? bLen * 0.1 : 0) + rankSearchResult(b);
-      return aScore - bScore;
-    });
-
-    return dedupeSearchResults(merged.filter(r => r && r.symbol)).slice(0, limit);
-  } catch { return []; }
+  return dedupeSearchResults(merged.filter(r => r && r.symbol)).slice(0, limit);
 }
 
 function TickerDropdown({ results, searching, onSelect, highlightIdx = -1 }) {
@@ -1855,10 +1844,11 @@ function WatchlistPage({ watchlists, setWatchlists, activeWLId, setActiveWLId, o
   // Ticker search
   React.useEffect(() => {
     if (!addTickerQ) { setAddTickerRes([]); return; }
+    const ctrl = new AbortController();
     const t = setTimeout(() => {
-      fetchTickerSearch(addTickerQ, 10).then(r => setAddTickerRes(r)).catch(() => setAddTickerRes([]));
+      fetchTickerSearch(addTickerQ, 10, ctrl.signal).then(r => { if (!ctrl.signal.aborted) setAddTickerRes(r); }).catch(() => {});
     }, 220);
-    return () => clearTimeout(t);
+    return () => { clearTimeout(t); ctrl.abort(); };
   }, [addTickerQ]);
 
   const SortIcon = ({ col }) => {
@@ -2528,22 +2518,23 @@ function ChartsPage({ positions, watchlists, setWatchlists, activeWLId, setActiv
   React.useEffect(() => {
     if (!searchQ) { setSearchRes([]); return; }
     setSearching(true);
+    const ctrl = new AbortController();
     const t = setTimeout(() => {
-      fetchTickerSearch(searchQ, 14)
-        .then(r => setSearchRes(r))
-        .catch(() => setSearchRes([]))
-        .finally(() => setSearching(false));
+      fetchTickerSearch(searchQ, 14, ctrl.signal)
+        .then(r => { if (!ctrl.signal.aborted) { setSearchRes(r); setSearching(false); } })
+        .catch(() => { if (!ctrl.signal.aborted) setSearching(false); });
     }, 220);
-    return () => clearTimeout(t);
+    return () => { clearTimeout(t); ctrl.abort(); setSearching(false); };
   }, [searchQ]);
 
   // ── Add ticker search (watchlist) ──
   React.useEffect(() => {
     if (!addTickerQ) { setAddTickerRes([]); return; }
+    const ctrl = new AbortController();
     const t = setTimeout(() => {
-      fetchTickerSearch(addTickerQ, 10).then(r => setAddTickerRes(r)).catch(() => setAddTickerRes([]));
+      fetchTickerSearch(addTickerQ, 10, ctrl.signal).then(r => { if (!ctrl.signal.aborted) setAddTickerRes(r); }).catch(() => {});
     }, 220);
-    return () => clearTimeout(t);
+    return () => { clearTimeout(t); ctrl.abort(); };
   }, [addTickerQ]);
 
   const clearDrawings = () => {
@@ -2976,13 +2967,13 @@ function CompareView() {
     if (!input || input.length < 1) { setCmpSearchRes([]); setCmpHighlight(-1); return; }
     setCmpSearching(true);
     setCmpHighlight(-1);
+    const ctrl = new AbortController();
     const t = setTimeout(() => {
-      fetchTickerSearch(input, 12)
-        .then(r => setCmpSearchRes(r))
-        .catch(() => setCmpSearchRes([]))
-        .finally(() => setCmpSearching(false));
+      fetchTickerSearch(input, 12, ctrl.signal)
+        .then(r => { if (!ctrl.signal.aborted) { setCmpSearchRes(r); setCmpSearching(false); } })
+        .catch(() => { if (!ctrl.signal.aborted) setCmpSearching(false); });
     }, 220);
-    return () => clearTimeout(t);
+    return () => { clearTimeout(t); ctrl.abort(); setCmpSearching(false); };
   }, [input]);
 
   const addTicker = async (raw) => {
