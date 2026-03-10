@@ -1653,11 +1653,12 @@ function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
   });
   const [results, setResults]     = React.useState([]);
   const [wlDropdown, setWlDropdown] = React.useState(null); // symbol showing WL dropdown
+  const wlDropRef = React.useRef(null);
   React.useEffect(() => {
     if (!wlDropdown) return;
-    const close = () => setWlDropdown(null);
-    document.addEventListener('click', close);
-    return () => document.removeEventListener('click', close);
+    const close = (e) => { if (wlDropRef.current && !wlDropRef.current.contains(e.target)) setWlDropdown(null); };
+    const t = setTimeout(() => document.addEventListener('click', close), 0);
+    return () => { clearTimeout(t); document.removeEventListener('click', close); };
   }, [wlDropdown]);
   const [loading, setLoading]     = React.useState(false);
   const [error, setError]         = React.useState(null);
@@ -6031,11 +6032,13 @@ export default function App() {
   const [showModal,    setShowModal]    = useState(false); // legacy, keep for compat
   const [txModal,      setTxModal]      = useState(null);  // {mode:'buy'|'sell'|'cash'}
   const [showAddMenu,  setShowAddMenu]  = useState(false); // dropdown
+  const addMenuRef = React.useRef(null);
   React.useEffect(() => {
     if (!showAddMenu) return;
-    const close = () => setShowAddMenu(false);
-    document.addEventListener('click', close);
-    return () => document.removeEventListener('click', close);
+    const close = (e) => { if (addMenuRef.current && !addMenuRef.current.contains(e.target)) setShowAddMenu(false); };
+    // Use setTimeout so this listener doesn't catch the opening click
+    const t = setTimeout(() => document.addEventListener('click', close), 0);
+    return () => { clearTimeout(t); document.removeEventListener('click', close); };
   }, [showAddMenu]);
   const [showImport,   setShowImport]   = useState(false);
   const [range,        setRange]        = useState("1Y");
@@ -6925,7 +6928,7 @@ export default function App() {
                 <PriceBadge loading={priceLoading}/>
               </div>
             </div>
-            <div style={{position:'relative'}}>
+            <div style={{position:'relative'}} ref={addMenuRef}>
               <button className="btn btn-primary" onClick={()=>setShowAddMenu(v=>!v)}>+ ADD ▾</button>
               {showAddMenu && (
                 <div style={{position:'absolute',right:0,top:'100%',marginTop:4,
@@ -6970,7 +6973,7 @@ export default function App() {
             )}
 
 
-            <div className="fu2 kpi-grid" style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:16}}>
+            <div className="fu2 kpi-grid" style={{display:"grid",gridTemplateColumns:`repeat(${transactions.some(t=>t.type==='deposit'||t.type==='withdraw')?5:4},1fr)`,gap:12,marginBottom:16}}>
               {[
                 {label:"PORTFOLIO VALUE", val: priceLoading?"Loading…":`€${fmt(totalVal,0)}`, sub:`${vis.length} positions`, bar:null},
                 {label:"TOTAL P&L",       val: priceLoading?"…":`${pnl>=0?"+":"-"}€${fmt(Math.abs(pnl),0)}`, sub:`${pnl>=0?"▲":"▼"} ${fmt(Math.abs(pnlPct))}%`, bar:pnl>=0?"g":"r"},
