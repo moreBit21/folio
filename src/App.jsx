@@ -1795,8 +1795,8 @@ function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
       if (!fund) return false;
       const dp = fund.curPrice ?? r.price;
       const priceTrendDown = dp != null
-        && ((fund.priceAvg50 != null && dp < fund.priceAvg50)
-          || (fund.yearHigh != null && dp < fund.yearHigh * 0.90));
+        && (fund.priceAvg50 != null && dp < fund.priceAvg50)  // below 50d MA
+        && (fund.yearHigh != null && dp < fund.yearHigh * 0.80); // AND >20% off 52w high
       const fundStrong = (fund.score ?? 0) >= 55
         && (fund.ttmRevGrowth > 0 || fund.fy1RevGrowth > 0)
         && (fund.ttmEpsGrowth > 0 || fund.fy1EpsGrowth > 0);
@@ -2009,8 +2009,8 @@ function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
                     const isLoadingScore = loadingFund[row.symbol];
                     const _dp = fund?.curPrice ?? row.price;
                     const priceTrendDown = _dp != null
-                      && ((fund?.priceAvg50 != null && _dp < fund.priceAvg50)
-                        || (fund?.yearHigh != null && _dp < fund.yearHigh * 0.90));
+                      && (fund?.priceAvg50 != null && _dp < fund.priceAvg50)   // below 50d MA
+                      && (fund?.yearHigh != null && _dp < fund.yearHigh * 0.80); // AND >20% off 52w high
                     const fundStrong = score != null && score >= 55
                       && (fund?.ttmRevGrowth > 0 || fund?.fy1RevGrowth > 0)
                       && (fund?.ttmEpsGrowth > 0 || fund?.fy1EpsGrowth > 0);
@@ -4871,8 +4871,8 @@ function StockDetail({ pos, onBack, transactions }) {
             const avg50 = data?.priceAvg50;
             const high  = data?.yearHigh;
             const priceTrendDown = dp != null
-              && ((avg50 != null && dp < avg50)
-                || (high != null && dp < high * 0.90));
+              && (avg50 != null && dp < avg50)       // below 50d MA
+              && (high != null && dp < high * 0.80); // AND >20% off 52w high
             const fundStrong = overallScore != null && overallScore >= 55
               && (data?.ttmRevGrowth > 0 || data?.fy1RevGrowth > 0)
               && (data?.ttmEpsGrowth > 0 || data?.fy1EpsGrowth > 0);
