@@ -98,62 +98,8 @@ export default async function handler(req, res) {
 
   const div = (a, b) => (a != null && b != null && b !== 0) ? a / b : null;
 
-  // Lite mode: screener table needs pe, peg, evEbitda + pre-computed health score
-  if (req.query.lite === '1') {
-    try {
-      const [keyMetrics, profile, income, cashflow, balance] = await Promise.all([
-        fmp(`/key-metrics?symbol=${symbol}&limit=3`),
-        fmp(`/profile?symbol=${symbol}`),
-        fmp(`/income-statement?symbol=${symbol}&limit=3`),
-        fmp(`/cash-flow-statement?symbol=${symbol}&limit=3`),
-        fmp(`/balance-sheet-statement?symbol=${symbol}&limit=3`),
-      ]);
-      const p = profile[0] || {};
-      const km0 = keyMetrics[0] || {};
-
-      // Build byYear for health score calc (reuse same shape as full endpoint)
-      const years = [...new Set(income.map(r => r.calendarYear || r.date?.slice(0,4)).filter(Boolean))].sort();
-      const byYear = years.map(yr => {
-        const inc = income.find(r=>(r.calendarYear||r.date?.slice(0,4))===yr)||{};
-        const cf  = cashflow.find(r=>(r.calendarYear||r.date?.slice(0,4))===yr)||{};
-        const bal = balance.find(r=>(r.calendarYear||r.date?.slice(0,4))===yr)||{};
-        const km  = keyMetrics.find(r=>(r.calendarYear||r.date?.slice(0,4))===yr)||{};
-        const rev = inc.revenue ?? 0;
-        const fcf = (cf.operatingCashFlow??0) + (cf.capitalExpenditure??0); // capex is negative
-        return {
-          revenue: rev,
-          netIncome: inc.netIncome,
-          grossMargin: rev > 0 ? (inc.grossProfit??0)/rev : null,
-          netMargin: rev > 0 ? (inc.netIncome??0)/rev : null,
-          roe: km.roe ?? null,
-          roic: km.roic ?? null,
-          debtEquity: bal.totalDebt && bal.totalStockholdersEquity
-            ? bal.totalDebt / bal.totalStockholdersEquity : null,
-          currentRatio: km.currentRatio ?? null,
-          freeCashFlow: fcf,
-          operatingCF: cf.operatingCashFlow ?? null,
-        };
-      });
-
-      const sector = p.sector || '';
-      const peRatio = km0.peRatio ?? p.pe ?? null;
-      const pegRatio = km0.priceEarningsToGrowthRatio ?? null;
-      const evEbitda = km0.enterpriseValueOverEBITDA ?? null;
-
-      // Compute health score inline (same logic as client calcCanonicalHealthScore)
-      const healthScore = computeHealthScore({ byYear, sector, peRatio, pegRatio, evEbitda });
-
-      return res.status(200).json({
-        symbol, peRatio, pegRatio, evEbitda,
-        healthScore,
-        sector,
-        marketCap: p.mktCap ?? null,
-        beta: p.beta ?? null,
-      });
-    } catch(e) {
-      return res.status(500).json({ error: e.message });
-    }
-  }
+  // lite=1: same full pipeline, but strips byQuarter+description from response (see bottom)
+  const isLite = req.query.lite === '1';
 
   try {
     const [income, cashflow, balance, keyMetrics, profile, analystEstimates, analystEstQ,
@@ -380,9 +326,11 @@ export default async function handler(req, res) {
       fy1Date: fwdEst?.date?.slice(0,7) ?? null,
       fy2Date: fwd2Est?.date?.slice(0,7) ?? null,
       beta: p.beta ?? null, dividendYield: p.lastDividend ?? null,
-      description: p.description || null,
+      description: isLite ? undefined : (p.description || null),
       byYear,
-      byQuarter,
+      byQuarter: isLite ? undefined : byQuarter,
+      // Pre-computed health score for screener (lite mode only, avoids client recalc)
+      healthScore: isLite ? computeHealthScore({ byYear, sector: p.sector, peRatio: topPE, pegRatio, evEbitda: latestKm.evToEBITDA ?? null }) : undefined,
     });
   } catch (e) {
     res.status(500).json({ error: e.message, symbol });
