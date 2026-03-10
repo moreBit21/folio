@@ -1638,7 +1638,7 @@ const PRESETS = [
   { label: 'Low Beta',       icon: '🛡️', filters: { betaMax:'0.8', marketCapMin:'1000000000', sector:'All' } },
 ];
 
-function ScreenerPage({ onOpenStock }) {
+function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
   const [filters, setFilters] = React.useState({
     sector: 'All', exchange: 'All',
     marketCapMin: '', marketCapMax: '',
@@ -1648,9 +1648,17 @@ function ScreenerPage({ onOpenStock }) {
     volumeMin: '',
     evEbitdaMin: '', evEbitdaMax: '',
     pegMax: '',
+    forwardPEMax: '',
     healthMin: 0,
   });
   const [results, setResults]     = React.useState([]);
+  const [wlDropdown, setWlDropdown] = React.useState(null); // symbol showing WL dropdown
+  React.useEffect(() => {
+    if (!wlDropdown) return;
+    const close = () => setWlDropdown(null);
+    document.addEventListener('click', close);
+    return () => document.removeEventListener('click', close);
+  }, [wlDropdown]);
   const [loading, setLoading]     = React.useState(false);
   const [error, setError]         = React.useState(null);
   const [sortCol, setSortCol]     = React.useState('marketCap');
@@ -1699,9 +1707,10 @@ function ScreenerPage({ onOpenStock }) {
               const score = d.healthScore ?? null;
               const pe = d.peRatio ?? null;
               const peg = d.pegRatio ?? null;
-              setFundCache(prev => ({ ...prev, [sym]: { score, pe, peg } }));
+              const fwdPE = d.forwardPE ?? null;
+              setFundCache(prev => ({ ...prev, [sym]: { score, pe, peg, fwdPE } }));
             })
-            .catch(() => setFundCache(prev => ({ ...prev, [sym]: { score: null, pe: null, peg: null } })))
+            .catch(() => setFundCache(prev => ({ ...prev, [sym]: { score: null, pe: null, peg: null, fwdPE: null } })))
             .finally(() => setLoadingFund(prev => ({ ...prev, [sym]: false })));
         });
       }
@@ -1723,9 +1732,10 @@ function ScreenerPage({ onOpenStock }) {
       const score = d.healthScore ?? null;
       const pe = d.peRatio ?? null;
       const peg = d.pegRatio ?? null;
-      setFundCache(prev => ({ ...prev, [symbol]: { score, pe, peg } }));
+      const fwdPE = d.forwardPE ?? null;
+      setFundCache(prev => ({ ...prev, [symbol]: { score, pe, peg, fwdPE } }));
     } catch {
-      setFundCache(prev => ({ ...prev, [symbol]: { score: null, pe: null, peg: null } }));
+      setFundCache(prev => ({ ...prev, [symbol]: { score: null, pe: null, peg: null, fwdPE: null } }));
     } finally {
       setLoadingFund(prev => ({ ...prev, [symbol]: false }));
     }
@@ -1742,6 +1752,12 @@ function ScreenerPage({ onOpenStock }) {
       const maxPeg = parseFloat(filters.pegMax);
       if (!isNaN(maxPeg) && f != null && f.peg != null) {
         if (f.peg > maxPeg) return false;
+      }
+    }
+    if (filters.forwardPEMax) {
+      const maxFPE = parseFloat(filters.forwardPEMax);
+      if (!isNaN(maxFPE) && f != null && f.fwdPE != null) {
+        if (f.fwdPE > maxFPE) return false;
       }
     }
     return true;
@@ -1780,8 +1796,10 @@ function ScreenerPage({ onOpenStock }) {
     { key: '_div', label: 'Div%', fmt: () => '', numeric: true },
     { key: 'volume',         label: 'Volume',   fmt: fmtCap,           numeric: true },
     { key: '_pe',            label: 'P/E',      fmt: () => '',         numeric: true },
+    { key: '_fwdpe',         label: 'Fwd P/E',  fmt: () => '',         numeric: true },
     { key: '_peg',           label: 'PEG',      fmt: () => '',         numeric: true },
     { key: '_health',        label: 'Health',   fmt: () => '',         numeric: true },
+    { key: '_wl',            label: '+WL',      fmt: () => '',         numeric: false },
   ];
 
   const InpFilter = ({ label, fromKey, toKey, placeholder='e.g. 15' }) => (
@@ -1847,6 +1865,12 @@ function ScreenerPage({ onOpenStock }) {
           <InpFilter label="P/E RATIO" fromKey="peMin" toKey="peMax" />
           <InpFilter label="BETA" fromKey="betaMin" toKey="betaMax" />
           <InpFilter label="EV/EBITDA" fromKey="evEbitdaMin" toKey="evEbitdaMax" />
+          <div style={{marginBottom:10}}>
+            <div className="mono" style={{fontSize:9,color:'var(--text3)',letterSpacing:'0.1em',marginBottom:4}}>MAX FWD P/E <span style={{fontStyle:'italic',color:'var(--text3)'}}>(client-side)</span></div>
+            <input className="inp mono" placeholder="e.g. 25" value={filters.forwardPEMax||''}
+              onChange={e => setFilter('forwardPEMax', e.target.value)}
+              style={{width:80,padding:'5px 8px',fontSize:11}} />
+          </div>
           <div style={{marginBottom:10}}>
             <div className="mono" style={{fontSize:9,color:'var(--text3)',letterSpacing:'0.1em',marginBottom:4}}>MAX PEG RATIO <span style={{fontStyle:'italic',color:'var(--text3)'}}>(client-side)</span></div>
             <input className="inp mono" placeholder="e.g. 2" value={filters.pegMax||''}
@@ -1943,6 +1967,7 @@ function ScreenerPage({ onOpenStock }) {
                     const score = fund?.score ?? null;
                     const rowPe = fund?.pe ?? null;
                     const rowPeg = fund?.peg ?? null;
+                    const rowFwdPE = fund?.fwdPE ?? null;
                     const isLoadingScore = loadingFund[row.symbol];
                     return (
                       <tr key={row.symbol}
@@ -1998,6 +2023,16 @@ function ScreenerPage({ onOpenStock }) {
                             </span>
                           ) : <span style={{color:'var(--text3)'}}>—</span>}
                         </td>
+                        {/* Fwd P/E */}
+                        <td style={{padding:'8px 12px',textAlign:'right'}}>
+                          {isLoadingScore ? (
+                            <span className="mono shimmer" style={{fontSize:10,color:'var(--text3)'}}>···</span>
+                          ) : rowFwdPE != null ? (
+                            <span className="mono" style={{fontSize:11,color: rowFwdPE<=20?'var(--green)':rowFwdPE<=35?'var(--gold)':'var(--red)'}}>
+                              {rowFwdPE.toFixed(1)}x
+                            </span>
+                          ) : <span style={{color:'var(--text3)'}}>—</span>}
+                        </td>
                         {/* PEG */}
                         <td style={{padding:'8px 12px',textAlign:'right'}}>
                           {isLoadingScore ? (
@@ -2023,6 +2058,45 @@ function ScreenerPage({ onOpenStock }) {
                               load
                             </span>
                           )}
+                        </td>
+                        {/* Add to watchlist */}
+                        <td style={{padding:'8px 6px',textAlign:'center'}} onClick={e => e.stopPropagation()}>
+                          <div style={{position:'relative'}}>
+                            <button
+                              onClick={e => { e.stopPropagation(); setWlDropdown(wlDropdown===row.symbol?null:row.symbol); }}
+                              style={{background:'none',border:'1px solid var(--border)',borderRadius:4,
+                                color:'var(--text3)',cursor:'pointer',fontSize:10,padding:'2px 6px',
+                                lineHeight:1.4}}
+                              title="Add to watchlist">＋</button>
+                            {wlDropdown===row.symbol && watchlists.length > 0 && (
+                              <div style={{position:'absolute',right:0,top:'100%',zIndex:50,
+                                background:'var(--surface)',border:'1px solid var(--border2)',
+                                borderRadius:6,padding:4,minWidth:140,boxShadow:'0 4px 16px rgba(0,0,0,0.4)'}}>
+                                {watchlists.map(wl => (
+                                  <div key={wl.id}
+                                    onClick={() => {
+                                      if (!setWatchlists) return;
+                                      setWatchlists(prev => prev.map(w => {
+                                        if (w.id !== wl.id) return w;
+                                        const cat = w.categories[0];
+                                        if (!cat) return w;
+                                        if (cat.items.some(it => it.symbol === row.symbol)) return w;
+                                        return { ...w, categories: w.categories.map((c,i) => i===0
+                                          ? { ...c, items: [...c.items, { id: Date.now()+'', symbol: row.symbol, name: row.companyName, type:'stock' }] }
+                                          : c) };
+                                      }));
+                                      setWlDropdown(null);
+                                    }}
+                                    style={{padding:'6px 10px',cursor:'pointer',borderRadius:4,fontSize:11,
+                                      color:'var(--text2)',whiteSpace:'nowrap'}}
+                                    onMouseEnter={e=>e.currentTarget.style.background='var(--surface2)'}
+                                    onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                                    📋 {wl.name}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     );
@@ -5943,6 +6017,7 @@ export default function App() {
   const [priceStatus,  setPriceStatus]  = useState(null);
   const [lastUpdated,  setLastUpdated]  = useState(null);
   const [nav,          setNav]          = useState("dashboard");
+  const [prevNav,      setPrevNav]      = useState("dashboard");
   const [showModal,    setShowModal]    = useState(false);
   const [showImport,   setShowImport]   = useState(false);
   const [range,        setRange]        = useState("1Y");
@@ -6659,7 +6734,7 @@ export default function App() {
               watchlists={watchlists} setWatchlists={setWatchlists}
               activeWLId={activeWLId} setActiveWLId={setActiveWLId}
               chartTicker={chartTicker} setChartTicker={setChartTicker}
-              onOpenStock={pos=>{ setSelectedPos(pos); setNav("stock"); }}/>
+              onOpenStock={pos=>{ setPrevNav('portfolio'); setSelectedPos(pos); setNav("stock"); }}/>
           </div>
         )}
         {nav==="watchlist" && (
@@ -6667,7 +6742,7 @@ export default function App() {
             <WatchlistPage
               watchlists={watchlists} setWatchlists={setWatchlists}
               activeWLId={activeWLId} setActiveWLId={setActiveWLId}
-              onOpenStock={pos=>{ setSelectedPos(pos); setNav("stock"); }}
+              onOpenStock={pos=>{ setPrevNav('watchlist'); setSelectedPos(pos); setNav("stock"); }}
               onOpenChart={sym=>{ setChartTicker(sym); setNav("charts"); }}
               positions={positions}/>
           </div>
@@ -6900,15 +6975,17 @@ export default function App() {
           </>)}
 
           {nav==="portfolio"&&<PortfolioPage positions={positions} transactions={transactions}
-            onOpenStock={pos=>{setSelectedPos(pos);setNav("stock")}}
+            onOpenStock={pos=>{setPrevNav('charts');setSelectedPos(pos);setNav("stock")}}
             priceLoading={priceLoading}
             chartData={chartData} investedChartData={investedChartData}
             chartLoading={chartLoading} chartError={chartError} chartProgress={chartProgress}
             activeBM={activeBM} setActiveBM={setActiveBM}
             range={range} setRange={setRange}
             BENCHMARKS={BENCHMARKS} perfStats={perfStats}/>}
-          {nav==="stock"&&selectedPos&&<StockDetail pos={selectedPos} onBack={()=>{setNav("dashboard");setSelectedPos(null)}} transactions={transactions}/> }
-          {nav==="screener"&&<ScreenerPage onOpenStock={pos=>{setSelectedPos(pos);setNav('stock');}}/> }
+          {nav==="stock"&&selectedPos&&<StockDetail pos={selectedPos} onBack={()=>{setNav(prevNav||"dashboard");setSelectedPos(null)}} transactions={transactions}/> }
+          <div style={{display: nav==="screener" || (nav==="stock" && prevNav==="screener") ? 'flex' : 'none', flex:1, flexDirection:'column', minHeight:0}}>
+            <ScreenerPage onOpenStock={pos=>{setPrevNav('screener');setSelectedPos(pos);setNav('stock');}} watchlists={watchlists} setWatchlists={setWatchlists}/>
+          </div>
           {nav==="compare"&&<CompareView/>}
           {nav==="news"&&<NewsFeed positions={positions}/> }
           {nav==="settings"&&(
