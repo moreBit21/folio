@@ -1393,53 +1393,56 @@ async function fetchTickerSearch(query, limit = 12) {
   if (!query || query.length < 1) return [];
   const looksLikeTicker = query.length <= 6 && !/\s/.test(query);
   const q = query.toUpperCase();
-  const searchLimit = looksLikeTicker ? Math.max(limit, 20) : limit;
+  const searchLimit = Math.max(limit, 20);
 
-  // Run name search + ticker quote lookup in parallel
+  // 1) Name search
   const namePromise = fetch('/api/fmp?path=' + encodeURIComponent('/search-name?query=' + query + '&limit=' + searchLimit))
     .then(r => r.ok ? r.json() : []).catch(() => []);
 
-  // For short queries that look like tickers, also try /quote/TICKER for exact match
-  // and /search-name with uppercase variant
-  const tickerPromise = looksLikeTicker
+  // 2) Symbol/ticker search (matches on symbol prefix like "APP" → AAPL, APPN…)
+  const symbolPromise = fetch('/api/fmp?path=' + encodeURIComponent('/search?query=' + q + '&limit=' + searchLimit))
+    .then(r => r.ok ? r.json() : []).catch(() => []);
+
+  // 3) Exact quote lookup for short ticker-like queries
+  const quotePromise = looksLikeTicker
     ? fetch('/api/fmp?path=' + encodeURIComponent('/quote/' + q))
         .then(r => r.ok ? r.json() : []).catch(() => [])
     : Promise.resolve([]);
 
   try {
-    const [nameData, tickerData] = await Promise.all([namePromise, tickerPromise]);
-    const nameResults = Array.isArray(nameData) ? nameData : [];
-    // /quote returns array of quote objects — shape is different, normalize it
-    const tickerResults = (Array.isArray(tickerData) ? tickerData : [])
-      .filter(t => t?.symbol)
-      .map(t => ({ symbol: t.symbol, name: t.name, exchangeShortName: t.exchange || 'NASDAQ', stockExchange: t.exchange || '' }));
+    const [nameData, symbolData, quoteData] = await Promise.all([namePromise, symbolPromise, quotePromise]);
 
-    // Merge: put exact ticker matches first, then name results
+    const normalize = (arr) => (Array.isArray(arr) ? arr : []).filter(t => t?.symbol);
+    const nameResults   = normalize(nameData);
+    const symbolResults = normalize(symbolData);
+    const quoteResults  = normalize(quoteData).map(t => ({
+      symbol: t.symbol, name: t.name,
+      exchangeShortName: t.exchange || '', exchange: t.exchange || ''
+    }));
+
+    // Merge with priority: exact quote → symbol search → name search
     const seen = new Set();
     const merged = [];
-    // First add exact ticker matches from /quote
-    for (const r of tickerResults) {
-      if (!seen.has(r.symbol)) { seen.add(r.symbol); merged.push(r); }
-    }
-    // Then name search results
-    for (const r of nameResults) {
+    for (const r of [...quoteResults, ...symbolResults, ...nameResults]) {
       if (r?.symbol && !seen.has(r.symbol)) { seen.add(r.symbol); merged.push(r); }
     }
 
-    // For ticker-style queries, sort: exact symbol > starts-with > rest
-    if (looksLikeTicker) {
-      merged.sort((a, b) => {
-        const aScore = a.symbol?.toUpperCase() === q ? -3 : a.symbol?.toUpperCase().startsWith(q) ? -1 : 0;
-        const bScore = b.symbol?.toUpperCase() === q ? -3 : b.symbol?.toUpperCase().startsWith(q) ? -1 : 0;
-        if (aScore !== bScore) return aScore - bScore;
-        return rankSearchResult(a) - rankSearchResult(b);
-      });
-    }
+    // Sort: exact match first, then starts-with on symbol, then exchange rank
+    merged.sort((a, b) => {
+      const aExact = a.symbol?.toUpperCase() === q ? -10 : 0;
+      const bExact = b.symbol?.toUpperCase() === q ? -10 : 0;
+      const aStarts = a.symbol?.toUpperCase().startsWith(q) ? -3 : 0;
+      const bStarts = b.symbol?.toUpperCase().startsWith(q) ? -3 : 0;
+      const aScore = aExact + aStarts + rankSearchResult(a);
+      const bScore = bExact + bStarts + rankSearchResult(b);
+      return aScore - bScore;
+    });
+
     return dedupeSearchResults(merged.filter(r => r && r.symbol)).slice(0, limit);
   } catch { return []; }
 }
 
-function TickerDropdown({ results, searching, onSelect }) {
+function TickerDropdown({ results, searching, onSelect, highlightIdx = -1 }) {
   if (!searching && !results.length) return null;
   return (
     <div style={{
@@ -1448,14 +1451,15 @@ function TickerDropdown({ results, searching, onSelect }) {
       borderRadius:8, minWidth:280, maxWidth:360,
       boxShadow:'0 16px 48px rgba(0,0,0,0.7)', overflow:'hidden',
     }}>
-      {searching && <div className="mono" style={{padding:'10px 14px',fontSize:11,color:'var(--text3)'}}>Searching…</div>}
-      {results.map(r => (
+      {searching && !results.length && <div className="mono" style={{padding:'10px 14px',fontSize:11,color:'var(--text3)'}}>Searching…</div>}
+      {results.map((r, i) => (
         <div key={r.symbol} onMouseDown={e => { e.preventDefault(); onSelect(r); }}
           style={{display:'flex',alignItems:'center',justifyContent:'space-between',
             padding:'10px 14px', cursor:'pointer', borderBottom:'1px solid var(--border)',
+            background: i === highlightIdx ? 'var(--surface2)' : 'transparent',
             transition:'background 0.1s'}}
           onMouseEnter={e=>e.currentTarget.style.background='var(--surface2)'}
-          onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+          onMouseLeave={e=>e.currentTarget.style.background= i === highlightIdx ? 'var(--surface2)' : 'transparent'}>
           <div style={{minWidth:0}}>
             <div style={{display:'flex',alignItems:'center',gap:6}}>
               <span className="mono" style={{fontSize:12,fontWeight:700,color:'var(--text)',flexShrink:0}}>{r.symbol}</span>
@@ -1639,6 +1643,7 @@ function WatchlistPage({ watchlists, setWatchlists, activeWLId, setActiveWLId, o
   const [newCatName, setNewCatName]   = React.useState('');
   const [addTickerQ, setAddTickerQ]   = React.useState('');
   const [addTickerRes, setAddTickerRes] = React.useState([]);
+  const [addTickerHL, setAddTickerHL] = React.useState(-1);
   const [addingTocat, setAddingTocat] = React.useState(null); // catId or 'top'
   const [fundamentals, setFundamentals] = React.useState({});
   const [loadingFund, setLoadingFund] = React.useState({});
@@ -1942,15 +1947,26 @@ function WatchlistPage({ watchlists, setWatchlists, activeWLId, setActiveWLId, o
                 <div style={{display:'flex',gap:6,alignItems:'center'}}>
                   <div style={{position:'relative'}}>
                     <input className="inp mono" autoFocus placeholder="Search stock, ETF, crypto…"
-                      value={addTickerQ} onChange={e=>setAddTickerQ(e.target.value)}
-                      onBlur={()=>setTimeout(()=>{setAddTickerRes([]);setAddTickerQ('');setAddingTocat(null);},200)}
+                      value={addTickerQ} onChange={e=>{setAddTickerQ(e.target.value);setAddTickerHL(-1);}}
+                      onKeyDown={e=>{
+                        if(e.key==='ArrowDown'){e.preventDefault();setAddTickerHL(h=>Math.min(h+1,addTickerRes.length-1));}
+                        else if(e.key==='ArrowUp'){e.preventDefault();setAddTickerHL(h=>Math.max(h-1,-1));}
+                        else if(e.key==='Enter'){
+                          e.preventDefault();
+                          const pick = addTickerHL>=0 ? addTickerRes[addTickerHL] : addTickerRes[0];
+                          if(pick){addItemToCat(wl.categories[0]?.id,{symbol:pick.symbol,name:pick.name});setAddTickerQ('');setAddTickerRes([]);setAddTickerHL(-1);setAddingTocat(null);}
+                          else if(addTickerQ.trim()){addItemToCat(wl.categories[0]?.id,{symbol:addTickerQ.trim().toUpperCase(),name:addTickerQ.trim().toUpperCase()});setAddTickerQ('');setAddTickerRes([]);setAddTickerHL(-1);setAddingTocat(null);}
+                        }
+                        else if(e.key==='Escape'){setAddTickerRes([]);setAddTickerHL(-1);}
+                      }}
+                      onBlur={()=>setTimeout(()=>{setAddTickerRes([]);setAddTickerQ('');setAddTickerHL(-1);setAddingTocat(null);},200)}
                       style={{fontSize:11,padding:'6px 10px',width:220}}/>
-                    {addTickerRes.length > 0 && (
+                    {(addTickerRes.length > 0 || false) && (
                       <div style={{position:'absolute',top:'110%',right:0,zIndex:999}}>
-                        <TickerDropdown results={addTickerRes} searching={false}
+                        <TickerDropdown results={addTickerRes} searching={false} highlightIdx={addTickerHL}
                           onSelect={r=>{
                             addItemToCat(wl.categories[0]?.id, {symbol:r.symbol,name:r.name});
-                            setAddTickerQ('');setAddTickerRes([]);setAddingTocat(null);
+                            setAddTickerQ('');setAddTickerRes([]);setAddTickerHL(-1);setAddingTocat(null);
                           }}/>
                       </div>
                     )}
@@ -2054,13 +2070,24 @@ function WatchlistPage({ watchlists, setWatchlists, activeWLId, setActiveWLId, o
                     {addingTocat===cat.id ? (
                       <div style={{display:'flex',gap:4,alignItems:'center'}}>
                         <input className="inp mono" autoFocus placeholder="Search…" value={addTickerQ}
-                          onChange={e=>setAddTickerQ(e.target.value)}
-                          onBlur={()=>setTimeout(()=>{setAddTickerRes([]);setAddTickerQ('');setAddingTocat(null);},200)}
+                          onChange={e=>{setAddTickerQ(e.target.value);setAddTickerHL(-1);}}
+                          onKeyDown={e=>{
+                            if(e.key==='ArrowDown'){e.preventDefault();setAddTickerHL(h=>Math.min(h+1,addTickerRes.length-1));}
+                            else if(e.key==='ArrowUp'){e.preventDefault();setAddTickerHL(h=>Math.max(h-1,-1));}
+                            else if(e.key==='Enter'){
+                              e.preventDefault();
+                              const pick=addTickerHL>=0?addTickerRes[addTickerHL]:addTickerRes[0];
+                              if(pick){addItemToCat(cat.id,{symbol:pick.symbol,name:pick.name});setAddTickerQ('');setAddTickerRes([]);setAddTickerHL(-1);setAddingTocat(null);}
+                              else if(addTickerQ.trim()){addItemToCat(cat.id,{symbol:addTickerQ.trim().toUpperCase(),name:addTickerQ.trim().toUpperCase()});setAddTickerQ('');setAddTickerRes([]);setAddTickerHL(-1);setAddingTocat(null);}
+                            }
+                            else if(e.key==='Escape'){setAddTickerRes([]);setAddTickerHL(-1);}
+                          }}
+                          onBlur={()=>setTimeout(()=>{setAddTickerRes([]);setAddTickerQ('');setAddTickerHL(-1);setAddingTocat(null);},200)}
                           style={{fontSize:10,padding:'3px 8px',width:140}}/>
                         {addTickerRes.length > 0 && (
                           <div style={{position:'absolute',top:'110%',right:0,zIndex:50}}>
-                            <TickerDropdown results={addTickerRes} searching={false}
-                              onSelect={r=>{addItemToCat(cat.id,{symbol:r.symbol,name:r.name});setAddTickerQ('');setAddTickerRes([]);setAddingTocat(null);}}/>
+                            <TickerDropdown results={addTickerRes} searching={false} highlightIdx={addTickerHL}
+                              onSelect={r=>{addItemToCat(cat.id,{symbol:r.symbol,name:r.name});setAddTickerQ('');setAddTickerRes([]);setAddTickerHL(-1);setAddingTocat(null);}}/>
                           </div>
                         )}
                       </div>
@@ -2298,6 +2325,7 @@ function ChartsPage({ positions, watchlists, setWatchlists, activeWLId, setActiv
 
   const [searchQ, setSearchQ]       = React.useState('');
   const [searchRes, setSearchRes]   = React.useState([]);
+  const [searchHL, setSearchHL]     = React.useState(-1);
   const [searching, setSearching]   = React.useState(false);
   const searchRef                   = React.useRef(null);
 
@@ -2324,6 +2352,7 @@ function ChartsPage({ positions, watchlists, setWatchlists, activeWLId, setActiv
   const [newWLName, setNewWLName]     = React.useState('');
   const [addTickerQ, setAddTickerQ]   = React.useState('');
   const [addTickerRes, setAddTickerRes] = React.useState([]);
+  const [addTickerHL, setAddTickerHL] = React.useState(-1);
   const [addingTicker, setAddingTicker] = React.useState(false);
   const [ctxMenu, setCtxMenu]         = React.useState(null);
   const [wlPrices, setWlPrices]       = React.useState({});
@@ -2540,13 +2569,24 @@ function ChartsPage({ positions, watchlists, setWatchlists, activeWLId, setActiv
               className="inp mono"
               placeholder="Search ticker or company…"
               value={searchQ}
-              onChange={e => setSearchQ(e.target.value)}
-              onFocus={() => { if (ticker && !searchQ) setSearchQ(ticker); }}
-              onBlur={() => setTimeout(() => { setSearchRes([]); setSearchQ(''); setSearching(false); }, 200)}
+              onChange={e => { setSearchQ(e.target.value); setSearchHL(-1); }}
+              onFocus={() => { if (ticker && !searchQ) setSearchQ(ticker); setSearchHL(-1); }}
+              onKeyDown={e => {
+                if (e.key === 'ArrowDown') { e.preventDefault(); setSearchHL(h => Math.min(h+1, searchRes.length-1)); }
+                else if (e.key === 'ArrowUp') { e.preventDefault(); setSearchHL(h => Math.max(h-1, -1)); }
+                else if (e.key === 'Enter') {
+                  e.preventDefault();
+                  const pick = searchHL >= 0 ? searchRes[searchHL] : searchRes[0];
+                  if (pick) { setTicker(pick.symbol); setSearchQ(''); setSearchRes([]); setSearchHL(-1); }
+                  else if (searchQ.trim()) { setTicker(searchQ.trim().toUpperCase()); setSearchQ(''); setSearchRes([]); setSearchHL(-1); }
+                }
+                else if (e.key === 'Escape') { setSearchRes([]); setSearchHL(-1); }
+              }}
+              onBlur={() => setTimeout(() => { setSearchRes([]); setSearchQ(''); setSearching(false); setSearchHL(-1); }, 200)}
               style={{ fontSize: 12, padding: '5px 10px', width: 200 }}
             />
-            <TickerDropdown results={searchRes} searching={searching}
-              onSelect={r => { setTicker(r.symbol); setSearchQ(''); setSearchRes([]); }} />
+            <TickerDropdown results={searchRes} searching={searching} highlightIdx={searchHL}
+              onSelect={r => { setTicker(r.symbol); setSearchQ(''); setSearchRes([]); setSearchHL(-1); }} />
           </div>
 
           {/* Current ticker badge */}
@@ -2761,18 +2801,37 @@ function ChartsPage({ positions, watchlists, setWatchlists, activeWLId, setActiv
                 </button>
               ) : (
                 <div style={{ position: 'relative' }}>
-                  <input className="inp mono" autoFocus placeholder="Search name or ticker…" value={addTickerQ} onChange={e => setAddTickerQ(e.target.value)}
-                    onBlur={() => setTimeout(() => { setAddTickerRes([]); setAddTickerQ(''); setAddingTicker(false); }, 200)}
+                  <input className="inp mono" autoFocus placeholder="Search name or ticker…" value={addTickerQ}
+                    onChange={e => { setAddTickerQ(e.target.value); setAddTickerHL(-1); }}
+                    onKeyDown={e => {
+                      if (e.key === 'ArrowDown') { e.preventDefault(); setAddTickerHL(h => Math.min(h+1, addTickerRes.length-1)); }
+                      else if (e.key === 'ArrowUp') { e.preventDefault(); setAddTickerHL(h => Math.max(h-1, -1)); }
+                      else if (e.key === 'Enter') {
+                        e.preventDefault();
+                        const pick = addTickerHL >= 0 ? addTickerRes[addTickerHL] : addTickerRes[0];
+                        const sym = pick?.symbol || addTickerQ.trim().toUpperCase();
+                        const name = pick?.name || sym;
+                        if (!sym) return;
+                        setWatchlists(prev => prev.map(wl => wl.id === activeWL ? {
+                          ...wl, categories: wl.categories.map((cat, i) => i === 0
+                            ? { ...cat, items: [...cat.items.filter(t => t.symbol !== sym), { symbol: sym, name, flag: null }] }
+                            : cat)
+                        } : wl));
+                        setAddTickerQ(''); setAddTickerRes([]); setAddTickerHL(-1); setAddingTicker(false);
+                      }
+                      else if (e.key === 'Escape') { setAddTickerRes([]); setAddTickerHL(-1); }
+                    }}
+                    onBlur={() => setTimeout(() => { setAddTickerRes([]); setAddTickerQ(''); setAddTickerHL(-1); setAddingTicker(false); }, 200)}
                     style={{ fontSize: 11, padding: '6px 10px', width: '100%' }} />
                   <div style={{ position: 'absolute', bottom: '110%', left: 0, right: 0 }}>
-                    <TickerDropdown results={addTickerRes} searching={false}
+                    <TickerDropdown results={addTickerRes} searching={false} highlightIdx={addTickerHL}
                       onSelect={r => {
                         setWatchlists(prev => prev.map(wl => wl.id === activeWL ? {
                           ...wl, categories: wl.categories.map((cat, i) => i === 0
                             ? { ...cat, items: [...cat.items.filter(t => t.symbol !== r.symbol), { symbol: r.symbol, name: r.name, flag: null }] }
                             : cat)
                         } : wl));
-                        setAddTickerQ(''); setAddTickerRes([]); setAddingTicker(false);
+                        setAddTickerQ(''); setAddTickerRes([]); setAddTickerHL(-1); setAddingTicker(false);
                       }} />
                   </div>
                 </div>
@@ -2907,10 +2966,13 @@ function CompareView() {
   const [cmpSearchRes, setCmpSearchRes] = useState([]);
   const [cmpSearching, setCmpSearching] = useState(false);
 
+  const [cmpHighlight, setCmpHighlight] = React.useState(-1);
+
   // Live autocomplete for compare input
   React.useEffect(() => {
-    if (!input || input.length < 1) { setCmpSearchRes([]); return; }
+    if (!input || input.length < 1) { setCmpSearchRes([]); setCmpHighlight(-1); return; }
     setCmpSearching(true);
+    setCmpHighlight(-1);
     const t = setTimeout(() => {
       fetchTickerSearch(input, 12)
         .then(r => setCmpSearchRes(r))
@@ -3041,13 +3103,20 @@ function CompareView() {
                   value={input}
                   onChange={e => setInput(e.target.value)}
                   onKeyDown={e => {
-                    if (e.key === 'Enter') { addTicker(input); }
-                    if (e.key === 'Escape') { setCmpSearchRes([]); }
+                    if (e.key === 'ArrowDown') { e.preventDefault(); setCmpHighlight(h => Math.min(h + 1, cmpSearchRes.length - 1)); }
+                    else if (e.key === 'ArrowUp') { e.preventDefault(); setCmpHighlight(h => Math.max(h - 1, -1)); }
+                    else if (e.key === 'Enter') {
+                      e.preventDefault();
+                      if (cmpHighlight >= 0 && cmpSearchRes[cmpHighlight]) addTicker(cmpSearchRes[cmpHighlight]);
+                      else if (cmpSearchRes.length > 0) addTicker(cmpSearchRes[0]);
+                      else addTicker(input);
+                    }
+                    else if (e.key === 'Escape') { setCmpSearchRes([]); setCmpHighlight(-1); }
                   }}
-                  onBlur={() => setTimeout(() => setCmpSearchRes([]), 200)}
+                  onBlur={() => setTimeout(() => { setCmpSearchRes([]); setCmpHighlight(-1); }, 200)}
                   style={{width:240,padding:'6px 10px',fontSize:12}}
                 />
-                <TickerDropdown results={cmpSearchRes} searching={cmpSearching}
+                <TickerDropdown results={cmpSearchRes} searching={cmpSearching} highlightIdx={cmpHighlight}
                   onSelect={r => addTicker(r)} />
               </div>
               <button className="btn btn-primary" onClick={() => addTicker(input)}
