@@ -103,7 +103,7 @@ export default async function handler(req, res) {
 
   try {
     const [income, cashflow, balance, keyMetrics, profile, analystEstimates, analystEstQ,
-           incomeQ, cashflowQ] = await Promise.all([
+           incomeQ, cashflowQ, quote] = await Promise.all([
       fmp(`/income-statement?symbol=${symbol}&limit=5`),
       fmp(`/cash-flow-statement?symbol=${symbol}&limit=5`),
       fmp(`/balance-sheet-statement?symbol=${symbol}&limit=5`),
@@ -113,6 +113,7 @@ export default async function handler(req, res) {
       fmp(`/analyst-estimates?symbol=${symbol}&limit=6&period=quarter`),
       fmp(`/income-statement?symbol=${symbol}&limit=12&period=quarter`),
       fmp(`/cash-flow-statement?symbol=${symbol}&limit=12&period=quarter`),
+      fmpV3(`/quote/${symbol}`),
     ]);
 
     const p = profile[0] || {};
@@ -326,9 +327,9 @@ export default async function handler(req, res) {
       fy1Date: fwdEst?.date?.slice(0,7) ?? null,
       fy2Date: fwd2Est?.date?.slice(0,7) ?? null,
       beta: p.beta ?? null, dividendYield: p.lastDividend ?? null,
-      priceAvg50: p.priceAvg50 ?? null, priceAvg200: p.priceAvg200 ?? null,
-      yearHigh: p.yearHigh ?? null, yearLow: p.yearLow ?? null,
-      currentPrice: p.price ?? null,
+      priceAvg50: quote[0]?.priceAvg50 ?? null, priceAvg200: quote[0]?.priceAvg200 ?? null,
+      yearHigh: quote[0]?.yearHigh ?? null, yearLow: quote[0]?.yearLow ?? null,
+      currentPrice: quote[0]?.price ?? p.price ?? null,
       description: isLite ? undefined : (p.description || null),
       byYear,
       byQuarter,
