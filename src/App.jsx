@@ -339,7 +339,7 @@ function AssetLogoInner({baseSymbol, pos, size, r}) {
         XNAS:'xtrackers.com',XDWH:'xtrackers.com',
         ARKX:'ark-funds.com',
         // EU stocks
-        SAP:'sap.com',ASML:'asml.com',
+        ASML:'asml.com',
       };
       if (knownDomains[baseSymbol]) return knownDomains[baseSymbol];
       // For .DE tickers, strip suffix and try base symbol
