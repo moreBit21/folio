@@ -5122,6 +5122,7 @@ export function AuthGate({ children }) {
   const [loading, setLoading] = useState(false);
   const [msg,     setMsg]     = useState(null);
   const [keyReady, setKeyReady] = useState(false); // true once key is derived
+  const [deriving, setDeriving] = useState(false); // true while auto-deriving from sessionStorage
 
   const INVITE_CODE = import.meta.env.VITE_INVITE_CODE || '';
 
@@ -5131,6 +5132,7 @@ export function AuthGate({ children }) {
     // Try to restore key from sessionStorage (survives page refresh, not tab close)
     const stored = sessionStorage.getItem('folio_pw');
     if (stored) {
+      setDeriving(true);
       (async () => {
         try {
           const userId = session.user.id;
@@ -5138,19 +5140,32 @@ export function AuthGate({ children }) {
           if (row?.salt) {
             _sessionSalt = row.salt;
             _sessionCryptoKey = await _deriveCryptoKey(stored, row.salt);
-            if (row.ciphertext) await _decryptPayload(_sessionCryptoKey, row.iv, row.ciphertext); // verify
+            // Only verify if there's actual ciphertext to decrypt
+            if (row.ciphertext && row.iv) {
+              await _decryptPayload(_sessionCryptoKey, row.iv, row.ciphertext);
+            }
             setKeyReady(true);
+            setDeriving(false);
             return;
           }
-        } catch { _sessionCryptoKey = null; }
-        sessionStorage.removeItem('folio_pw'); // bad stored pw, fall through to unlock screen
+          // No row yet — key can't be derived, show unlock screen
+          sessionStorage.removeItem('folio_pw');
+          setDeriving(false);
+        } catch {
+          _sessionCryptoKey = null;
+          sessionStorage.removeItem('folio_pw');
+          setDeriving(false);
+          // fall through to unlock screen
+        }
       })();
+    } else {
+      // No stored password — stay on unlock screen (keyReady=false already)
     }
   }, [session]);
 
   if (!supabase) return children;
 
-  if (session === undefined || (session && !keyReady)) {
+  if (session === undefined || deriving) {
     return (
       <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',
         background:'#0a0f14',fontFamily:"'IBM Plex Mono',monospace"}}>
