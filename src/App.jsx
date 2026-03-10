@@ -5111,14 +5111,22 @@ export function AuthGate({ children }) {
       const { data: signInData, error } = await supabase.auth.signInWithPassword({ email, password: pw });
       if (error) throw error;
 
-      // Fetch salt from DB
+      // Fetch salt from DB — or generate one if this is a brand new user
       const userId = signInData.user.id;
       const { data: row } = await supabase.from('portfolios').select('salt').eq('user_id', userId).single();
       if (row?.salt) {
         _sessionSalt      = row.salt;
         _sessionCryptoKey = await _deriveCryptoKey(pw, row.salt);
+      } else {
+        // No row yet — generate salt now, derive key, create the row
+        const newSalt = _randomSaltHex();
+        _sessionSalt      = newSalt;
+        _sessionCryptoKey = await _deriveCryptoKey(pw, newSalt);
+        await supabase.from('portfolios').upsert(
+          { user_id: userId, salt: newSalt, iv: '', ciphertext: '', updated_at: new Date().toISOString() },
+          { onConflict: 'user_id' }
+        );
       }
-      // If no row yet (brand new user who hasn't saved): key will be set on first save
       setKeyReady(true);
 
     } catch (err) {
@@ -5299,15 +5307,9 @@ export default function App() {
         if (error && error.code !== 'PGRST116') throw error;
         if (data && data.ciphertext && data.ciphertext.length > 0 && _sessionCryptoKey) {
           const plain = await _decryptPayload(_sessionCryptoKey, data.iv, data.ciphertext);
-          // Temporarily null the key so the state-change effects below don't trigger a save
-          const savedKey = _sessionCryptoKey;
-          _sessionCryptoKey = null;
           if (plain.positions    && plain.positions.length)    setPositions(plain.positions);
           if (plain.transactions && plain.transactions.length) setTransactions(plain.transactions);
           if (plain.watchlists   && plain.watchlists.length)   setWatchlists(plain.watchlists);
-          // Restore key after React has flushed state (next microtask)
-          await Promise.resolve();
-          _sessionCryptoKey = savedKey;
         }
       } catch (e) { console.warn('Cloud load error:', e.message); }
       finally { setCloudLoading(false); loadedRef.current = true; }
