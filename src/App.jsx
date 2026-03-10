@@ -1701,8 +1701,9 @@ function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
       if (data.error && data.error === 'Premium') throw new Error('This endpoint requires a higher FMP plan.');
       const res2 = (data.results || []).filter(r => !r.isEtf && !/\b(ETF|Fund|Trust|Index Fund)\b/i.test(r.companyName || ''));
       setResults(res2);
-      // Auto-batch load fundamentals for first 30 results in parallel
-      const toLoad = res2.slice(0, 30).map(r => r.symbol).filter(sym => !fundCache[sym]);
+      // Auto-batch load fundamentals — all results for dealOnly, first 30 otherwise
+      const loadLimit = filters.dealOnly ? res2.length : 30;
+      const toLoad = res2.slice(0, loadLimit).map(r => r.symbol).filter(sym => !fundCache[sym]);
       if (toLoad.length) {
         // Stagger in batches of 5 to avoid FMP rate limiting
         const BATCH = 5;
@@ -1774,7 +1775,7 @@ function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
   const filtered = results.filter(r => {
     const f = fundCache[r.symbol];
     if (filters.healthMin > 0) {
-      if (f == null) return true; // include if not loaded yet
+      if (f == null) return filters.dealOnly ? false : true; // dealOnly: exclude unloaded
       if ((f.score ?? 0) < filters.healthMin) return false;
     }
     if (filters.pegMax) {
