@@ -1997,12 +1997,14 @@ function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
                     const rowPeg = fund?.peg ?? null;
                     const rowFwdPE = fund?.fwdPE ?? null;
                     const isLoadingScore = loadingFund[row.symbol];
-                    const priceTrendDown = row.priceAvg50 != null && row.price != null
-                      && row.price < row.priceAvg50
-                      && row.yearHigh != null && row.price < row.yearHigh * 0.85;
-                    const fundStrong = (score != null && score >= 55)
-                      || (fund?.ttmRevGrowth > 0 && fund?.ttmEpsGrowth > 0);
-                    const isPossibleDeal = priceTrendDown && fundStrong;
+                    const _dp = fund?.curPrice ?? row.price;
+                    const priceTrendDown = fund?.priceAvg50 != null && _dp != null
+                      && _dp < fund.priceAvg50
+                      && fund?.yearHigh != null && _dp < fund.yearHigh * 0.85;
+                    const fundStrong = score != null && score >= 55
+                      && (fund?.ttmRevGrowth > 0 || fund?.fy1RevGrowth > 0)
+                      && (fund?.ttmEpsGrowth > 0 || fund?.fy1EpsGrowth > 0);
+                    const isPossibleDeal = fund != null && priceTrendDown && fundStrong;
                     return (
                       <tr key={row.symbol}
                         onClick={() => {
