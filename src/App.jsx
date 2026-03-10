@@ -5257,7 +5257,6 @@ export default function App() {
   const [cloudLoading, setCloudLoading] = React.useState(!!supabase);
   const [cloudSaving,  setCloudSaving]  = React.useState(false);
   const saveTimerRef   = React.useRef(null);
-  const loadedRef      = React.useRef(false);
   const skipSaveRef    = React.useRef(false); // skip first save cycle after cloud load
 
   // ── Save ───────────────────────────────────────
@@ -5322,8 +5321,10 @@ export default function App() {
 
   // ── Auto-save (debounced 1.5s) ─────────────────
   React.useEffect(() => {
-    if (!supabase || !loadedRef.current) return;
+    if (!supabase) return;
+    // skipSaveRef prevents re-saving data we just loaded from cloud
     if (skipSaveRef.current) { skipSaveRef.current = false; return; }
+    // triggerSave checks _sessionCryptoKey internally — safe to call anytime
     clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(triggerSave, 1500);
     return () => clearTimeout(saveTimerRef.current);
