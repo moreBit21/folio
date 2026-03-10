@@ -1717,7 +1717,12 @@ function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
               const fwdPE = d.forwardPE ?? null;
               const ttmRevGrowth = d.ttmRevGrowth ?? null;
               const ttmEpsGrowth = d.ttmEpsGrowth ?? null;
-              setFundCache(prev => ({ ...prev, [sym]: { score, pe, peg, fwdPE, ttmRevGrowth, ttmEpsGrowth } }));
+              const fy1RevGrowth = d.fy1RevGrowth ?? null;
+              const fy1EpsGrowth = d.fy1EpsGrowth ?? null;
+              const priceAvg50   = d.priceAvg50   ?? null;
+              const yearHigh     = d.yearHigh     ?? null;
+              const curPrice     = d.currentPrice ?? null;
+              setFundCache(prev => ({ ...prev, [sym]: { score, pe, peg, fwdPE, ttmRevGrowth, ttmEpsGrowth, fy1RevGrowth, fy1EpsGrowth, priceAvg50, yearHigh, curPrice } }));
             })
             .catch(() => setFundCache(prev => ({ ...prev, [sym]: { score: null, pe: null, peg: null, fwdPE: null } })))
             .finally(() => setLoadingFund(prev => ({ ...prev, [sym]: false })));
@@ -1752,7 +1757,12 @@ function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
       const fwdPE = d.forwardPE ?? null;
       const ttmRevGrowth = d.ttmRevGrowth ?? null;
       const ttmEpsGrowth = d.ttmEpsGrowth ?? null;
-      setFundCache(prev => ({ ...prev, [symbol]: { score, pe, peg, fwdPE, ttmRevGrowth, ttmEpsGrowth } }));
+      const fy1RevGrowth = d.fy1RevGrowth ?? null;
+      const fy1EpsGrowth = d.fy1EpsGrowth ?? null;
+      const priceAvg50   = d.priceAvg50   ?? null;
+      const yearHigh     = d.yearHigh     ?? null;
+      const curPrice     = d.currentPrice ?? null;
+      setFundCache(prev => ({ ...prev, [symbol]: { score, pe, peg, fwdPE, ttmRevGrowth, ttmEpsGrowth, fy1RevGrowth, fy1EpsGrowth, priceAvg50, yearHigh, curPrice } }));
     } catch {
       setFundCache(prev => ({ ...prev, [symbol]: { score: null, pe: null, peg: null, fwdPE: null } }));
     } finally {
@@ -1781,16 +1791,16 @@ function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
     }
     if (filters.dealOnly) {
       const fund = fundCache[r.symbol];
-      if (fund) {
-        const dp = fund.curPrice ?? r.price;
-        const priceTrendDown = dp != null
-          && ((fund.priceAvg50 != null && dp < fund.priceAvg50)
-            || (fund.yearHigh != null && dp < fund.yearHigh * 0.90));
-        const fundStrong = (fund.score ?? 0) >= 55
-          && (fund.ttmRevGrowth > 0 || fund.fy1RevGrowth > 0)
-          && (fund.ttmEpsGrowth > 0 || fund.fy1EpsGrowth > 0);
-        if (!priceTrendDown || !fundStrong) return false;
-      }
+      // If not yet loaded, exclude — we don't know if it's a deal
+      if (!fund) return false;
+      const dp = fund.curPrice ?? r.price;
+      const priceTrendDown = dp != null
+        && ((fund.priceAvg50 != null && dp < fund.priceAvg50)
+          || (fund.yearHigh != null && dp < fund.yearHigh * 0.90));
+      const fundStrong = (fund.score ?? 0) >= 55
+        && (fund.ttmRevGrowth > 0 || fund.fy1RevGrowth > 0)
+        && (fund.ttmEpsGrowth > 0 || fund.fy1EpsGrowth > 0);
+      if (!priceTrendDown || !fundStrong) return false;
     }
     return true;
   });
