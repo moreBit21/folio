@@ -3033,6 +3033,16 @@ function CompareView() {
         ttmEpsGrowth: s.data.ttmEpsGrowth,
         fy1EpsGrowth: s.data.fy1EpsGrowth,
         fy2EpsGrowth: s.data.fy2EpsGrowth,
+        ntmEpsGrowth: s.data.ntmEpsGrowth,
+        qtrEpsGrowthYoY: s.data.qtrEpsGrowthYoY,
+        stackEpsGrowth: s.data.stackEpsGrowth,
+        ttmRevGrowth: s.data.ttmRevGrowth,
+        fy1RevGrowth: s.data.fy1RevGrowth,
+        fy2RevGrowth: s.data.fy2RevGrowth,
+        qtrRevGrowthYoY: s.data.qtrRevGrowthYoY,
+        stackRevGrowth: s.data.stackRevGrowth,
+        psRatio: s.data.psRatio,
+        forwardPS: s.data.forwardPS,
         eps:        last.eps,
         revenue:    last.revenue,
         // balance sheet
@@ -3165,6 +3175,130 @@ function CompareView() {
             </div>
           ))}
         </div>
+
+
+        {/* ── Metrics Grid Table (1000xstocks style) ── */}
+        {(() => {
+          const loaded = stocksWithMetrics.filter(s => s.data && !s.loading);
+          if (!loaded.length) return null;
+
+          const fmtPct  = v => v == null ? '—' : (v >= 0 ? '+' : '') + (v * 100).toFixed(1) + '%';
+          const fmtX    = v => v == null ? '—' : v.toFixed(1) + 'x';
+          const fmtRaw  = v => v == null ? '—' : v.toFixed(2);
+
+          const colorPct = (v, good, bad, invert=false) => {
+            if (v == null) return 'var(--text3)';
+            const isGood = invert ? v <= good : v >= good;
+            const isBad  = invert ? v >= bad  : v <= bad;
+            if (isGood) return '#00e5a0';
+            if (isBad)  return '#ff4d6d';
+            return '#f0b429';
+          };
+          const colorX = (v, good, bad) => colorPct(v, good, bad, true);
+
+          const SECTIONS = [
+            {
+              label: 'VALUATION',
+              rows: [
+                { label: 'TTM P/E',           key: 'peRatio',         fmt: fmtX,   color: v => colorX(v, 17, 35) },
+                { label: 'Forward P/E (FY1)',  key: 'forwardPE',       fmt: fmtX,   color: v => colorX(v, 15, 28) },
+                { label: '2Y Forward P/E',     key: 'forward2PE',      fmt: fmtX,   color: v => colorX(v, 12, 22) },
+                { label: 'TTM P/S',            key: 'psRatio',         fmt: fmtX,   color: v => colorX(v, 3, 10) },
+                { label: 'Forward P/S',        key: 'forwardPS',       fmt: fmtX,   color: v => colorX(v, 2, 8) },
+                { label: 'PEG Ratio',          key: 'pegRatio',        fmt: fmtRaw, color: v => colorX(v, 1, 2.5) },
+                { label: 'EV / EBITDA',        key: 'evEbitda',        fmt: fmtX,   color: v => colorX(v, 10, 25) },
+              ]
+            },
+            {
+              label: 'EPS GROWTH',
+              rows: [
+                { label: 'TTM EPS Growth',           key: 'ttmEpsGrowth',    fmt: fmtPct, color: v => colorPct(v, 0.10, -0.05) },
+                { label: 'FY1 EPS Growth (est)',      key: 'fy1EpsGrowth',    fmt: fmtPct, color: v => colorPct(v, 0.10, -0.05) },
+                { label: 'FY2 EPS Growth (est)',      key: 'fy2EpsGrowth',    fmt: fmtPct, color: v => colorPct(v, 0.10, -0.05) },
+                { label: 'TTM vs NTM EPS Growth',     key: 'ntmEpsGrowth',    fmt: fmtPct, color: v => colorPct(v, 0.10, -0.05) },
+                { label: 'Qtr EPS Growth YoY',        key: 'qtrEpsGrowthYoY', fmt: fmtPct, color: v => colorPct(v, 0.10, -0.05) },
+                { label: '2Y Stacked EPS Growth',     key: 'stackEpsGrowth',  fmt: fmtPct, color: v => colorPct(v, 0.15, 0.00) },
+              ]
+            },
+            {
+              label: 'REVENUE GROWTH',
+              rows: [
+                { label: 'TTM Revenue Growth',        key: 'ttmRevGrowth',    fmt: fmtPct, color: v => colorPct(v, 0.10, -0.05) },
+                { label: 'FY1 Rev Growth (est)',       key: 'fy1RevGrowth',    fmt: fmtPct, color: v => colorPct(v, 0.10, -0.05) },
+                { label: 'FY2 Rev Growth (est)',       key: 'fy2RevGrowth',    fmt: fmtPct, color: v => colorPct(v, 0.10, -0.05) },
+                { label: 'Qtr Revenue Growth YoY',    key: 'qtrRevGrowthYoY', fmt: fmtPct, color: v => colorPct(v, 0.08, -0.05) },
+                { label: '2Y Stacked Rev Growth',     key: 'stackRevGrowth',  fmt: fmtPct, color: v => colorPct(v, 0.12, 0.00) },
+              ]
+            },
+            {
+              label: 'PROFITABILITY',
+              rows: [
+                { label: 'Gross Margin',        key: 'grossMargin', fmt: fmtPct, color: v => colorPct(v, 0.40, 0.15) },
+                { label: 'Net Margin',          key: 'netMargin',   fmt: fmtPct, color: v => colorPct(v, 0.10, 0.03) },
+                { label: 'Operating Margin',    key: 'opMargin',    fmt: fmtPct, color: v => colorPct(v, 0.15, 0.03) },
+                { label: 'ROE',                 key: 'roe',         fmt: fmtPct, color: v => colorPct(v, 0.15, 0.08) },
+                { label: 'ROIC',                key: 'roic',        fmt: fmtPct, color: v => colorPct(v, 0.10, 0.05) },
+              ]
+            },
+          ];
+
+          const colW = `${Math.floor(160 / Math.max(loaded.length, 1))}px`;
+
+          return (
+            <div className="card" style={{marginBottom: 14, overflow: 'hidden'}}>
+              {/* Table header */}
+              <div style={{display:'grid', gridTemplateColumns:`1fr ${loaded.map(()=>colW).join(' ')}`,
+                borderBottom:'1px solid var(--border2)', background:'var(--surface2)'}}>
+                <div style={{padding:'10px 16px'}}/>
+                {loaded.map((s, i) => (
+                  <div key={s.ticker} style={{padding:'10px 8px', textAlign:'center', borderLeft:'1px solid var(--border)'}}>
+                    <div className="mono" style={{fontSize:12,fontWeight:700,color:COMPARE_COLORS[i]}}>{s.ticker}</div>
+                    <div style={{fontSize:9,color:'var(--text3)',marginTop:2,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                      {s.data?.name?.split(' ').slice(0,2).join(' ')}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Sections */}
+              {SECTIONS.map(section => (
+                <div key={section.label}>
+                  {/* Section header */}
+                  <div style={{display:'grid', gridTemplateColumns:`1fr ${loaded.map(()=>colW).join(' ')}`,
+                    background:'var(--surface)', borderTop:'1px solid var(--border2)'}}>
+                    <div className="mono" style={{padding:'7px 16px', fontSize:9, letterSpacing:'0.12em', color:'var(--text3)'}}>
+                      {section.label}
+                    </div>
+                    {loaded.map((_, i) => (
+                      <div key={i} style={{borderLeft:'1px solid var(--border)'}}/>
+                    ))}
+                  </div>
+                  {/* Metric rows */}
+                  {section.rows.map((row, ri) => (
+                    <div key={row.key} style={{display:'grid', gridTemplateColumns:`1fr ${loaded.map(()=>colW).join(' ')}`,
+                      borderTop:'1px solid var(--border)',
+                      background: ri % 2 === 1 ? 'rgba(255,255,255,0.015)' : 'transparent'}}>
+                      <div style={{padding:'8px 16px', display:'flex', alignItems:'center'}}>
+                        <span style={{fontSize:11, color:'var(--text2)'}}>{row.label}</span>
+                      </div>
+                      {loaded.map((s, i) => {
+                        const v = s.data?.[row.key] ?? null;
+                        return (
+                          <div key={i} style={{padding:'8px 8px', textAlign:'center',
+                            borderLeft:'1px solid var(--border)', display:'flex', alignItems:'center', justifyContent:'center'}}>
+                            <span className="mono" style={{fontSize:12, fontWeight:600, color: row.color(v)}}>
+                              {row.fmt(v)}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          );
+        })()}
 
         {/* Valuation */}
         <CompareSection title="VALUATION" icon="🎯">

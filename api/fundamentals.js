@@ -36,7 +36,7 @@ export default async function handler(req, res) {
   const div = (a, b) => (a != null && b != null && b !== 0) ? a / b : null;
 
   try {
-    const [income, cashflow, balance, keyMetrics, profile, analystEstimates,
+    const [income, cashflow, balance, keyMetrics, profile, analystEstimates, analystEstQ,
            incomeQ, cashflowQ] = await Promise.all([
       fmp(`/income-statement?symbol=${symbol}&limit=5`),
       fmp(`/cash-flow-statement?symbol=${symbol}&limit=5`),
@@ -44,6 +44,7 @@ export default async function handler(req, res) {
       fmp(`/key-metrics?symbol=${symbol}&limit=5`),
       fmp(`/profile?symbol=${symbol}`),
       fmp(`/analyst-estimates?symbol=${symbol}&limit=6&period=annual`),
+      fmp(`/analyst-estimates?symbol=${symbol}&limit=6&period=quarter`),
       fmp(`/income-statement?symbol=${symbol}&limit=12&period=quarter`),
       fmp(`/cash-flow-statement?symbol=${symbol}&limit=12&period=quarter`),
     ]);
@@ -189,6 +190,52 @@ export default async function handler(req, res) {
       }
     }
 
+    // ── Revenue growth estimates ─────────────────────────────────────────────
+    const latestActualRev = byYear[byYear.length - 1]?.revenue;
+    const prevActualRev   = byYear[byYear.length - 2]?.revenue;
+    const ttmRevGrowth = (latestActualRev && prevActualRev && prevActualRev !== 0)
+      ? (latestActualRev - prevActualRev) / Math.abs(prevActualRev) : null;
+
+    const fwdRevEst  = futureEst[0] || null;
+    const fwd2RevEst = futureEst[1] || null;
+    const fy1RevGrowth = (fwdRevEst?.revenueAvg && latestActualRev && latestActualRev !== 0)
+      ? (fwdRevEst.revenueAvg - latestActualRev) / Math.abs(latestActualRev) : null;
+    const fy2RevGrowth = (fwd2RevEst?.revenueAvg && fwdRevEst?.revenueAvg && fwdRevEst.revenueAvg !== 0)
+      ? (fwd2RevEst.revenueAvg - fwdRevEst.revenueAvg) / Math.abs(fwdRevEst.revenueAvg) : null;
+
+    // ── NTM EPS growth (FY1 est vs TTM actual — same as fy1EpsGrowth alias) ──
+    const ntmEpsGrowth = fy1EpsGrowth;
+
+    // ── Quarterly EPS growth YoY (most recent Q vs same Q prior year) ────────
+    const sortedQ = [...incomeQ].sort((a,b) => b.date.localeCompare(a.date));
+    let qtrEpsGrowthYoY = null;
+    if (sortedQ.length >= 5) {
+      const qCurr = sortedQ[0]?.eps, qPrior = sortedQ[4]?.eps;
+      if (qCurr != null && qPrior != null && qPrior !== 0)
+        qtrEpsGrowthYoY = (qCurr - qPrior) / Math.abs(qPrior);
+    }
+
+    // ── 2-year stacked EPS growth ─────────────────────────────────────────────
+    const stackEpsGrowth = (fy1EpsGrowth != null && ttmEpsGrowth != null)
+      ? ((1 + fy1EpsGrowth) * (1 + ttmEpsGrowth) - 1) : null;
+
+    // ── Quarterly revenue growth YoY ─────────────────────────────────────────
+    let qtrRevGrowthYoY = null;
+    if (sortedQ.length >= 5) {
+      const rCurr = sortedQ[0]?.revenue, rPrior = sortedQ[4]?.revenue;
+      if (rCurr != null && rPrior != null && rPrior !== 0)
+        qtrRevGrowthYoY = (rCurr - rPrior) / Math.abs(rPrior);
+    }
+
+    // ── 2-year stacked revenue growth ────────────────────────────────────────
+    const stackRevGrowth = (fy1RevGrowth != null && ttmRevGrowth != null)
+      ? ((1 + fy1RevGrowth) * (1 + ttmRevGrowth) - 1) : null;
+
+    // ── P/S ratio ─────────────────────────────────────────────────────────────
+    const psRatio = latestKm.priceToSalesRatio ?? null;
+    const forwardPS = (currentPrice != null && fwdRevEst?.revenueAvg && p.sharesOutstanding > 0)
+      ? (currentPrice * p.sharesOutstanding) / fwdRevEst.revenueAvg : null;
+
     res.status(200).json({
       symbol,
       name: p.companyName || symbol, currency: p.currency || 'USD',
@@ -201,6 +248,12 @@ export default async function handler(req, res) {
       forwardPE, forward2PE,
       // EPS growth
       ttmEpsGrowth, fy1EpsGrowth, fy2EpsGrowth,
+      ntmEpsGrowth, qtrEpsGrowthYoY, stackEpsGrowth,
+      // Revenue growth
+      ttmRevGrowth, fy1RevGrowth, fy2RevGrowth,
+      qtrRevGrowthYoY, stackRevGrowth,
+      // P/S
+      psRatio, forwardPS,
       // Raw estimates for reference
       fy1EpsEst: fwdEst?.epsAvg ?? null,
       fy2EpsEst: fwd2Est?.epsAvg ?? null,
