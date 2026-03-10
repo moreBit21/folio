@@ -4855,6 +4855,37 @@ function StockDetail({ pos, onBack, transactions }) {
           {pos.type === 'etf' ? (
             <EtfOverview pos={pos} />
           ) : (<>
+          {/* ── Possible Deal badge ── */}
+          {(() => {
+            const dp = data?.currentPrice;
+            const avg50 = data?.priceAvg50;
+            const high  = data?.yearHigh;
+            const priceTrendDown = dp != null && avg50 != null && high != null
+              && dp < avg50 && dp < high * 0.85;
+            const fundStrong = overallScore != null && overallScore >= 55
+              && (data?.ttmRevGrowth > 0 || data?.fy1RevGrowth > 0)
+              && (data?.ttmEpsGrowth > 0 || data?.fy1EpsGrowth > 0);
+            if (!priceTrendDown || !fundStrong) return null;
+            return (
+              <div className="card" style={{padding:'14px 18px',marginBottom:12,
+                borderColor:'rgba(0,229,160,0.3)',background:'rgba(0,229,160,0.06)',
+                display:'flex',alignItems:'center',gap:12}}>
+                <span style={{fontSize:22}}>🎯</span>
+                <div>
+                  <div className="mono" style={{fontSize:11,fontWeight:700,color:'var(--green)',
+                    letterSpacing:'0.08em',marginBottom:3}}>POSSIBLE DEAL</div>
+                  <div style={{fontSize:11,color:'var(--text2)',lineHeight:1.5}}>
+                    Fundamentals trending up while the stock is{' '}
+                    <span className="mono" style={{color:'var(--gold)'}}>
+                      {high ? Math.round((1 - dp/high)*100) : '—'}% below its 52w high
+                    </span>
+                    {avg50 ? <> and trading below its 50-day MA (${avg50.toFixed(2)})</> : ''}.
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
           {/* ── Overall Health Score ── */}
           {overallScore != null && (
             <div className="card" style={{padding:'14px 18px',marginBottom:12,
