@@ -1633,7 +1633,7 @@ const PRESETS = [
   { label: 'Quality Growth', icon: '🚀', filters: { peMax:'40', marketCapMin:'1000000000', sector:'All', healthMin:60 } },
   { label: 'Value',          icon: '💎', filters: { peMax:'15', marketCapMin:'500000000',  sector:'All', healthMin:40 } },
   { label: 'Large Cap',      icon: '🏛️', filters: { marketCapMin:'10000000000', sector:'All' } },
-  { label: 'High Dividend',  icon: '💰', filters: { dividendMin:'2', sector:'All' } },
+  { label: 'High Dividend',  icon: '💰', filters: { dividendMin:'1', sector:'All' } },
   { label: 'Small Cap',      icon: '🌱', filters: { marketCapMax:'2000000000', marketCapMin:'100000000', sector:'All' } },
   { label: 'Low Beta',       icon: '🛡️', filters: { betaMax:'0.8', marketCapMin:'1000000000', sector:'All' } },
 ];
@@ -1647,6 +1647,7 @@ function ScreenerPage({ onOpenStock }) {
     dividendMin: '',
     volumeMin: '',
     evEbitdaMin: '', evEbitdaMax: '',
+    pegMax: '',
     healthMin: 0,
   });
   const [results, setResults]     = React.useState([]);
@@ -1685,7 +1686,25 @@ function ScreenerPage({ onOpenStock }) {
       const res = await fetch('/api/screener?' + p.toString());
       const data = await res.json();
       if (data.error && data.error === 'Premium') throw new Error('This endpoint requires a higher FMP plan.');
-      setResults(data.results || []);
+      const res2 = data.results || [];
+      setResults(res2);
+      // Auto-batch load fundamentals for first 30 results in parallel
+      const toLoad = res2.slice(0, 30).map(r => r.symbol).filter(sym => !fundCache[sym]);
+      if (toLoad.length) {
+        toLoad.forEach(sym => {
+          setLoadingFund(prev => ({ ...prev, [sym]: true }));
+          fetch('/api/fundamentals?symbol=' + sym.split('.')[0])
+            .then(r => r.json())
+            .then(d => {
+              const score = calcCanonicalHealthScore(d);
+              const pe = d.peRatio ?? null;
+              const peg = d.pegRatio ?? null;
+              setFundCache(prev => ({ ...prev, [sym]: { score, pe, peg } }));
+            })
+            .catch(() => setFundCache(prev => ({ ...prev, [sym]: { score: null, pe: null, peg: null } })))
+            .finally(() => setLoadingFund(prev => ({ ...prev, [sym]: false })));
+        });
+      }
     } catch(e) {
       setError(e.message);
       setResults([]);
@@ -1702,9 +1721,11 @@ function ScreenerPage({ onOpenStock }) {
       const res = await fetch('/api/fundamentals?symbol=' + symbol.split('.')[0]);
       const d = await res.json();
       const score = calcCanonicalHealthScore(d);
-      setFundCache(prev => ({ ...prev, [symbol]: score }));
+      const pe = d.peRatio ?? null;
+      const peg = d.pegRatio ?? null;
+      setFundCache(prev => ({ ...prev, [symbol]: { score, pe, peg } }));
     } catch {
-      setFundCache(prev => ({ ...prev, [symbol]: null }));
+      setFundCache(prev => ({ ...prev, [symbol]: { score: null, pe: null, peg: null } }));
     } finally {
       setLoadingFund(prev => ({ ...prev, [symbol]: false }));
     }
@@ -1712,10 +1733,16 @@ function ScreenerPage({ onOpenStock }) {
 
   // Sort + health filter
   const filtered = results.filter(r => {
+    const f = fundCache[r.symbol];
     if (filters.healthMin > 0) {
-      const score = fundCache[r.symbol];
-      if (score == null) return true; // include if not loaded yet
-      return score >= filters.healthMin;
+      if (f == null) return true; // include if not loaded yet
+      if ((f.score ?? 0) < filters.healthMin) return false;
+    }
+    if (filters.pegMax) {
+      const maxPeg = parseFloat(filters.pegMax);
+      if (!isNaN(maxPeg) && f != null && f.peg != null) {
+        if (f.peg > maxPeg) return false;
+      }
     }
     return true;
   });
@@ -1743,19 +1770,18 @@ function ScreenerPage({ onOpenStock }) {
   const fmtN   = v => v == null ? '—' : v.toFixed(2);
 
   const COLS = [
-    { key: 'symbol',         label: 'Ticker',    fmt: v => v,           numeric: false },
-    { key: 'companyName',    label: 'Company',   fmt: v => v?.split(' ').slice(0,3).join(' '), numeric: false },
-    { key: 'sector',         label: 'Sector',    fmt: v => v?.split(' ')[0] || '—', numeric: false },
-    { key: 'marketCap',      label: 'Mkt Cap',   fmt: fmtCap,           numeric: true },
-    { key: 'price',          label: 'Price',     fmt: v => v == null ? '—' : '$'+v.toFixed(2), numeric: true },
-    { key: 'pe',             label: 'P/E',       fmt: v => v == null ? '—' : v.toFixed(1)+'x', numeric: true,
-      color: v => v == null ? 'var(--text3)' : v <= 20 ? 'var(--green)' : v <= 35 ? 'var(--gold)' : 'var(--red)' },
-    { key: 'beta',           label: 'Beta',      fmt: fmtN,             numeric: true,
+    { key: 'symbol',         label: 'Ticker',   fmt: v => v,           numeric: false },
+    { key: 'companyName',    label: 'Company',  fmt: v => v?.split(' ').slice(0,3).join(' '), numeric: false },
+    { key: 'sector',         label: 'Sector',   fmt: v => v?.split(' ')[0] || '—', numeric: false },
+    { key: 'marketCap',      label: 'Mkt Cap',  fmt: fmtCap,           numeric: true },
+    { key: 'price',          label: 'Price',    fmt: v => v == null ? '—' : '$'+v.toFixed(2), numeric: true },
+    { key: 'beta',           label: 'Beta',     fmt: fmtN,             numeric: true,
       color: v => v == null ? 'var(--text3)' : v <= 1 ? 'var(--green)' : v <= 1.5 ? 'var(--gold)' : 'var(--red)' },
-    { key: 'lastAnnualDividend', label: 'Div%', fmt: v => v > 0 ? v.toFixed(2)+'%' : '—', numeric: true,
-      color: v => v > 0 ? 'var(--green)' : 'var(--text3)' },
-    { key: 'volume',         label: 'Volume',    fmt: fmtCap,           numeric: true },
-    { key: '_health',        label: 'Health ⓘ',  fmt: () => '',         numeric: true },
+    { key: '_div', label: 'Div%', fmt: () => '', numeric: true },
+    { key: 'volume',         label: 'Volume',   fmt: fmtCap,           numeric: true },
+    { key: '_pe',            label: 'P/E',      fmt: () => '',         numeric: true },
+    { key: '_peg',           label: 'PEG',      fmt: () => '',         numeric: true },
+    { key: '_health',        label: 'Health',   fmt: () => '',         numeric: true },
   ];
 
   const InpFilter = ({ label, fromKey, toKey, placeholder='e.g. 15' }) => (
@@ -1821,10 +1847,16 @@ function ScreenerPage({ onOpenStock }) {
           <InpFilter label="P/E RATIO" fromKey="peMin" toKey="peMax" />
           <InpFilter label="BETA" fromKey="betaMin" toKey="betaMax" />
           <InpFilter label="EV/EBITDA" fromKey="evEbitdaMin" toKey="evEbitdaMax" />
+          <div style={{marginBottom:10}}>
+            <div className="mono" style={{fontSize:9,color:'var(--text3)',letterSpacing:'0.1em',marginBottom:4}}>MAX PEG RATIO <span style={{fontStyle:'italic',color:'var(--text3)'}}>(client-side)</span></div>
+            <input className="inp mono" placeholder="e.g. 2" value={filters.pegMax||''}
+              onChange={e => setFilter('pegMax', e.target.value)}
+              style={{width:80,padding:'5px 8px',fontSize:11}} />
+          </div>
           {/* Min dividend only - FMP only supports min */}
           <div style={{marginBottom:10}}>
-            <div className="mono" style={{fontSize:9,color:'var(--text3)',letterSpacing:'0.1em',marginBottom:4}}>MIN DIVIDEND YIELD (%)</div>
-            <input className="inp mono" placeholder="e.g. 2" value={filters.dividendMin||''}
+            <div className="mono" style={{fontSize:9,color:'var(--text3)',letterSpacing:'0.1em',marginBottom:4}}>MIN ANNUAL DIVIDEND ($)</div>
+            <input className="inp mono" placeholder="e.g. 0.50" value={filters.dividendMin||''}
               onChange={e => setFilter('dividendMin', e.target.value)}
               style={{width:80,padding:'5px 8px',fontSize:11}} />
           </div>
@@ -1907,7 +1939,10 @@ function ScreenerPage({ onOpenStock }) {
                 </thead>
                 <tbody>
                   {sorted.map((row, ri) => {
-                    const score = fundCache[row.symbol];
+                    const fund = fundCache[row.symbol];
+                    const score = fund?.score ?? null;
+                    const rowPe = fund?.pe ?? null;
+                    const rowPeg = fund?.peg ?? null;
                     const isLoadingScore = loadingFund[row.symbol];
                     return (
                       <tr key={row.symbol}
@@ -1935,16 +1970,45 @@ function ScreenerPage({ onOpenStock }) {
                         <td style={{padding:'8px 12px',textAlign:'right'}}>
                           <span className="mono" style={{color:'var(--text)'}}>{row.price == null ? '—' : '$' + row.price.toFixed(2)}</span>
                         </td>
-                        {COLS.slice(5, 8).map(col => (
-                          <td key={col.key} style={{padding:'8px 12px',textAlign:'right'}}>
-                            <span className="mono" style={{color: col.color ? col.color(row[col.key]) : 'var(--text2)'}}>
-                              {col.fmt(row[col.key])}
+                        {/* beta */}
+                        <td style={{padding:'8px 12px',textAlign:'right'}}>
+                          <span className="mono" style={{fontSize:11,color: row.beta<=1?'var(--green)':row.beta<=1.5?'var(--gold)':'var(--red)'}}>
+                            {fmtN(row.beta)}
+                          </span>
+                        </td>
+                        {/* Div yield% = lastAnnualDividend / price * 100 */}
+                        {(() => { const dy = row.price > 0 ? (row.lastAnnualDividend / row.price * 100) : 0; return (
+                          <td style={{padding:'8px 12px',textAlign:'right'}}>
+                            <span className="mono" style={{fontSize:11,color: dy > 0 ? 'var(--green)' : 'var(--text3)'}}>
+                              {dy > 0 ? dy.toFixed(2)+'%' : '—'}
                             </span>
                           </td>
-                        ))}
+                        );})()}
+                        {/* Volume */}
                         <td style={{padding:'8px 12px',textAlign:'right'}}>
-                          <span className="mono" style={{color:'var(--text3)'}}>{fmtCap(row.volume)}</span>
+                          <span className="mono" style={{fontSize:11,color:'var(--text3)'}}>{fmtCap(row.volume)}</span>
                         </td>
+                        {/* P/E — from fundamentals */}
+                        <td style={{padding:'8px 12px',textAlign:'right'}}>
+                          {isLoadingScore ? (
+                            <span className="mono shimmer" style={{fontSize:10,color:'var(--text3)'}}>···</span>
+                          ) : rowPe != null ? (
+                            <span className="mono" style={{fontSize:11,color: rowPe<=20?'var(--green)':rowPe<=35?'var(--gold)':'var(--red)'}}>
+                              {rowPe.toFixed(1)}x
+                            </span>
+                          ) : <span style={{color:'var(--text3)'}}>—</span>}
+                        </td>
+                        {/* PEG */}
+                        <td style={{padding:'8px 12px',textAlign:'right'}}>
+                          {isLoadingScore ? (
+                            <span className="mono shimmer" style={{fontSize:10,color:'var(--text3)'}}>···</span>
+                          ) : rowPeg != null ? (
+                            <span className="mono" style={{fontSize:11,color: rowPeg<=1?'var(--green)':rowPeg<=2?'var(--gold)':'var(--red)'}}>
+                              {rowPeg.toFixed(2)}
+                            </span>
+                          ) : <span style={{color:'var(--text3)'}}>—</span>}
+                        </td>
+                        {/* Health score */}
                         <td style={{padding:'8px 12px',textAlign:'right'}}
                           onClick={e => { e.stopPropagation(); fetchHealthScore(row.symbol); }}>
                           {isLoadingScore ? (
