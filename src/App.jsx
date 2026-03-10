@@ -6928,30 +6928,39 @@ export default function App() {
                 <PriceBadge loading={priceLoading}/>
               </div>
             </div>
-            <div style={{position:'relative'}} ref={addMenuRef}>
-              <button className="btn btn-primary" onClick={()=>setShowAddMenu(v=>!v)}>+ ADD ▾</button>
-              {showAddMenu && (
-                <div style={{position:'absolute',right:0,top:'100%',marginTop:4,
-                  background:'var(--surface)',border:'1px solid var(--border2)',
-                  borderRadius:8,padding:6,zIndex:50,minWidth:160,
-                  boxShadow:'0 8px 24px rgba(0,0,0,0.5)'}}>
-                  {[
-                    {icon:'📈',label:'Buy Position',  mode:'buy'},
-                    {icon:'📉',label:'Sell Position', mode:'sell'},
-                    {icon:'💵',label:'Cash Movement', mode:'cash'},
-                    {icon:'✏️', label:'Manual Entry',  mode:'manual'},
-                  ].map(({icon,label,mode})=>(
-                    <div key={mode}
-                      onClick={()=> mode==='manual' ? (setShowModal(true),setShowAddMenu(false)) : openTxModal(mode)}
-                      style={{padding:'8px 14px',cursor:'pointer',borderRadius:6,fontSize:12,
-                        color:'var(--text2)',display:'flex',alignItems:'center',gap:8}}
-                      onMouseEnter={e=>e.currentTarget.style.background='var(--surface2)'}
-                      onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
-                      {icon} {label}
-                    </div>
-                  ))}
-                </div>
-              )}
+            <div ref={addMenuRef}>
+              <button className="btn btn-primary"
+                onClick={e => {
+                  e.stopPropagation();
+                  setShowAddMenu(v => !v);
+                }}>+ ADD ▾</button>
+              {showAddMenu && (() => {
+                const rect = addMenuRef.current?.getBoundingClientRect();
+                return (
+                  <div style={{position:'fixed',
+                    right: rect ? window.innerWidth - rect.right : 16,
+                    top: rect ? rect.bottom + 4 : 50,
+                    background:'var(--surface)',border:'1px solid var(--border2)',
+                    borderRadius:8,padding:6,zIndex:9999,minWidth:170,
+                    boxShadow:'0 8px 32px rgba(0,0,0,0.6)'}}>
+                    {[
+                      {icon:'📈', label:'Buy Position',  mode:'buy'},
+                      {icon:'📉', label:'Sell Position', mode:'sell'},
+                      {icon:'💵', label:'Cash Movement', mode:'cash'},
+                      {icon:'✏️',  label:'Manual Entry',  mode:'manual'},
+                    ].map(({icon,label,mode})=>(
+                      <div key={mode}
+                        onClick={e => { e.stopPropagation(); mode==='manual' ? (setShowModal(true),setShowAddMenu(false)) : openTxModal(mode); }}
+                        style={{padding:'9px 14px',cursor:'pointer',borderRadius:6,fontSize:12,
+                          color:'var(--text2)',display:'flex',alignItems:'center',gap:10}}
+                        onMouseEnter={e=>e.currentTarget.style.background='var(--surface2)'}
+                        onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                        <span style={{fontSize:15}}>{icon}</span> {label}
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
             </div>
           </div>
 
