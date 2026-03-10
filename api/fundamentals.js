@@ -117,6 +117,8 @@ export default async function handler(req, res) {
     ]);
 
     const p = profile[0] || {};
+    const q = quote[0] || {};
+    console.log('[DEAL] quote fields:', JSON.stringify({ price: q.price, priceAvg50: q.priceAvg50, yearHigh: q.yearHigh, quoteLength: quote.length }));
 
     const years = [...new Set([
       ...income.map(r => r.calendarYear || r.date?.slice(0,4)).filter(Boolean),
