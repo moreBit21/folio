@@ -5252,28 +5252,23 @@ export default function App() {
 
   // ─────────────────────────────────────────────
   // CLOUD SYNC — AES-256-GCM encrypted via Supabase
-  // Key derived in AuthGate on login; module-level _sessionCryptoKey / _sessionSalt
   // ─────────────────────────────────────────────
   const [cloudLoading, setCloudLoading] = React.useState(!!supabase);
   const [cloudSaving,  setCloudSaving]  = React.useState(false);
-  const saveTimerRef   = React.useRef(null);
-  const loadedRef      = React.useRef(false); // set true after load attempt completes
-  const skipSaveRef    = React.useRef(false); // skip first save cycle after cloud load
+  const saveTimerRef  = React.useRef(null);
+  const loadedRef     = React.useRef(false);
 
-  // ── Save ───────────────────────────────────────
+  // ── Save ──────────────────────────────────────
   const triggerSave = React.useCallback(async () => {
     if (!supabase || !_sessionCryptoKey) return;
     try {
       setCloudSaving(true);
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
-
       if (!_sessionSalt) {
-        const { data: row } = await supabase
-          .from('portfolios').select('salt').eq('user_id', user.id).single();
-        if (row?.salt) {
-          _sessionSalt = row.salt;
-        } else {
+        const { data: row } = await supabase.from('portfolios').select('salt').eq('user_id', user.id).single();
+        if (row?.salt) { _sessionSalt = row.salt; }
+        else {
           _sessionSalt = _randomSaltHex();
           await supabase.from('portfolios').upsert(
             { user_id: user.id, salt: _sessionSalt, iv: '', ciphertext: '', updated_at: new Date().toISOString() },
@@ -5281,7 +5276,6 @@ export default function App() {
           );
         }
       }
-
       const { iv, ct } = await _encryptPayload(_sessionCryptoKey, stateRef.current);
       const { error } = await supabase.from('portfolios').upsert(
         { user_id: user.id, salt: _sessionSalt, iv, ciphertext: ct, updated_at: new Date().toISOString() },
@@ -5292,40 +5286,37 @@ export default function App() {
     finally { setCloudSaving(false); }
   }, []);
 
-  // ── Load on mount ──────────────────────────────
+  // ── Load on mount ─────────────────────────────
   React.useEffect(() => {
     if (!supabase) { setCloudLoading(false); loadedRef.current = true; return; }
     (async () => {
       try {
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) { setCloudLoading(false); loadedRef.current = true; return; }
-
         const { data, error } = await supabase
-          .from('portfolios')
-          .select('salt, iv, ciphertext')
-          .eq('user_id', user.id)
-          .single();
-
+          .from('portfolios').select('salt, iv, ciphertext')
+          .eq('user_id', user.id).single();
         if (error && error.code !== 'PGRST116') throw error;
-
-        if (data?.ciphertext?.length > 0 && _sessionCryptoKey) {
+        if (data && data.ciphertext && data.ciphertext.length > 0 && _sessionCryptoKey) {
           const plain = await _decryptPayload(_sessionCryptoKey, data.iv, data.ciphertext);
-          skipSaveRef.current = true; // don't re-save immediately after loading
-          if (plain.positions?.length)    setPositions(plain.positions);
-          if (plain.transactions?.length) setTransactions(plain.transactions);
-          if (plain.watchlists?.length)   setWatchlists(plain.watchlists);
+          // Temporarily null the key so the state-change effects below don't trigger a save
+          const savedKey = _sessionCryptoKey;
+          _sessionCryptoKey = null;
+          if (plain.positions    && plain.positions.length)    setPositions(plain.positions);
+          if (plain.transactions && plain.transactions.length) setTransactions(plain.transactions);
+          if (plain.watchlists   && plain.watchlists.length)   setWatchlists(plain.watchlists);
+          // Restore key after React has flushed state (next microtask)
+          await Promise.resolve();
+          _sessionCryptoKey = savedKey;
         }
       } catch (e) { console.warn('Cloud load error:', e.message); }
       finally { setCloudLoading(false); loadedRef.current = true; }
     })();
   }, []);
 
-  // ── Auto-save (debounced 1.5s) ─────────────────
+  // ── Auto-save (debounced 1.5s) ────────────────
   React.useEffect(() => {
     if (!supabase) return;
-    // skipSaveRef prevents re-saving data we just loaded from cloud
-    if (skipSaveRef.current) { skipSaveRef.current = false; return; }
-    // triggerSave checks _sessionCryptoKey internally — safe to call anytime
     clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(triggerSave, 1500);
     return () => clearTimeout(saveTimerRef.current);
