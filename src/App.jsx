@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect, useCallback } from "react"; // v25-compare-fwd-metrics
+import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, AreaChart, ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid } from "recharts";
 
 const FONTS = `@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=IBM+Plex+Mono:wght@300;400;500;600&family=DM+Sans:wght@300;400;500&display=swap');`;
@@ -4960,10 +4961,333 @@ function PortfolioPage({ positions, transactions, onOpenStock, priceLoading, cha
   );
 }
 
+// ─────────────────────────────────────────────
+// SUPABASE AUTH + AES-256-GCM ENCRYPTION
+//
+// Design: the user's login password is used to derive the encryption key
+// via PBKDF2 (100k iterations, SHA-256) → AES-256-GCM.
+// AuthGate derives the key on login/signup and stores it in a module-level
+// variable so App can use it without ever prompting the user again.
+// Supabase only ever stores: salt (hex) + iv (hex) + ciphertext (base64).
+// Neither the server, the DB admin, nor we can decrypt without the password.
+// ─────────────────────────────────────────────
+
+const SUPABASE_URL  = import.meta.env.VITE_SUPABASE_URL  || '';
+const SUPABASE_ANON = import.meta.env.VITE_SUPABASE_ANON || '';
+const supabase = (SUPABASE_URL && SUPABASE_ANON)
+  ? createClient(SUPABASE_URL, SUPABASE_ANON)
+  : null;
+
+// ── Module-level key store — set by AuthGate, read by App ──
+// The CryptoKey never leaves RAM and is never serialised.
+let _sessionCryptoKey = null;
+let _sessionSalt      = null; // hex string, persisted in DB (not secret)
+
+// ── WebCrypto helpers (pure functions, no React) ──────────
+const _enc = new TextEncoder();
+const _dec = new TextDecoder();
+
+async function _deriveCryptoKey(password, saltHex) {
+  const saltBytes = Uint8Array.from(saltHex.match(/../g).map(h => parseInt(h, 16)));
+  const baseKey   = await crypto.subtle.importKey('raw', _enc.encode(password), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt: saltBytes, iterations: 100000, hash: 'SHA-256' },
+    baseKey,
+    { name: 'AES-GCM', length: 256 },
+    false, ['encrypt', 'decrypt']
+  );
+}
+
+async function _encryptPayload(key, obj) {
+  const iv        = crypto.getRandomValues(new Uint8Array(12));
+  const plainBuf  = _enc.encode(JSON.stringify(obj));
+  const cipherBuf = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, plainBuf);
+  const ivHex     = Array.from(iv).map(b => b.toString(16).padStart(2, '0')).join('');
+  const ctB64     = btoa(String.fromCharCode(...new Uint8Array(cipherBuf)));
+  return { iv: ivHex, ct: ctB64 };
+}
+
+async function _decryptPayload(key, ivHex, ctB64) {
+  const iv       = Uint8Array.from(ivHex.match(/../g).map(h => parseInt(h, 16)));
+  const ctBytes  = Uint8Array.from(atob(ctB64), ch => ch.charCodeAt(0));
+  const plainBuf = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ctBytes);
+  return JSON.parse(_dec.decode(plainBuf));
+}
+
+function _randomSaltHex() {
+  return Array.from(crypto.getRandomValues(new Uint8Array(32)))
+    .map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// ── Auth hook ──────────────────────────────────
+function useAuth() {
+  const [session, setSession] = useState(undefined); // undefined = still checking
+  useEffect(() => {
+    if (!supabase) { setSession(null); return; }
+    supabase.auth.getSession().then(({ data }) => setSession(data.session));
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, s) => {
+      if (!s) { _sessionCryptoKey = null; _sessionSalt = null; } // clear key on logout
+      setSession(s);
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+  return session;
+}
+
+// ── Auth Gate ─────────────────────────────────
+export function AuthGate({ children }) {
+  const session   = useAuth();
+  const [mode,    setMode]    = useState('login');
+  const [email,   setEmail]   = useState('');
+  const [pw,      setPw]      = useState('');
+  const [invite,  setInvite]  = useState('');
+  const [loading, setLoading] = useState(false);
+  const [msg,     setMsg]     = useState(null);
+  const [keyReady, setKeyReady] = useState(false); // true once key is derived
+
+  const INVITE_CODE = import.meta.env.VITE_INVITE_CODE || '';
+
+  // ── Once session exists, derive or set up the crypto key ──
+  useEffect(() => {
+    if (!session || !supabase || _sessionCryptoKey) { if (session) setKeyReady(true); return; }
+    // Session was restored from storage (e.g. page refresh) — we don't have the password.
+    // In this case we can't auto-decrypt; the user must log in again to get their data.
+    // For now mark keyReady so the app renders (empty state until they re-login properly).
+    setKeyReady(true);
+  }, [session]);
+
+  if (!supabase) return children;
+
+  if (session === undefined || (session && !keyReady)) {
+    return (
+      <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',
+        background:'#0a0f14',fontFamily:"'IBM Plex Mono',monospace"}}>
+        <span style={{color:'#3d4f5e',fontSize:12,letterSpacing:'0.1em'}}>LOADING…</span>
+      </div>
+    );
+  }
+
+  if (session && keyReady) return children;
+
+  // ── Form submit ──────────────────────────────
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setMsg(null);
+    setLoading(true);
+    try {
+      if (mode === 'forgot') {
+        const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin });
+        if (error) throw error;
+        setMsg({ type: 'success', text: 'Check your email for a reset link.' });
+        return;
+      }
+
+      if (mode === 'signup') {
+        if (INVITE_CODE && invite.trim().toUpperCase() !== INVITE_CODE.toUpperCase())
+          throw new Error('Invalid invite code.');
+        const { error } = await supabase.auth.signUp({ email, password: pw });
+        if (error) throw error;
+        // Derive key + generate salt for new user
+        const salt = _randomSaltHex();
+        const key  = await _deriveCryptoKey(pw, salt);
+        _sessionCryptoKey = key;
+        _sessionSalt      = salt;
+        // Store the salt in DB immediately (empty ciphertext for now)
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          await supabase.from('portfolios').upsert(
+            { user_id: user.id, salt, iv: '', ciphertext: '', updated_at: new Date().toISOString() },
+            { onConflict: 'user_id' }
+          );
+        }
+        setMsg({ type: 'success', text: 'Account created! Check your email to confirm.' });
+        setKeyReady(true);
+        return;
+      }
+
+      // Login — derive key from password + stored salt
+      const { data: signInData, error } = await supabase.auth.signInWithPassword({ email, password: pw });
+      if (error) throw error;
+
+      // Fetch salt from DB
+      const userId = signInData.user.id;
+      const { data: row } = await supabase.from('portfolios').select('salt').eq('user_id', userId).single();
+      if (row?.salt) {
+        _sessionSalt      = row.salt;
+        _sessionCryptoKey = await _deriveCryptoKey(pw, row.salt);
+      }
+      // If no row yet (brand new user who hasn't saved): key will be set on first save
+      setKeyReady(true);
+
+    } catch (err) {
+      setMsg({ type: 'error', text: err.message });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const inp = { style: {
+    width:'100%', padding:'11px 14px', background:'#111c24',
+    border:'1px solid #1e2d3d', borderRadius:6, color:'#e8f0f7',
+    fontSize:13, fontFamily:"'IBM Plex Mono',monospace",
+    outline:'none', boxSizing:'border-box',
+  }};
+
+  return (
+    <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',
+      background:'#0a0f14',fontFamily:"'IBM Plex Mono',monospace",padding:24}}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@1&family=IBM+Plex+Mono:wght@300;400;500;600&display=swap');
+        .auth-inp:focus { border-color:#00e5a0 !important; }
+        .auth-btn { transition:opacity 0.15s,transform 0.1s; }
+        .auth-btn:hover:not(:disabled) { opacity:0.88; transform:translateY(-1px); }
+        .auth-link { color:#00e5a0; cursor:pointer; background:none; border:none; font:inherit; padding:0; }
+        .auth-link:hover { text-decoration:underline; }
+      `}</style>
+      <div style={{width:'100%',maxWidth:400}}>
+        <div style={{textAlign:'center',marginBottom:36}}>
+          <div style={{fontFamily:"'DM Serif Display',serif",fontStyle:'italic',
+            fontSize:32,color:'#e8f0f7',letterSpacing:'-0.02em',marginBottom:4}}>foliologic</div>
+          <div style={{fontSize:9,color:'#3d4f5e',letterSpacing:'0.18em'}}>EU INVESTOR PLATFORM</div>
+        </div>
+        <div style={{background:'#0d1821',border:'1px solid #1e2d3d',borderRadius:12,padding:32}}>
+          <div style={{fontSize:11,color:'#7a9ab5',letterSpacing:'0.1em',marginBottom:24}}>
+            {mode==='login'?'SIGN IN':mode==='signup'?'CREATE ACCOUNT':'RESET PASSWORD'}
+          </div>
+          <form onSubmit={handleSubmit} style={{display:'flex',flexDirection:'column',gap:14}}>
+            <input {...inp} className="auth-inp" type="email" placeholder="Email address"
+              value={email} onChange={e=>setEmail(e.target.value)} required autoComplete="email"/>
+            {mode !== 'forgot' && (
+              <input {...inp} className="auth-inp" type="password"
+                placeholder={mode==='signup'?'Choose a password (min 8 chars)':'Password'}
+                value={pw} onChange={e=>setPw(e.target.value)} required
+                minLength={mode==='signup'?8:undefined}
+                autoComplete={mode==='signup'?'new-password':'current-password'}/>
+            )}
+            {mode==='signup' && INVITE_CODE && (
+              <input {...inp} className="auth-inp" type="text" placeholder="Invite code"
+                value={invite} onChange={e=>setInvite(e.target.value)} required/>
+            )}
+            {mode==='signup' && (
+              <div style={{fontSize:9,color:'#3d4f5e',lineHeight:1.7,padding:'8px 0'}}>
+                🔐 Your portfolio will be <strong style={{color:'#7a9ab5'}}>end-to-end encrypted</strong> using your password.
+                If you forget it, your data cannot be recovered.
+              </div>
+            )}
+            {msg && (
+              <div style={{fontSize:11,padding:'10px 12px',borderRadius:6,
+                background:msg.type==='error'?'rgba(255,77,109,0.12)':'rgba(0,229,160,0.1)',
+                color:msg.type==='error'?'#ff4d6d':'#00e5a0',
+                border:`1px solid ${msg.type==='error'?'rgba(255,77,109,0.3)':'rgba(0,229,160,0.2)'}`}}>
+                {msg.text}
+              </div>
+            )}
+            <button type="submit" disabled={loading} className="auth-btn"
+              style={{padding:'12px',background:'#00e5a0',color:'#0a0f14',border:'none',
+                borderRadius:6,fontSize:12,fontWeight:600,fontFamily:'inherit',
+                letterSpacing:'0.08em',cursor:loading?'not-allowed':'pointer',opacity:loading?0.6:1}}>
+              {loading?'…':mode==='login'?'SIGN IN':mode==='signup'?'CREATE ACCOUNT':'SEND RESET LINK'}
+            </button>
+          </form>
+          <div style={{marginTop:20,display:'flex',flexDirection:'column',gap:8,alignItems:'center'}}>
+            {mode==='login' && (<>
+              <button className="auth-link" style={{fontSize:10}} onClick={()=>{setMode('forgot');setMsg(null);}}>Forgot password?</button>
+              <div style={{fontSize:10,color:'#3d4f5e'}}>No account?{' '}
+                <button className="auth-link" onClick={()=>{setMode('signup');setMsg(null);}}>Request access</button>
+              </div>
+            </>)}
+            {mode==='signup' && <div style={{fontSize:10,color:'#3d4f5e'}}>Already have an account?{' '}
+              <button className="auth-link" onClick={()=>{setMode('login');setMsg(null);}}>Sign in</button></div>}
+            {mode==='forgot' && <button className="auth-link" style={{fontSize:10}}
+              onClick={()=>{setMode('login');setMsg(null);}}>← Back to sign in</button>}
+          </div>
+        </div>
+        <div style={{textAlign:'center',marginTop:20,fontSize:9,color:'#1e2d3d',letterSpacing:'0.08em'}}>
+          © 2025 FOLIOLOGIC — INVITE ONLY BETA
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 export default function App() {
   const [positions,   setPositions]   = useState([]);
   const positionsRef = React.useRef([]);
   React.useEffect(()=>{ positionsRef.current = positions; }, [positions]);
+
+  // ─────────────────────────────────────────────
+  // CLOUD SYNC — reads/writes encrypted blobs via Supabase
+  // Key is derived in AuthGate from the login password — no prompt needed here.
+  // ─────────────────────────────────────────────
+  const [cloudLoading, setCloudLoading] = React.useState(!!supabase);
+  const [cloudSaving,  setCloudSaving]  = React.useState(false);
+  const saveTimerRef   = React.useRef(null);
+  const initialLoadRef = React.useRef(false);
+
+  // ── Load on mount ──────────────────────────────
+  React.useEffect(() => {
+    if (!supabase) { setCloudLoading(false); return; }
+    (async () => {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) { setCloudLoading(false); return; }
+
+        const { data, error } = await supabase
+          .from('portfolios')
+          .select('salt, iv, ciphertext')
+          .eq('user_id', user.id)
+          .single();
+
+        if (error && error.code !== 'PGRST116') throw error;
+
+        if (data?.ciphertext && _sessionCryptoKey) {
+          try {
+            const plain = await _decryptPayload(_sessionCryptoKey, data.iv, data.ciphertext);
+            if (plain.positions?.length)    setPositions(plain.positions);
+            if (plain.transactions?.length) setTransactions(plain.transactions);
+            if (plain.watchlists?.length)   setWatchlists(plain.watchlists);
+          } catch (e) {
+            console.warn('Decrypt failed:', e.message);
+          }
+        }
+      } catch (e) { console.warn('Cloud load error:', e.message); }
+      finally { setCloudLoading(false); initialLoadRef.current = true; }
+    })();
+  }, []);
+
+  // ── Auto-save (debounced 1.5s) ────────────────
+  React.useEffect(() => {
+    if (!supabase || !initialLoadRef.current) return;
+    clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(async () => {
+      if (!_sessionCryptoKey) return; // no key yet — skip until user logs in properly
+      try {
+        setCloudSaving(true);
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return;
+
+        // If no salt yet (first save for this user), generate one and store it
+        if (!_sessionSalt) {
+          _sessionSalt = _randomSaltHex();
+          await supabase.from('portfolios').upsert(
+            { user_id: user.id, salt: _sessionSalt, iv: '', ciphertext: '', updated_at: new Date().toISOString() },
+            { onConflict: 'user_id' }
+          );
+        }
+
+        const { iv, ct } = await _encryptPayload(_sessionCryptoKey, { positions, transactions, watchlists });
+        await supabase.from('portfolios').upsert(
+          { user_id: user.id, salt: _sessionSalt, iv, ciphertext: ct, updated_at: new Date().toISOString() },
+          { onConflict: 'user_id' }
+        );
+      } catch (e) { console.warn('Cloud save error:', e.message); }
+      finally { setCloudSaving(false); }
+    }, 1500);
+    return () => clearTimeout(saveTimerRef.current);
+  }, [positions, transactions, watchlists]);
+
+
   // FMP key is server-side only (Vercel env var FMP_KEY)
   const [transactions, setTransactions] = useState([]);
   const [priceLoading,setPriceLoading]= useState(true);
@@ -5547,6 +5871,16 @@ export default function App() {
     setNewPos({symbol:"",name:"",type:"stock",qty:"",avgPrice:"",currentPrice:"",broker:"Smartbroker+"});
   }
 
+  // While loading cloud data, show a minimal splash to avoid empty flash
+  if (cloudLoading) return (
+    <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',
+      background:'#080c10',fontFamily:"'IBM Plex Mono',monospace",flexDirection:'column',gap:12}}>
+      <style>{FONTS}</style>
+      <div style={{fontFamily:"'DM Serif Display',serif",fontStyle:'italic',fontSize:28,color:'#e8edf2'}}>foliologic</div>
+      <div style={{fontSize:9,color:'#3d4f5e',letterSpacing:'0.15em'}}>LOADING YOUR PORTFOLIO…</div>
+    </div>
+  );
+
   return (
     <>
       <style>{FONTS}{CSS}</style>
@@ -5581,6 +5915,17 @@ export default function App() {
               <div style={{fontSize:11,color:"var(--text2)",marginTop:2}}>All features unlocked</div>
             </div>
           </div>
+          {/* Sign out */}
+          {supabase && (
+            <button onClick={()=>supabase.auth.signOut()}
+              style={{width:"100%",marginTop:8,padding:"7px 0",background:"none",
+                border:"1px solid #1e2d3d",borderRadius:6,color:"#3d4f5e",fontSize:10,
+                fontFamily:"'IBM Plex Mono',monospace",letterSpacing:"0.08em",cursor:"pointer",
+                transition:"color 0.15s,border-color 0.15s"}}
+              onMouseEnter={e=>{e.currentTarget.style.color="#ff4d6d";e.currentTarget.style.borderColor="#ff4d6d";}}
+              onMouseLeave={e=>{e.currentTarget.style.color="#3d4f5e";e.currentTarget.style.borderColor="#1e2d3d";}}
+            >SIGN OUT</button>
+          )}
         </div>
 
         {/* ── Main ── */}
@@ -5614,7 +5959,7 @@ export default function App() {
               <div style={{display:"flex",alignItems:"center",gap:8,marginTop:3}}>
                 <span className="ldot"/>
                 <span className="mono" style={{fontSize:10,color:"var(--text2)"}}>
-                  {priceLoading ? `Fetching live prices${priceStatus ? ` — ${priceStatus}` : '…'}` : `Updated ${lastUpdated?.toLocaleTimeString("de-DE",{hour:"2-digit",minute:"2-digit"})}`}
+                  {cloudSaving ? '☁ Saving…' : priceLoading ? `Fetching live prices${priceStatus ? ` — ${priceStatus}` : '…'}` : `Updated ${lastUpdated?.toLocaleTimeString("de-DE",{hour:"2-digit",minute:"2-digit"})}`}
                 </span>
                 {!priceLoading && (
                   <button onClick={fetchPrices} style={{background:"none",border:"none",cursor:"pointer",color:"var(--text3)",fontSize:11,padding:"0 4px"}} title="Refresh prices">↻</button>
