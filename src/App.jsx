@@ -2128,6 +2128,7 @@ function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
         </div>
       )}
     </div>
+  </div>
   );
 }
 
