@@ -5217,6 +5217,33 @@ export default function App() {
   const [positions,   setPositions]   = useState([]);
   const positionsRef = React.useRef([]);
   React.useEffect(()=>{ positionsRef.current = positions; }, [positions]);
+  // FMP key is server-side only (Vercel env var FMP_KEY)
+  const [transactions, setTransactions] = useState([]);
+  const [priceLoading,setPriceLoading]= useState(true);
+  const [priceStatus, setPriceStatus]  = useState(null); // live status while loading
+  const [lastUpdated, setLastUpdated] = useState(null);
+  const [nav,         setNav]         = useState("dashboard");
+  const [showModal,   setShowModal]   = useState(false);
+  const [showImport,  setShowImport]  = useState(false);
+  const [range,       setRange]       = useState("1Y");
+  const [activeBrokers, setActiveBrokers] = useState({"Bitvavo":true,"Smartbroker+":true,"Trade Republic":true});
+  const [activeBM,    setActiveBM]    = useState(["sp500"]);
+  const [fBroker,     setFBroker]     = useState("All");
+  const [fType,       setFType]       = useState("All");
+  const [sortBy,      setSortBy]      = useState("value");
+  const [sortDir,     setSortDir]     = useState("desc");
+  const [newPos,      setNewPos]      = useState({symbol:"",name:"",type:"stock",qty:"",avgPrice:"",currentPrice:"",broker:"Smartbroker+"});
+  const [selectedPos,  setSelectedPos]  = useState(null);
+
+  // ── Shared Watchlist state (lifted from ChartsPage so WatchlistPage can share) ──
+  const mkDefaultWL = () => ([{
+    id: 'portfolio', name: 'Portfolio',
+    categories: [{ id: 'cat_default', name: 'Uncategorized', items: [] }]
+  }]);
+  const [watchlists,    setWatchlists]    = useState(mkDefaultWL);
+  const [activeWLId,    setActiveWLId]    = useState('portfolio');
+  const [chartTicker,   setChartTicker]   = useState('');
+
 
   // ─────────────────────────────────────────────
   // CLOUD SYNC — reads/writes encrypted blobs via Supabase
@@ -5290,32 +5317,6 @@ export default function App() {
   }, [positions, transactions, watchlists]);
 
 
-  // FMP key is server-side only (Vercel env var FMP_KEY)
-  const [transactions, setTransactions] = useState([]);
-  const [priceLoading,setPriceLoading]= useState(true);
-  const [priceStatus, setPriceStatus]  = useState(null); // live status while loading
-  const [lastUpdated, setLastUpdated] = useState(null);
-  const [nav,         setNav]         = useState("dashboard");
-  const [showModal,   setShowModal]   = useState(false);
-  const [showImport,  setShowImport]  = useState(false);
-  const [range,       setRange]       = useState("1Y");
-  const [activeBrokers, setActiveBrokers] = useState({"Bitvavo":true,"Smartbroker+":true,"Trade Republic":true});
-  const [activeBM,    setActiveBM]    = useState(["sp500"]);
-  const [fBroker,     setFBroker]     = useState("All");
-  const [fType,       setFType]       = useState("All");
-  const [sortBy,      setSortBy]      = useState("value");
-  const [sortDir,     setSortDir]     = useState("desc");
-  const [newPos,      setNewPos]      = useState({symbol:"",name:"",type:"stock",qty:"",avgPrice:"",currentPrice:"",broker:"Smartbroker+"});
-  const [selectedPos,  setSelectedPos]  = useState(null);
-
-  // ── Shared Watchlist state (lifted from ChartsPage so WatchlistPage can share) ──
-  const mkDefaultWL = () => ([{
-    id: 'portfolio', name: 'Portfolio',
-    categories: [{ id: 'cat_default', name: 'Uncategorized', items: [] }]
-  }]);
-  const [watchlists,    setWatchlists]    = useState(mkDefaultWL);
-  const [activeWLId,    setActiveWLId]    = useState('portfolio');
-  const [chartTicker,   setChartTicker]   = useState('');
 
   // Keep Portfolio watchlist in sync with positions
   React.useEffect(() => {
