@@ -1394,22 +1394,22 @@ async function fetchTickerSearch(query, limit = 12, signal) {
 
   const safeFetch = (url) => fetch(url, opts).then(r => r.ok ? r.json() : []).catch(() => []);
 
-  const [nameData, symbolData, quoteData] = await Promise.all([
-    safeFetch('/api/fmp?path=' + encodeURIComponent('/search-name?query=' + query + '&limit=' + searchLimit)),
-    safeFetch('/api/fmp?path=' + encodeURIComponent('/search?query=' + q + '&limit=' + searchLimit)),
+  // /search and /quote/SYM don't work on free plan — use /quote?symbol= (known working) + /search-name
+  // Also try common ticker variants: exact + with/without exchange suffix
+  const [nameData, quoteExact] = await Promise.all([
+    safeFetch('/api/fmp?path=' + encodeURIComponent('/search-name?query=' + q + '&limit=' + searchLimit)),
     looksLikeTicker
-      ? safeFetch('/api/fmp?path=' + encodeURIComponent('/quote/' + q))
+      ? safeFetch('/api/fmp?path=' + encodeURIComponent('/quote?symbol=' + q))
       : Promise.resolve([]),
   ]);
 
   if (signal?.aborted) return [];
 
-  console.log('[search] query:', query, 'quote:', Array.isArray(quoteData)?quoteData.slice(0,3).map(x=>x.symbol):quoteData, 'symbol:', Array.isArray(symbolData)?symbolData.slice(0,5).map(x=>x.symbol):symbolData, 'name:', Array.isArray(nameData)?nameData.slice(0,5).map(x=>x.symbol):nameData);
-
   const normalize = (arr) => (Array.isArray(arr) ? arr : []).filter(t => t?.symbol);
-  const quoteResults  = normalize(quoteData).map(t => ({ symbol: t.symbol, name: t.name, exchangeShortName: t.exchange || '', exchange: t.exchange || '', exchangeFullName: t.exchangeFullName || t.exchange || '' }));
-  const symbolResults = normalize(symbolData);
-  const nameResults   = normalize(nameData);
+  // quote?symbol= returns the exact ticker if it exists — treat as top result
+  const quoteResults = normalize(quoteExact).map(t => ({ symbol: t.symbol, name: t.name, exchange: t.exchange || '', exchangeFullName: t.exchangeFullName || t.exchange || '' }));
+  const nameResults  = normalize(nameData);
+  const symbolResults = []; // /search not available on free plan
 
   // Merge: exact quote first, then symbol search, then name search
   const seen = new Set();
