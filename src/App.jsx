@@ -1699,9 +1699,11 @@ function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
       // Auto-batch load fundamentals for first 30 results in parallel
       const toLoad = res2.slice(0, 30).map(r => r.symbol).filter(sym => !fundCache[sym]);
       if (toLoad.length) {
-        toLoad.forEach(sym => {
+        // Stagger in batches of 5 to avoid FMP rate limiting
+        const BATCH = 5;
+        const fetchOne = (sym) => {
           setLoadingFund(prev => ({ ...prev, [sym]: true }));
-          fetch('/api/fundamentals?lite=1&symbol=' + sym.split('.')[0])
+          return fetch('/api/fundamentals?lite=1&symbol=' + sym.split('.')[0])
             .then(r => r.json())
             .then(d => {
               const score = d.healthScore ?? null;
@@ -1712,7 +1714,15 @@ function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
             })
             .catch(() => setFundCache(prev => ({ ...prev, [sym]: { score: null, pe: null, peg: null, fwdPE: null } })))
             .finally(() => setLoadingFund(prev => ({ ...prev, [sym]: false })));
-        });
+        };
+        const runBatches = async () => {
+          for (let i = 0; i < toLoad.length; i += BATCH) {
+            const batch = toLoad.slice(i, i + BATCH);
+            await Promise.all(batch.map(fetchOne));
+            if (i + BATCH < toLoad.length) await new Promise(r => setTimeout(r, 300));
+          }
+        };
+        runBatches();
       }
     } catch(e) {
       setError(e.message);

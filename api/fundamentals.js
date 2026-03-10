@@ -328,8 +328,8 @@ export default async function handler(req, res) {
       beta: p.beta ?? null, dividendYield: p.lastDividend ?? null,
       description: isLite ? undefined : (p.description || null),
       byYear,
-      byQuarter: isLite ? undefined : byQuarter,
-      // Pre-computed health score for screener (lite mode only, avoids client recalc)
+      byQuarter,
+      // Pre-computed health score included in lite mode so screener doesn't need to recalc
       healthScore: isLite ? computeHealthScore({ byYear, sector: p.sector, peRatio: topPE, pegRatio, evEbitda: latestKm.evToEBITDA ?? null }) : undefined,
     });
   } catch (e) {
