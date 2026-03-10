@@ -5257,6 +5257,7 @@ export default function App() {
   const [cloudLoading, setCloudLoading] = React.useState(!!supabase);
   const [cloudSaving,  setCloudSaving]  = React.useState(false);
   const saveTimerRef   = React.useRef(null);
+  const loadedRef      = React.useRef(false); // set true after load attempt completes
   const skipSaveRef    = React.useRef(false); // skip first save cycle after cloud load
 
   // ── Save ───────────────────────────────────────
