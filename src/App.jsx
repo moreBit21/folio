@@ -6028,7 +6028,15 @@ export default function App() {
   const [lastUpdated,  setLastUpdated]  = useState(null);
   const [nav,          setNav]          = useState("dashboard");
   const [prevNav,      setPrevNav]      = useState("dashboard");
-  const [showModal,    setShowModal]    = useState(false);
+  const [showModal,    setShowModal]    = useState(false); // legacy, keep for compat
+  const [txModal,      setTxModal]      = useState(null);  // {mode:'buy'|'sell'|'cash'}
+  const [showAddMenu,  setShowAddMenu]  = useState(false); // dropdown
+  React.useEffect(() => {
+    if (!showAddMenu) return;
+    const close = () => setShowAddMenu(false);
+    document.addEventListener('click', close);
+    return () => document.removeEventListener('click', close);
+  }, [showAddMenu]);
   const [showImport,   setShowImport]   = useState(false);
   const [range,        setRange]        = useState("1Y");
   const [activeBrokers,setActiveBrokers]= useState({"Bitvavo":true,"Smartbroker+":true,"Trade Republic":true});
@@ -6038,6 +6046,10 @@ export default function App() {
   const [sortBy,       setSortBy]       = useState("value");
   const [sortDir,      setSortDir]      = useState("desc");
   const [newPos,       setNewPos]       = useState({symbol:"",name:"",type:"stock",qty:"",avgPrice:"",currentPrice:"",broker:"Smartbroker+"});
+  const [txForm,       setTxForm]       = useState({symbol:"",name:"",qty:"",price:"",date:"",amount:"",cashType:"deposit"});
+  const [txFormErr,    setTxFormErr]    = useState("");
+  const [txSearch,     setTxSearch]     = useState([]);
+  const [txSearchLoading, setTxSearchLoading] = useState(false);
   const [selectedPos,  setSelectedPos]  = useState(null);
 
   // ── Shared Watchlist state ──
@@ -6680,6 +6692,143 @@ export default function App() {
     setNewPos({symbol:"",name:"",type:"stock",qty:"",avgPrice:"",currentPrice:"",broker:"Smartbroker+"});
   }
 
+  // ── New transaction modal helpers ──────────────────────────────────────────
+  const resetTxForm = () => {
+    setTxForm({symbol:"",name:"",qty:"",price:"",date:new Date().toISOString().slice(0,10),amount:"",cashType:"deposit"});
+    setTxFormErr(""); setTxSearch([]);
+  };
+  const openTxModal = (mode) => { resetTxForm(); setTxModal({mode}); setShowAddMenu(false); };
+
+  // Ticker search for tx modal
+  const searchTxTicker = async (q) => {
+    if (!q || q.length < 1) { setTxSearch([]); return; }
+    setTxSearchLoading(true);
+    try {
+      const r = await fetch('/api/screener?limit=8&exchange=NASDAQ&marketCapMin=100000000');
+      // Use the existing fetchTickerSearch approach via fmp proxy
+      const res = await fetch('/api/fmp?path=' + encodeURIComponent('/search?query=' + q.toUpperCase() + '&limit=8'));
+      const data = await res.json();
+      setTxSearch(Array.isArray(data) ? data.slice(0,6) : []);
+    } catch { setTxSearch([]); }
+    setTxSearchLoading(false);
+  };
+
+  const submitBuy = () => {
+    const { symbol, name, qty, price, date } = txForm;
+    if (!symbol || !qty || !price || !date) { setTxFormErr('Please fill all fields'); return; }
+    const q = parseFloat(qty), p = parseFloat(price);
+    if (isNaN(q)||q<=0) { setTxFormErr('Invalid quantity'); return; }
+    if (isNaN(p)||p<=0) { setTxFormErr('Invalid price'); return; }
+    const amountEur = q * p;
+    const sym = symbol.toUpperCase();
+    const txDate = date;
+
+    // Check cash balance sanity
+    const cashBalance = transactions.reduce((sum, t) => {
+      if (t.type === 'deposit') return sum + t.amountEur;
+      if (t.type === 'withdraw') return sum - t.amountEur;
+      if (t.type === 'buy') return sum - t.amountEur;
+      if (t.type === 'sell') return sum + t.amountEur;
+      return sum;
+    }, 0);
+    const warn = cashBalance > 0 && amountEur > cashBalance
+      ? `⚠ Cash balance (€${cashBalance.toFixed(0)}) may be insufficient for this buy (€${amountEur.toFixed(0)})`
+      : '';
+
+    // Add or update position
+    setPositions(prev => {
+      const existing = prev.find(p => p.symbol === sym || p.symbol === symbol);
+      if (existing) {
+        // Update avg price and qty (weighted average)
+        const newQty = existing.qty + q;
+        const newAvg = ((existing.avgPrice||p) * existing.qty + p * q) / newQty;
+        return prev.map(pos => pos === existing ? {...pos, qty: newQty, avgPrice: newAvg} : pos);
+      } else {
+        return [...prev, {
+          id: Date.now()+'', symbol: sym, name: name||sym,
+          type: 'stock', qty: q, avgPrice: p, currentPrice: p,
+          broker: 'Manual', color: ALLOC_COLORS[prev.length % ALLOC_COLORS.length]
+        }];
+      }
+    });
+
+    // Add transaction
+    setTransactions(prev => [...prev, {
+      id: Date.now()+'', date: txDate, type: 'buy',
+      symbol: sym, name: name||sym, qty: q, price: p, amountEur
+    }]);
+
+    setTxModal(null);
+    if (warn) setTimeout(() => alert(warn), 200);
+    setTimeout(fetchPrices, 300);
+  };
+
+  const submitSell = () => {
+    const { symbol, qty, price, date } = txForm;
+    if (!symbol || !qty || !price || !date) { setTxFormErr('Please fill all fields'); return; }
+    const q = parseFloat(qty), p = parseFloat(price);
+    if (isNaN(q)||q<=0) { setTxFormErr('Invalid quantity'); return; }
+    if (isNaN(p)||p<=0) { setTxFormErr('Invalid price'); return; }
+    const sym = symbol.toUpperCase();
+
+    // Check position exists and has enough qty
+    const existing = positions.find(pos => pos.symbol === sym || pos.symbol === symbol);
+    if (!existing) { setTxFormErr('Position not found in portfolio'); return; }
+    if (existing.qty < q) { setTxFormErr(\`Can only sell up to \${existing.qty} shares\`); return; }
+
+    const amountEur = q * p;
+    const newQty = existing.qty - q;
+
+    setPositions(prev => newQty <= 0.00001
+      ? prev.filter(pos => pos !== existing)
+      : prev.map(pos => pos === existing ? {...pos, qty: newQty} : pos)
+    );
+
+    setTransactions(prev => [...prev, {
+      id: Date.now()+'', date, type: 'sell',
+      symbol: sym, name: existing.name||sym, qty: q, price: p, amountEur
+    }]);
+
+    setTxModal(null);
+  };
+
+  const submitCash = () => {
+    const { amount, date, cashType } = txForm;
+    if (!amount || !date) { setTxFormErr('Please fill all fields'); return; }
+    const amt = parseFloat(amount);
+    if (isNaN(amt)||amt<=0) { setTxFormErr('Invalid amount'); return; }
+
+    if (cashType === 'withdraw') {
+      // Sanity: compute available cash
+      const cashBalance = transactions.reduce((sum, t) => {
+        if (t.type === 'deposit') return sum + t.amountEur;
+        if (t.type === 'withdraw') return sum - t.amountEur;
+        if (t.type === 'buy') return sum - t.amountEur;
+        if (t.type === 'sell') return sum + t.amountEur;
+        return sum;
+      }, 0);
+      if (amt > cashBalance + 0.01) {
+        setTxFormErr(\`⚠ Insufficient cash balance. Available: €\${cashBalance.toFixed(2)}\`);
+        return;
+      }
+    }
+
+    setTransactions(prev => [...prev, {
+      id: Date.now()+'', date, type: cashType, amountEur: amt,
+      symbol: '_CASH_', name: cashType === 'deposit' ? 'Cash Deposit' : 'Cash Withdrawal'
+    }]);
+    setTxModal(null);
+  };
+
+  // Compute cash balance for display in modal
+  const cashBalance = React.useMemo(() => transactions.reduce((sum, t) => {
+    if (t.type === 'deposit') return sum + t.amountEur;
+    if (t.type === 'withdraw') return sum - t.amountEur;
+    if (t.type === 'buy') return sum - t.amountEur;
+    if (t.type === 'sell') return sum + t.amountEur;
+    return sum;
+  }, 0), [transactions]);
+
   // While loading cloud data, show a minimal splash to avoid empty flash
   if (cloudLoading) return (
     <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',
@@ -6776,7 +6925,31 @@ export default function App() {
                 <PriceBadge loading={priceLoading}/>
               </div>
             </div>
-            <button className="btn btn-primary" onClick={()=>setShowModal(true)}>+ ADD POSITION</button>
+            <div style={{position:'relative'}}>
+              <button className="btn btn-primary" onClick={()=>setShowAddMenu(v=>!v)}>+ ADD ▾</button>
+              {showAddMenu && (
+                <div style={{position:'absolute',right:0,top:'100%',marginTop:4,
+                  background:'var(--surface)',border:'1px solid var(--border2)',
+                  borderRadius:8,padding:6,zIndex:50,minWidth:160,
+                  boxShadow:'0 8px 24px rgba(0,0,0,0.5)'}}>
+                  {[
+                    {icon:'📈',label:'Buy Position',  mode:'buy'},
+                    {icon:'📉',label:'Sell Position', mode:'sell'},
+                    {icon:'💵',label:'Cash Movement', mode:'cash'},
+                    {icon:'✏️', label:'Manual Entry',  mode:'manual'},
+                  ].map(({icon,label,mode})=>(
+                    <div key={mode}
+                      onClick={()=> mode==='manual' ? (setShowModal(true),setShowAddMenu(false)) : openTxModal(mode)}
+                      style={{padding:'8px 14px',cursor:'pointer',borderRadius:6,fontSize:12,
+                        color:'var(--text2)',display:'flex',alignItems:'center',gap:8}}
+                      onMouseEnter={e=>e.currentTarget.style.background='var(--surface2)'}
+                      onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                      {icon} {label}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
 
           {nav==="dashboard"&&(<>
@@ -6803,6 +6976,9 @@ export default function App() {
                 {label:"TOTAL P&L",       val: priceLoading?"…":`${pnl>=0?"+":"-"}€${fmt(Math.abs(pnl),0)}`, sub:`${pnl>=0?"▲":"▼"} ${fmt(Math.abs(pnlPct))}%`, bar:pnl>=0?"g":"r"},
                 {label:"INVESTED",        val:`€${fmt(totalCost,0)}`, sub:"Cost basis", bar:"n"},
                 {label:"LIVE PRICES",     val: priceLoading?"Syncing…":"Active", sub:"CoinGecko + FMP", bar:priceLoading?null:"g"},
+                ...(transactions.some(t=>t.type==='deposit'||t.type==='withdraw')?[
+                  {label:"CASH BALANCE", val:`€${cashBalance.toFixed(2)}`, sub: cashBalance<0?'⚠ Mismatch detected':'Available cash', bar: cashBalance<0?'r':'g'}
+                ]:[]),
               ].map((k,i)=>(
                 <div key={i} className="card" style={{padding:"16px 18px",position:"relative",overflow:"hidden"}}>
                   <div style={{position:"absolute",top:0,left:0,right:0,height:2,background:k.bar==="g"?"var(--green)":k.bar==="r"?"var(--red)":"var(--border2)"}}/>
@@ -6812,6 +6988,16 @@ export default function App() {
                 </div>
               ))}
             </div>
+
+            {/* ═══ Sanity warning if cash balance negative ═══ */}
+            {cashBalance < -1 && transactions.some(t=>t.type==='deposit'||t.type==='withdraw') && (
+              <div className="mono" style={{fontSize:11,color:'var(--gold)',padding:'10px 16px',
+                background:'rgba(255,196,0,0.08)',border:'1px solid rgba(255,196,0,0.2)',
+                borderRadius:8,marginBottom:12,display:'flex',alignItems:'center',gap:8}}>
+                ⚠ Cash mismatch detected — your buy transactions exceed recorded deposits by €{Math.abs(cashBalance).toFixed(2)}.
+                Add missing cash deposits via <strong>+ ADD → Cash Movement</strong> to keep your records accurate.
+              </div>
+            )}
 
             {/* ═══ PERFORMANCE + ALLOCATION ═══ */}
             <div className="fu3 card" style={{padding:"20px 20px 14px",marginBottom:16}}>
@@ -7078,6 +7264,169 @@ export default function App() {
         else{setPositions(prev=>[...prev,...imported]);setTimeout(fetchPrices,100);}
         setShowImport(false); setNav("dashboard");
       }}/>}
+
+      {/* ── Buy / Sell / Cash modals ── */}
+      {txModal && (() => {
+        const mode = txModal.mode;
+        const isBuy = mode==='buy', isSell=mode==='sell', isCash=mode==='cash';
+        const title = isBuy?'Buy Position':isSell?'Sell Position':'Cash Movement';
+        const setF = (k,v) => setTxForm(p=>({...p,[k]:v}));
+        const submitFn = isBuy?submitBuy:isSell?submitSell:submitCash;
+
+        return (
+          <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&setTxModal(null)}>
+            <div className="modal" style={{minWidth:380,maxWidth:460}}>
+              <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:18}}>
+                <span style={{fontSize:22}}>{isBuy?'📈':isSell?'📉':'💵'}</span>
+                <div>
+                  <div className="serif" style={{fontSize:18}}>{title}</div>
+                  <div className="mono" style={{fontSize:10,color:'var(--text3)',marginTop:2}}>
+                    {isCash ? `Cash balance: €${cashBalance.toFixed(2)}` : 'Auto-resolves name & current price'}
+                  </div>
+                </div>
+              </div>
+
+              {/* Ticker field for buy/sell */}
+              {!isCash && (
+                <div style={{marginBottom:12}}>
+                  <div className="mono" style={{fontSize:9,color:'var(--text3)',letterSpacing:'0.1em',marginBottom:5}}>
+                    {isSell ? 'POSITION' : 'TICKER'}
+                  </div>
+                  {isSell ? (
+                    <select className="inp" value={txForm.symbol}
+                      onChange={e=>{
+                        const pos = positions.find(p=>p.symbol===e.target.value);
+                        setF('symbol',e.target.value);
+                        setF('name', pos?.name||e.target.value);
+                      }}>
+                      <option value="">— select position —</option>
+                      {positions.map(p=>(
+                        <option key={p.id} value={p.symbol}>{p.symbol} — {p.name} ({p.qty} shares)</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <div style={{position:'relative'}}>
+                      <input className="inp" placeholder="NVDA, AAPL…" value={txForm.symbol}
+                        onChange={async e => {
+                          const v = e.target.value.toUpperCase();
+                          setF('symbol', v); setF('name','');
+                          if (v.length >= 1) {
+                            setTxSearchLoading(true);
+                            try {
+                              const res = await fetch('/api/fmp?path=' + encodeURIComponent('/search?query='+v+'&limit=6'));
+                              const data = await res.json();
+                              setTxSearch(Array.isArray(data)?data.slice(0,6):[]);
+                            } catch { setTxSearch([]); }
+                            setTxSearchLoading(false);
+                          } else setTxSearch([]);
+                        }}
+                      />
+                      {txSearch.length>0 && (
+                        <div style={{position:'absolute',top:'100%',left:0,right:0,zIndex:99,
+                          background:'var(--surface)',border:'1px solid var(--border2)',
+                          borderRadius:6,boxShadow:'0 4px 20px rgba(0,0,0,0.5)',overflow:'hidden'}}>
+                          {txSearch.map(r=>(
+                            <div key={r.symbol} onClick={()=>{
+                              setF('symbol',r.symbol); setF('name',r.name||r.companyName||r.symbol);
+                              setTxSearch([]);
+                            }} style={{padding:'8px 12px',cursor:'pointer',display:'flex',gap:8,alignItems:'baseline'}}
+                              onMouseEnter={e=>e.currentTarget.style.background='var(--surface2)'}
+                              onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                              <span className="mono" style={{fontWeight:700,color:'var(--green)',fontSize:12}}>{r.symbol}</span>
+                              <span style={{fontSize:11,color:'var(--text2)'}}>{r.name||r.companyName}</span>
+                              <span className="mono" style={{fontSize:10,color:'var(--text3)',marginLeft:'auto'}}>{r.exchangeShortName||r.stockExchange}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {txForm.name && <div className="mono" style={{fontSize:10,color:'var(--text3)',marginTop:4}}>{txForm.name}</div>}
+                </div>
+              )}
+
+              {/* Qty + Price for buy/sell */}
+              {!isCash && (
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
+                  <div>
+                    <div className="mono" style={{fontSize:9,color:'var(--text3)',letterSpacing:'0.1em',marginBottom:5}}>QUANTITY</div>
+                    <input className="inp" type="number" min="0" step="any" placeholder="0.00"
+                      value={txForm.qty} onChange={e=>setF('qty',e.target.value)}/>
+                    {isSell && txForm.symbol && (() => {
+                      const pos = positions.find(p=>p.symbol===txForm.symbol);
+                      return pos ? <div className="mono" style={{fontSize:10,color:'var(--text3)',marginTop:3}}>max: {pos.qty}</div> : null;
+                    })()}
+                  </div>
+                  <div>
+                    <div className="mono" style={{fontSize:9,color:'var(--text3)',letterSpacing:'0.1em',marginBottom:5}}>PRICE PER SHARE (€)</div>
+                    <input className="inp" type="number" min="0" step="any" placeholder="0.00"
+                      value={txForm.price} onChange={e=>setF('price',e.target.value)}/>
+                  </div>
+                </div>
+              )}
+
+              {/* Total preview for buy/sell */}
+              {!isCash && txForm.qty && txForm.price && (
+                <div className="mono" style={{fontSize:11,color:'var(--text2)',marginBottom:12,
+                  padding:'8px 12px',background:'var(--surface2)',borderRadius:6}}>
+                  Total: <span style={{color: isBuy?'var(--red)':'var(--green)', fontWeight:700}}>
+                    {isBuy?'−':'+'} €{(parseFloat(txForm.qty||0)*parseFloat(txForm.price||0)).toFixed(2)}
+                  </span>
+                  {isBuy && cashBalance > 0 && parseFloat(txForm.qty||0)*parseFloat(txForm.price||0) > cashBalance && (
+                    <span style={{color:'var(--gold)',marginLeft:8}}>⚠ exceeds cash balance</span>
+                  )}
+                </div>
+              )}
+
+              {/* Cash amount + type */}
+              {isCash && (
+                <div style={{marginBottom:12}}>
+                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
+                    <div>
+                      <div className="mono" style={{fontSize:9,color:'var(--text3)',letterSpacing:'0.1em',marginBottom:5}}>TYPE</div>
+                      <select className="inp" value={txForm.cashType} onChange={e=>setF('cashType',e.target.value)}>
+                        <option value="deposit">💰 Deposit</option>
+                        <option value="withdraw">🏧 Withdraw</option>
+                      </select>
+                    </div>
+                    <div>
+                      <div className="mono" style={{fontSize:9,color:'var(--text3)',letterSpacing:'0.1em',marginBottom:5}}>AMOUNT (€)</div>
+                      <input className="inp" type="number" min="0" step="any" placeholder="0.00"
+                        value={txForm.amount} onChange={e=>setF('amount',e.target.value)}/>
+                    </div>
+                  </div>
+                  {txForm.cashType==='withdraw' && txForm.amount && parseFloat(txForm.amount) > cashBalance && (
+                    <div className="mono" style={{fontSize:11,color:'var(--red)',padding:'6px 10px',
+                      background:'rgba(255,77,109,0.1)',borderRadius:6,marginBottom:8}}>
+                      ⚠ Insufficient cash — balance is €{cashBalance.toFixed(2)}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Date */}
+              <div style={{marginBottom:18}}>
+                <div className="mono" style={{fontSize:9,color:'var(--text3)',letterSpacing:'0.1em',marginBottom:5}}>DATE</div>
+                <input className="inp" type="date" value={txForm.date} onChange={e=>setF('date',e.target.value)}/>
+              </div>
+
+              {txFormErr && (
+                <div className="mono" style={{fontSize:11,color:'var(--red)',marginBottom:12,
+                  padding:'6px 10px',background:'rgba(255,77,109,0.1)',borderRadius:6}}>
+                  {txFormErr}
+                </div>
+              )}
+
+              <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
+                <button className="btn btn-ghost" onClick={()=>setTxModal(null)}>CANCEL</button>
+                <button className="btn btn-primary" onClick={submitFn}>
+                  {isBuy?'BUY':isSell?'SELL':'CONFIRM'}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {showModal&&(
         <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&setShowModal(false)}>
