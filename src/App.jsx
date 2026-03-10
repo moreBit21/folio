@@ -2014,7 +2014,7 @@ function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
                           <span style={{color:'var(--text2)',fontSize:11}}>{row.companyName || '—'}</span>
                           {isPossibleDeal && (
                             <span title="Strong fundamentals, price pulling back — possible opportunity" style={{
-                              marginLeft:6,fontSize:9,fontFamily:''IBM Plex Mono',monospace',
+                              marginLeft:6,fontSize:9,fontFamily:'IBM Plex Mono,monospace',
                               fontWeight:700,letterSpacing:'0.05em',padding:'2px 5px',
                               borderRadius:3,background:'rgba(0,229,160,0.10)',
                               color:'var(--green)',border:'1px solid rgba(0,229,160,0.22)',
