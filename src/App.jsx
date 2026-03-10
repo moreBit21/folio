@@ -1953,9 +1953,10 @@ function WatchlistPage({ watchlists, setWatchlists, activeWLId, setActiveWLId, o
                         else if(e.key==='ArrowUp'){e.preventDefault();setAddTickerHL(h=>Math.max(h-1,-1));}
                         else if(e.key==='Enter'){
                           e.preventDefault();
-                          const pick = addTickerHL>=0 ? addTickerRes[addTickerHL] : addTickerRes[0];
-                          if(pick){addItemToCat(wl.categories[0]?.id,{symbol:pick.symbol,name:pick.name});setAddTickerQ('');setAddTickerRes([]);setAddTickerHL(-1);setAddingTocat(null);}
-                          else if(addTickerQ.trim()){addItemToCat(wl.categories[0]?.id,{symbol:addTickerQ.trim().toUpperCase(),name:addTickerQ.trim().toUpperCase()});setAddTickerQ('');setAddTickerRes([]);setAddTickerHL(-1);setAddingTocat(null);}
+                          const pick = addTickerHL>=0 ? addTickerRes[addTickerHL] : null;
+                          const sym = pick?.symbol || addTickerQ.trim().toUpperCase();
+                          const name = pick?.name || sym;
+                          if(sym){addItemToCat(wl.categories[0]?.id,{symbol:sym,name});setAddTickerQ('');setAddTickerRes([]);setAddTickerHL(-1);setAddingTocat(null);}
                         }
                         else if(e.key==='Escape'){setAddTickerRes([]);setAddTickerHL(-1);}
                       }}
@@ -2076,9 +2077,10 @@ function WatchlistPage({ watchlists, setWatchlists, activeWLId, setActiveWLId, o
                             else if(e.key==='ArrowUp'){e.preventDefault();setAddTickerHL(h=>Math.max(h-1,-1));}
                             else if(e.key==='Enter'){
                               e.preventDefault();
-                              const pick=addTickerHL>=0?addTickerRes[addTickerHL]:addTickerRes[0];
-                              if(pick){addItemToCat(cat.id,{symbol:pick.symbol,name:pick.name});setAddTickerQ('');setAddTickerRes([]);setAddTickerHL(-1);setAddingTocat(null);}
-                              else if(addTickerQ.trim()){addItemToCat(cat.id,{symbol:addTickerQ.trim().toUpperCase(),name:addTickerQ.trim().toUpperCase()});setAddTickerQ('');setAddTickerRes([]);setAddTickerHL(-1);setAddingTocat(null);}
+                              const pick=addTickerHL>=0?addTickerRes[addTickerHL]:null;
+                              const sym = pick?.symbol || addTickerQ.trim().toUpperCase();
+                              const name = pick?.name || sym;
+                              if(sym){addItemToCat(cat.id,{symbol:sym,name});setAddTickerQ('');setAddTickerRes([]);setAddTickerHL(-1);setAddingTocat(null);}
                             }
                             else if(e.key==='Escape'){setAddTickerRes([]);setAddTickerHL(-1);}
                           }}
@@ -2808,7 +2810,7 @@ function ChartsPage({ positions, watchlists, setWatchlists, activeWLId, setActiv
                       else if (e.key === 'ArrowUp') { e.preventDefault(); setAddTickerHL(h => Math.max(h-1, -1)); }
                       else if (e.key === 'Enter') {
                         e.preventDefault();
-                        const pick = addTickerHL >= 0 ? addTickerRes[addTickerHL] : addTickerRes[0];
+                        const pick = addTickerHL >= 0 ? addTickerRes[addTickerHL] : null;
                         const sym = pick?.symbol || addTickerQ.trim().toUpperCase();
                         const name = pick?.name || sym;
                         if (!sym) return;
@@ -3107,9 +3109,13 @@ function CompareView() {
                     else if (e.key === 'ArrowUp') { e.preventDefault(); setCmpHighlight(h => Math.max(h - 1, -1)); }
                     else if (e.key === 'Enter') {
                       e.preventDefault();
-                      if (cmpHighlight >= 0 && cmpSearchRes[cmpHighlight]) addTicker(cmpSearchRes[cmpHighlight]);
-                      else if (cmpSearchRes.length > 0) addTicker(cmpSearchRes[0]);
-                      else addTicker(input);
+                      const typed = input.trim().toUpperCase();
+                      if (cmpHighlight >= 0 && cmpSearchRes[cmpHighlight]) { addTicker(cmpSearchRes[cmpHighlight]); }
+                      else {
+                        const exact = cmpSearchRes.find(r => r.symbol?.toUpperCase() === typed);
+                        if (exact) addTicker(exact);
+                        else addTicker(typed); // always trust what the user typed
+                      }
                     }
                     else if (e.key === 'Escape') { setCmpSearchRes([]); setCmpHighlight(-1); }
                   }}
