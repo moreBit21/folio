@@ -1623,6 +1623,351 @@ function calcCanonicalHealthScore(d) {
   return Math.round(dims.reduce((a,b)=>a+b)/dims.length*50);
 }
 
+
+// ── ScreenerPage ─────────────────────────────────────────────────────────────
+const SECTORS = ['All','Technology','Healthcare','Financial Services','Consumer Cyclical',
+  'Industrials','Communication Services','Consumer Defensive','Energy','Basic Materials',
+  'Real Estate','Utilities'];
+const EXCHANGES = ['All','NASDAQ','NYSE','AMEX'];
+const PRESETS = [
+  { label: 'Quality Growth', icon: '🚀', filters: { peMax:'40', marketCapMin:'1000000000', sector:'All', healthMin:60 } },
+  { label: 'Value',          icon: '💎', filters: { peMax:'15', marketCapMin:'500000000',  sector:'All', healthMin:40 } },
+  { label: 'Large Cap',      icon: '🏛️', filters: { marketCapMin:'10000000000', sector:'All' } },
+  { label: 'High Dividend',  icon: '💰', filters: { dividendMin:'0.02', sector:'All' } },
+  { label: 'Small Cap',      icon: '🌱', filters: { marketCapMax:'2000000000', marketCapMin:'100000000', sector:'All' } },
+  { label: 'Low Beta',       icon: '🛡️', filters: { betaMax:'0.8', marketCapMin:'1000000000', sector:'All' } },
+];
+
+function ScreenerPage({ onOpenStock }) {
+  const [filters, setFilters] = React.useState({
+    sector: 'All', exchange: 'All',
+    marketCapMin: '', marketCapMax: '',
+    peMin: '', peMax: '',
+    betaMin: '', betaMax: '',
+    dividendMin: '', dividendMax: '',
+    healthMin: 0,
+  });
+  const [results, setResults]     = React.useState([]);
+  const [loading, setLoading]     = React.useState(false);
+  const [error, setError]         = React.useState(null);
+  const [sortCol, setSortCol]     = React.useState('marketCap');
+  const [sortDir, setSortDir]     = React.useState('desc');
+  const [searched, setSearched]   = React.useState(false);
+  const [fundCache, setFundCache] = React.useState({});
+  const [loadingFund, setLoadingFund] = React.useState({});
+
+  const setFilter = (key, val) => setFilters(f => ({ ...f, [key]: val }));
+
+  const applyPreset = (preset) => {
+    setFilters(f => ({ ...f, peMin:'', peMax:'', marketCapMin:'', marketCapMax:'',
+      betaMin:'', betaMax:'', dividendMin:'', dividendMax:'', healthMin:0, ...preset.filters }));
+  };
+
+  const runScreener = async () => {
+    setLoading(true); setError(null); setSearched(true);
+    try {
+      const p = new URLSearchParams();
+      if (filters.marketCapMin) p.set('marketCapMin', filters.marketCapMin);
+      if (filters.marketCapMax) p.set('marketCapMax', filters.marketCapMax);
+      if (filters.peMin)        p.set('peMin', filters.peMin);
+      if (filters.peMax)        p.set('peMax', filters.peMax);
+      if (filters.betaMin)      p.set('betaMin', filters.betaMin);
+      if (filters.betaMax)      p.set('betaMax', filters.betaMax);
+      if (filters.dividendMin)  p.set('dividendMin', filters.dividendMin);
+      if (filters.dividendMax)  p.set('dividendMax', filters.dividendMax);
+      if (filters.sector && filters.sector !== 'All') p.set('sector', filters.sector);
+      if (filters.exchange && filters.exchange !== 'All') p.set('exchange', filters.exchange);
+      p.set('limit', '200');
+      const res = await fetch('/api/screener?' + p.toString());
+      const data = await res.json();
+      if (data.error && data.error === 'Premium') throw new Error('This endpoint requires a higher FMP plan.');
+      setResults(data.results || []);
+    } catch(e) {
+      setError(e.message);
+      setResults([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Fetch health score for a ticker on demand
+  const fetchHealthScore = async (symbol) => {
+    if (fundCache[symbol] !== undefined || loadingFund[symbol]) return;
+    setLoadingFund(prev => ({ ...prev, [symbol]: true }));
+    try {
+      const res = await fetch('/api/fundamentals?symbol=' + symbol.split('.')[0]);
+      const d = await res.json();
+      const score = calcCanonicalHealthScore(d);
+      setFundCache(prev => ({ ...prev, [symbol]: score }));
+    } catch {
+      setFundCache(prev => ({ ...prev, [symbol]: null }));
+    } finally {
+      setLoadingFund(prev => ({ ...prev, [symbol]: false }));
+    }
+  };
+
+  // Sort + health filter
+  const filtered = results.filter(r => {
+    if (filters.healthMin > 0) {
+      const score = fundCache[r.symbol];
+      if (score == null) return true; // include if not loaded yet
+      return score >= filters.healthMin;
+    }
+    return true;
+  });
+
+  const sorted = [...filtered].sort((a, b) => {
+    const av = a[sortCol] ?? -Infinity;
+    const bv = b[sortCol] ?? -Infinity;
+    return sortDir === 'asc' ? av - bv : bv - av;
+  });
+
+  const toggleSort = (col) => {
+    if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    else { setSortCol(col); setSortDir('desc'); }
+  };
+
+  const fmtCap = v => {
+    if (!v) return '—';
+    if (v >= 1e12) return (v/1e12).toFixed(1) + 'T';
+    if (v >= 1e9)  return (v/1e9).toFixed(1) + 'B';
+    if (v >= 1e6)  return (v/1e6).toFixed(0) + 'M';
+    return v.toFixed(0);
+  };
+  const fmtX   = v => v == null ? '—' : v.toFixed(1) + 'x';
+  const fmtPct = v => v == null ? '—' : (v * 100).toFixed(1) + '%';
+  const fmtN   = v => v == null ? '—' : v.toFixed(2);
+
+  const COLS = [
+    { key: 'symbol',         label: 'Ticker',    fmt: v => v,           numeric: false },
+    { key: 'companyName',    label: 'Company',   fmt: v => v?.split(' ').slice(0,3).join(' '), numeric: false },
+    { key: 'sector',         label: 'Sector',    fmt: v => v?.split(' ')[0] || '—', numeric: false },
+    { key: 'marketCap',      label: 'Mkt Cap',   fmt: fmtCap,           numeric: true },
+    { key: 'price',          label: 'Price',     fmt: v => v == null ? '—' : '$' + v.toFixed(2), numeric: true },
+    { key: 'pe',             label: 'P/E',       fmt: fmtX,             numeric: true },
+    { key: 'beta',           label: 'Beta',      fmt: fmtN,             numeric: true },
+    { key: 'lastAnnualDividend', label: 'Div Yield', fmt: v => v == null ? '—' : v.toFixed(2) + '%', numeric: true },
+    { key: '_health',        label: 'Health',    fmt: () => '',         numeric: true },
+  ];
+
+  const InpFilter = ({ label, fromKey, toKey, placeholder='e.g. 15' }) => (
+    <div style={{marginBottom:10}}>
+      <div className="mono" style={{fontSize:9,color:'var(--text3)',letterSpacing:'0.1em',marginBottom:4}}>{label}</div>
+      <div style={{display:'flex',gap:4,alignItems:'center'}}>
+        <input className="inp mono" placeholder="Min" value={filters[fromKey]||''}
+          onChange={e => setFilter(fromKey, e.target.value)}
+          style={{width:70,padding:'5px 8px',fontSize:11}} />
+        <span style={{color:'var(--text3)',fontSize:11}}>–</span>
+        <input className="inp mono" placeholder="Max" value={filters[toKey]||''}
+          onChange={e => setFilter(toKey, e.target.value)}
+          style={{width:70,padding:'5px 8px',fontSize:11}} />
+      </div>
+    </div>
+  );
+
+  const scoreColor = s => s == null ? 'var(--text3)' : s >= 70 ? 'var(--green)' : s >= 40 ? 'var(--gold)' : 'var(--red)';
+
+  return (
+    <div className="fu" style={{display:'flex',flexDirection:'column',minHeight:0}}>
+      {/* Header */}
+      <div style={{marginBottom:18}}>
+        <div className="serif" style={{fontSize:22,letterSpacing:'-0.02em'}}>Stock Screener</div>
+        <div className="mono" style={{fontSize:10,color:'var(--text3)',marginTop:3}}>
+          Filter by fundamentals · up to 200 results
+        </div>
+      </div>
+
+      {/* Presets */}
+      <div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:14}}>
+        {PRESETS.map(p => (
+          <button key={p.label} className="pill" onClick={() => applyPreset(p)}
+            style={{fontSize:10,padding:'5px 10px',gap:4,display:'flex',alignItems:'center'}}>
+            {p.icon} {p.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Filters */}
+      <div className="card" style={{padding:'16px 18px',marginBottom:14}}>
+        <div style={{display:'flex',gap:20,flexWrap:'wrap',alignItems:'flex-start'}}>
+
+          {/* Sector */}
+          <div style={{marginBottom:10}}>
+            <div className="mono" style={{fontSize:9,color:'var(--text3)',letterSpacing:'0.1em',marginBottom:4}}>SECTOR</div>
+            <select className="inp mono" value={filters.sector} onChange={e => setFilter('sector', e.target.value)}
+              style={{padding:'5px 8px',fontSize:11,minWidth:160}}>
+              {SECTORS.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+
+          {/* Exchange */}
+          <div style={{marginBottom:10}}>
+            <div className="mono" style={{fontSize:9,color:'var(--text3)',letterSpacing:'0.1em',marginBottom:4}}>EXCHANGE</div>
+            <select className="inp mono" value={filters.exchange} onChange={e => setFilter('exchange', e.target.value)}
+              style={{padding:'5px 8px',fontSize:11,minWidth:100}}>
+              {EXCHANGES.map(e => <option key={e} value={e}>{e}</option>)}
+            </select>
+          </div>
+
+          <InpFilter label="MARKET CAP ($)" fromKey="marketCapMin" toKey="marketCapMax" />
+          <InpFilter label="P/E RATIO" fromKey="peMin" toKey="peMax" />
+          <InpFilter label="BETA" fromKey="betaMin" toKey="betaMax" />
+          <InpFilter label="DIVIDEND YIELD (%)" fromKey="dividendMin" toKey="dividendMax" />
+
+          {/* Health score */}
+          <div style={{marginBottom:10}}>
+            <div className="mono" style={{fontSize:9,color:'var(--text3)',letterSpacing:'0.1em',marginBottom:4}}>
+              MIN HEALTH SCORE
+            </div>
+            <div style={{display:'flex',alignItems:'center',gap:8}}>
+              <input type="range" min={0} max={100} step={10} value={filters.healthMin}
+                onChange={e => setFilter('healthMin', +e.target.value)}
+                style={{width:100,accentColor:'var(--green)'}} />
+              <span className="mono" style={{fontSize:12,fontWeight:700,
+                color:filters.healthMin>=70?'var(--green)':filters.healthMin>=40?'var(--gold)':'var(--text3)',
+                minWidth:30}}>
+                {filters.healthMin > 0 ? filters.healthMin + '+' : 'Any'}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <button onClick={runScreener} disabled={loading}
+          style={{marginTop:4,padding:'9px 22px',background:'var(--green)',color:'#080c10',
+            border:'none',borderRadius:6,fontSize:12,fontWeight:700,cursor:'pointer',
+            opacity:loading?0.6:1,letterSpacing:'0.06em'}}>
+          {loading ? 'SCREENING…' : '⊞  RUN SCREENER'}
+        </button>
+      </div>
+
+      {error && (
+        <div style={{padding:'10px 14px',borderRadius:6,marginBottom:12,fontSize:12,
+          background:'rgba(255,77,109,0.1)',color:'#ff4d6d',border:'1px solid rgba(255,77,109,0.25)'}}>
+          {error}
+        </div>
+      )}
+
+      {/* Results */}
+      {searched && !loading && (
+        <div className="card" style={{flex:1,overflow:'hidden',display:'flex',flexDirection:'column'}}>
+          <div style={{padding:'12px 16px',borderBottom:'1px solid var(--border2)',display:'flex',alignItems:'center',gap:12}}>
+            <span className="mono" style={{fontSize:11,color:'var(--text2)',fontWeight:600}}>
+              {sorted.length} results
+            </span>
+            {filters.healthMin > 0 && (
+              <span className="mono" style={{fontSize:9,color:'var(--text3)'}}>
+                · health score filter active — click a row to load score
+              </span>
+            )}
+          </div>
+
+          {sorted.length === 0 ? (
+            <div style={{padding:'48px 20px',textAlign:'center',color:'var(--text3)',fontSize:13}}>
+              No stocks match your filters
+            </div>
+          ) : (
+            <div style={{overflowX:'auto',overflowY:'auto',flex:1}}>
+              <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+                <thead>
+                  <tr style={{background:'var(--surface2)',position:'sticky',top:0,zIndex:2}}>
+                    {COLS.map(col => (
+                      <th key={col.key} onClick={() => col.numeric && toggleSort(col.key)}
+                        style={{padding:'9px 12px',textAlign:col.numeric?'right':'left',
+                          cursor:col.numeric?'pointer':'default',
+                          borderBottom:'1px solid var(--border2)',whiteSpace:'nowrap',
+                          userSelect:'none'}}>
+                        <span className="mono" style={{fontSize:9,letterSpacing:'0.1em',color:sortCol===col.key?'var(--green)':'var(--text3)'}}>
+                          {col.label}{col.numeric && sortCol===col.key ? (sortDir==='asc'?' ↑':' ↓') : ''}
+                        </span>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {sorted.map((row, ri) => {
+                    const score = fundCache[row.symbol];
+                    const isLoadingScore = loadingFund[row.symbol];
+                    return (
+                      <tr key={row.symbol}
+                        onClick={() => {
+                          fetchHealthScore(row.symbol);
+                          if (onOpenStock) onOpenStock({ symbol: row.symbol, name: row.companyName, type: 'stock' });
+                        }}
+                        onMouseEnter={e => e.currentTarget.style.background = 'var(--surface2)'}
+                        onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                        style={{cursor:'pointer',borderBottom:'1px solid var(--border)',
+                          background: ri % 2 === 1 ? 'rgba(255,255,255,0.012)' : 'transparent',
+                          transition:'background 0.1s'}}>
+                        <td style={{padding:'8px 12px'}}>
+                          <span className="mono" style={{fontSize:12,fontWeight:700,color:'var(--green)'}}>{row.symbol}</span>
+                        </td>
+                        <td style={{padding:'8px 12px',maxWidth:180,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                          <span style={{color:'var(--text2)',fontSize:11}}>{row.companyName || '—'}</span>
+                        </td>
+                        <td style={{padding:'8px 12px'}}>
+                          <span style={{fontSize:10,color:'var(--text3)'}}>{row.sector?.split(' ')[0] || '—'}</span>
+                        </td>
+                        <td style={{padding:'8px 12px',textAlign:'right'}}>
+                          <span className="mono" style={{color:'var(--text2)'}}>{fmtCap(row.marketCap)}</span>
+                        </td>
+                        <td style={{padding:'8px 12px',textAlign:'right'}}>
+                          <span className="mono" style={{color:'var(--text)'}}>{row.price == null ? '—' : '$' + row.price.toFixed(2)}</span>
+                        </td>
+                        <td style={{padding:'8px 12px',textAlign:'right'}}>
+                          <span className="mono" style={{color: row.pe == null ? 'var(--text3)' : row.pe <= 20 ? 'var(--green)' : row.pe <= 35 ? 'var(--gold)' : 'var(--red)'}}>
+                            {fmtX(row.pe)}
+                          </span>
+                        </td>
+                        <td style={{padding:'8px 12px',textAlign:'right'}}>
+                          <span className="mono" style={{color: row.beta == null ? 'var(--text3)' : row.beta <= 1 ? 'var(--green)' : row.beta <= 1.5 ? 'var(--gold)' : 'var(--red)'}}>
+                            {fmtN(row.beta)}
+                          </span>
+                        </td>
+                        <td style={{padding:'8px 12px',textAlign:'right'}}>
+                          <span className="mono" style={{color: (row.lastAnnualDividend||0) > 0 ? 'var(--green)' : 'var(--text3)'}}>
+                            {(row.lastAnnualDividend||0) > 0 ? row.lastAnnualDividend.toFixed(2) + '%' : '—'}
+                          </span>
+                        </td>
+                        <td style={{padding:'8px 12px',textAlign:'right'}}
+                          onClick={e => { e.stopPropagation(); fetchHealthScore(row.symbol); }}>
+                          {isLoadingScore ? (
+                            <span className="mono shimmer" style={{fontSize:10,color:'var(--text3)'}}>···</span>
+                          ) : score != null ? (
+                            <span className="mono" style={{fontSize:12,fontWeight:700,color:scoreColor(score)}}>
+                              {score}<span style={{fontSize:8,color:'var(--text3)'}}>/100</span>
+                            </span>
+                          ) : (
+                            <span style={{fontSize:9,color:'var(--text3)',cursor:'pointer',
+                              padding:'2px 6px',border:'1px solid var(--border)',borderRadius:3}}>
+                              load
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {!searched && (
+        <div className="card fu" style={{padding:'48px 20px',textAlign:'center'}}>
+          <div style={{fontSize:36,marginBottom:16}}>⊞</div>
+          <div className="serif" style={{fontSize:18,color:'var(--text2)',marginBottom:8}}>
+            Filter the market
+          </div>
+          <div style={{fontSize:12,color:'var(--text3)',maxWidth:360,margin:'0 auto',lineHeight:1.6}}>
+            Set your filters above and run the screener — or pick a preset to get started
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── WatchlistPage ────────────────────────────────────────────────────────────
 function WatchlistPage({ watchlists, setWatchlists, activeWLId, setActiveWLId, onOpenStock, onOpenChart, positions }) {
   const [ctxMenu, setCtxMenu]         = React.useState(null);
@@ -6482,7 +6827,7 @@ export default function App() {
             range={range} setRange={setRange}
             BENCHMARKS={BENCHMARKS} perfStats={perfStats}/>}
           {nav==="stock"&&selectedPos&&<StockDetail pos={selectedPos} onBack={()=>{setNav("dashboard");setSelectedPos(null)}} transactions={transactions}/> }
-          {nav==="screener"&&<div className="fu card" style={{padding:40,textAlign:"center"}}><div className="serif" style={{fontSize:22,color:"var(--text2)",marginBottom:8}}>Stock Screener</div><div style={{fontSize:13,color:"var(--text3)"}}>Coming in Phase 3 — filter by P/E, dividend yield, sector, region & more</div></div>}
+          {nav==="screener"&&<ScreenerPage onOpenStock={pos=>{setSelectedPos(pos);setNav('stock');}}/> }
           {nav==="compare"&&<CompareView/>}
           {nav==="news"&&<NewsFeed positions={positions}/> }
           {nav==="settings"&&(
