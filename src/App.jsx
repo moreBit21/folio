@@ -1783,9 +1783,9 @@ function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
       const fund = fundCache[r.symbol];
       if (fund) {
         const dp = fund.curPrice ?? r.price;
-        const priceTrendDown = fund.priceAvg50 != null && dp != null
-          && dp < fund.priceAvg50
-          && fund.yearHigh != null && dp < fund.yearHigh * 0.85;
+        const priceTrendDown = dp != null
+          && ((fund.priceAvg50 != null && dp < fund.priceAvg50)
+            || (fund.yearHigh != null && dp < fund.yearHigh * 0.90));
         const fundStrong = (fund.score ?? 0) >= 55
           && (fund.ttmRevGrowth > 0 || fund.fy1RevGrowth > 0)
           && (fund.ttmEpsGrowth > 0 || fund.fy1EpsGrowth > 0);
@@ -1998,9 +1998,9 @@ function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
                     const rowFwdPE = fund?.fwdPE ?? null;
                     const isLoadingScore = loadingFund[row.symbol];
                     const _dp = fund?.curPrice ?? row.price;
-                    const priceTrendDown = fund?.priceAvg50 != null && _dp != null
-                      && _dp < fund.priceAvg50
-                      && fund?.yearHigh != null && _dp < fund.yearHigh * 0.85;
+                    const priceTrendDown = _dp != null
+                      && ((fund?.priceAvg50 != null && _dp < fund.priceAvg50)
+                        || (fund?.yearHigh != null && _dp < fund.yearHigh * 0.90));
                     const fundStrong = score != null && score >= 55
                       && (fund?.ttmRevGrowth > 0 || fund?.fy1RevGrowth > 0)
                       && (fund?.ttmEpsGrowth > 0 || fund?.fy1EpsGrowth > 0);
@@ -4860,8 +4860,9 @@ function StockDetail({ pos, onBack, transactions }) {
             const dp = data?.currentPrice;
             const avg50 = data?.priceAvg50;
             const high  = data?.yearHigh;
-            const priceTrendDown = dp != null && avg50 != null && high != null
-              && dp < avg50 && dp < high * 0.85;
+            const priceTrendDown = dp != null
+              && ((avg50 != null && dp < avg50)
+                || (high != null && dp < high * 0.90));
             const fundStrong = overallScore != null && overallScore >= 55
               && (data?.ttmRevGrowth > 0 || data?.fy1RevGrowth > 0)
               && (data?.ttmEpsGrowth > 0 || data?.fy1EpsGrowth > 0);
