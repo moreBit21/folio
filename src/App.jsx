@@ -4857,6 +4857,7 @@ function StockDetail({ pos, onBack, transactions }) {
           ) : (<>
           {/* ── Possible Deal badge ── */}
           {(() => {
+            if (data) console.log('[DEAL DEBUG]', { cp: data.currentPrice, avg50: data.priceAvg50, high: data.yearHigh, rev: data.ttmRevGrowth, eps: data.ttmEpsGrowth, score: overallScore });
             const dp = data?.currentPrice;
             const avg50 = data?.priceAvg50;
             const high  = data?.yearHigh;
