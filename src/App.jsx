@@ -5214,51 +5214,83 @@ export function AuthGate({ children }) {
 
 
 export default function App() {
-  const [positions,   setPositions]   = useState([]);
-  const positionsRef    = React.useRef([]);
-  const transactionsRef = React.useRef([]);
-  const watchlistsRef   = React.useRef([]);
-  React.useEffect(()=>{ positionsRef.current = positions; }, [positions]);
-  // FMP key is server-side only (Vercel env var FMP_KEY)
+  const [positions,    setPositions]    = useState([]);
   const [transactions, setTransactions] = useState([]);
-  const [priceLoading,setPriceLoading]= useState(true);
-  const [priceStatus, setPriceStatus]  = useState(null); // live status while loading
-  const [lastUpdated, setLastUpdated] = useState(null);
-  const [nav,         setNav]         = useState("dashboard");
-  const [showModal,   setShowModal]   = useState(false);
-  const [showImport,  setShowImport]  = useState(false);
-  const [range,       setRange]       = useState("1Y");
-  const [activeBrokers, setActiveBrokers] = useState({"Bitvavo":true,"Smartbroker+":true,"Trade Republic":true});
-  const [activeBM,    setActiveBM]    = useState(["sp500"]);
-  const [fBroker,     setFBroker]     = useState("All");
-  const [fType,       setFType]       = useState("All");
-  const [sortBy,      setSortBy]      = useState("value");
-  const [sortDir,     setSortDir]     = useState("desc");
-  const [newPos,      setNewPos]      = useState({symbol:"",name:"",type:"stock",qty:"",avgPrice:"",currentPrice:"",broker:"Smartbroker+"});
+  const [priceLoading, setPriceLoading] = useState(true);
+  const [priceStatus,  setPriceStatus]  = useState(null);
+  const [lastUpdated,  setLastUpdated]  = useState(null);
+  const [nav,          setNav]          = useState("dashboard");
+  const [showModal,    setShowModal]    = useState(false);
+  const [showImport,   setShowImport]   = useState(false);
+  const [range,        setRange]        = useState("1Y");
+  const [activeBrokers,setActiveBrokers]= useState({"Bitvavo":true,"Smartbroker+":true,"Trade Republic":true});
+  const [activeBM,     setActiveBM]     = useState(["sp500"]);
+  const [fBroker,      setFBroker]      = useState("All");
+  const [fType,        setFType]        = useState("All");
+  const [sortBy,       setSortBy]       = useState("value");
+  const [sortDir,      setSortDir]      = useState("desc");
+  const [newPos,       setNewPos]       = useState({symbol:"",name:"",type:"stock",qty:"",avgPrice:"",currentPrice:"",broker:"Smartbroker+"});
   const [selectedPos,  setSelectedPos]  = useState(null);
 
-  // ── Shared Watchlist state (lifted from ChartsPage so WatchlistPage can share) ──
+  // ── Shared Watchlist state ──
   const mkDefaultWL = () => ([{
     id: 'portfolio', name: 'Portfolio',
     categories: [{ id: 'cat_default', name: 'Uncategorized', items: [] }]
   }]);
-  const [watchlists,    setWatchlists]    = useState(mkDefaultWL);
-  const [activeWLId,    setActiveWLId]    = useState('portfolio');
-  const [chartTicker,   setChartTicker]   = useState('');
-  // Ref sync — must come AFTER all three state declarations to avoid Vite TDZ
-  React.useEffect(()=>{ transactionsRef.current = transactions; }, [transactions]);
-  React.useEffect(()=>{ watchlistsRef.current   = watchlists;   }, [watchlists]);
+  const [watchlists,  setWatchlists]  = useState(mkDefaultWL);
+  const [activeWLId,  setActiveWLId]  = useState('portfolio');
+  const [chartTicker, setChartTicker] = useState('');
 
+  // Single ref that always holds latest state — updated in one effect after ALL state is declared.
+  // This avoids Vite TDZ crashes from individual per-state ref effects.
+  const positionsRef = React.useRef([]);
+  const stateRef = React.useRef({ positions: [], transactions: [], watchlists: [] });
+  React.useEffect(() => {
+    positionsRef.current = positions;
+    stateRef.current = { positions, transactions, watchlists };
+  }); // no dependency array — runs after every render, always current
 
   // ─────────────────────────────────────────────
   // CLOUD SYNC — AES-256-GCM encrypted via Supabase
+  // Key derived in AuthGate on login; module-level _sessionCryptoKey / _sessionSalt
   // ─────────────────────────────────────────────
   const [cloudLoading, setCloudLoading] = React.useState(!!supabase);
   const [cloudSaving,  setCloudSaving]  = React.useState(false);
-  const saveTimerRef    = React.useRef(null);
-  const loadedRef       = React.useRef(false);  // true once initial load attempt done
-  const dataLoadedRef   = React.useRef(false);  // true if we actually loaded cloud data
-  const pendingSaveRef  = React.useRef(false);  // save was requested while loading
+  const saveTimerRef   = React.useRef(null);
+  const loadedRef      = React.useRef(false);
+  const skipSaveRef    = React.useRef(false); // skip first save cycle after cloud load
+
+  // ── Save ───────────────────────────────────────
+  const triggerSave = React.useCallback(async () => {
+    if (!supabase || !_sessionCryptoKey) return;
+    try {
+      setCloudSaving(true);
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      if (!_sessionSalt) {
+        const { data: row } = await supabase
+          .from('portfolios').select('salt').eq('user_id', user.id).single();
+        if (row?.salt) {
+          _sessionSalt = row.salt;
+        } else {
+          _sessionSalt = _randomSaltHex();
+          await supabase.from('portfolios').upsert(
+            { user_id: user.id, salt: _sessionSalt, iv: '', ciphertext: '', updated_at: new Date().toISOString() },
+            { onConflict: 'user_id' }
+          );
+        }
+      }
+
+      const { iv, ct } = await _encryptPayload(_sessionCryptoKey, stateRef.current);
+      const { error } = await supabase.from('portfolios').upsert(
+        { user_id: user.id, salt: _sessionSalt, iv, ciphertext: ct, updated_at: new Date().toISOString() },
+        { onConflict: 'user_id' }
+      );
+      if (error) throw error;
+    } catch (e) { console.warn('Cloud save error:', e.message); }
+    finally { setCloudSaving(false); }
+  }, []);
 
   // ── Load on mount ──────────────────────────────
   React.useEffect(() => {
@@ -5276,87 +5308,26 @@ export default function App() {
 
         if (error && error.code !== 'PGRST116') throw error;
 
-        if (data?.ciphertext && data.ciphertext.length > 0 && _sessionCryptoKey) {
+        if (data?.ciphertext?.length > 0 && _sessionCryptoKey) {
           const plain = await _decryptPayload(_sessionCryptoKey, data.iv, data.ciphertext);
-          // Load positions first, suppress watchlist sync during load
+          skipSaveRef.current = true; // don't re-save immediately after loading
           if (plain.positions?.length)    setPositions(plain.positions);
           if (plain.transactions?.length) setTransactions(plain.transactions);
           if (plain.watchlists?.length)   setWatchlists(plain.watchlists);
-          dataLoadedRef.current = true;
         }
       } catch (e) { console.warn('Cloud load error:', e.message); }
-      finally {
-        setCloudLoading(false);
-        loadedRef.current = true;
-        // If a save was queued while we were loading, fire it now
-        if (pendingSaveRef.current) {
-          pendingSaveRef.current = false;
-          // Small delay to let React state settle after setPositions etc.
-          setTimeout(() => triggerSave(), 200);
-        }
-      }
+      finally { setCloudLoading(false); loadedRef.current = true; }
     })();
-  }, []); // eslint-disable-line
-
-  // ── Save function (callable directly) ─────────
-  const triggerSave = React.useCallback(async () => {
-    if (!supabase || !_sessionCryptoKey) return;
-    try {
-      setCloudSaving(true);
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-
-      // Ensure we have a salt — fetch from DB if missing (e.g. session restored from cookie)
-      if (!_sessionSalt) {
-        const { data: row } = await supabase
-          .from('portfolios').select('salt').eq('user_id', user.id).single();
-        if (row?.salt) {
-          _sessionSalt = row.salt;
-        } else {
-          // Brand new user — generate salt and store it
-          _sessionSalt = _randomSaltHex();
-          await supabase.from('portfolios').upsert(
-            { user_id: user.id, salt: _sessionSalt, iv: '', ciphertext: '', updated_at: new Date().toISOString() },
-            { onConflict: 'user_id' }
-          );
-        }
-      }
-
-      // Read current state directly from refs to avoid stale closure
-      const payload = {
-        positions:    positionsRef.current,
-        transactions: transactionsRef.current,
-        watchlists:   watchlistsRef.current,
-      };
-      const { iv, ct } = await _encryptPayload(_sessionCryptoKey, payload);
-      const { error } = await supabase.from('portfolios').upsert(
-        { user_id: user.id, salt: _sessionSalt, iv, ciphertext: ct, updated_at: new Date().toISOString() },
-        { onConflict: 'user_id' }
-      );
-      if (error) throw error;
-    } catch (e) { console.warn('Cloud save error:', e.message); }
-    finally { setCloudSaving(false); }
   }, []);
 
-  // ── Auto-save (debounced 1.5s after any data change) ──
+  // ── Auto-save (debounced 1.5s) ─────────────────
   React.useEffect(() => {
-    if (!supabase) return;
-    if (!loadedRef.current) {
-      // Still loading — mark that a save is pending
-      pendingSaveRef.current = true;
-      return;
-    }
-    if (dataLoadedRef.current) {
-      // First effect fire after cloud load — this is the load itself settling,
-      // not a user change. Skip one cycle.
-      dataLoadedRef.current = false;
-      return;
-    }
+    if (!supabase || !loadedRef.current) return;
+    if (skipSaveRef.current) { skipSaveRef.current = false; return; }
     clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(triggerSave, 1500);
     return () => clearTimeout(saveTimerRef.current);
   }, [positions, transactions, watchlists, triggerSave]);
-
 
   // Keep Portfolio watchlist in sync with positions
   React.useEffect(() => {
