@@ -1429,12 +1429,15 @@ async function fetchTickerSearch(query, limit = 12) {
 
     // Sort: exact match first, then starts-with on symbol, then exchange rank
     merged.sort((a, b) => {
-      const aExact = a.symbol?.toUpperCase() === q ? -10 : 0;
-      const bExact = b.symbol?.toUpperCase() === q ? -10 : 0;
-      const aStarts = a.symbol?.toUpperCase().startsWith(q) ? -3 : 0;
-      const bStarts = b.symbol?.toUpperCase().startsWith(q) ? -3 : 0;
-      const aScore = aExact + aStarts + rankSearchResult(a);
-      const bScore = bExact + bStarts + rankSearchResult(b);
+      const aExact = a.symbol?.toUpperCase() === q ? -20 : 0;
+      const bExact = b.symbol?.toUpperCase() === q ? -20 : 0;
+      const aStarts = a.symbol?.toUpperCase().startsWith(q) ? -8 : 0;
+      const bStarts = b.symbol?.toUpperCase().startsWith(q) ? -8 : 0;
+      // prefer shorter symbols (NVDA over NVDAX)
+      const aLen = a.symbol?.length || 99;
+      const bLen = b.symbol?.length || 99;
+      const aScore = aExact + aStarts + (aStarts ? aLen * 0.1 : 0) + rankSearchResult(a);
+      const bScore = bExact + bStarts + (bStarts ? bLen * 0.1 : 0) + rankSearchResult(b);
       return aScore - bScore;
     });
 
@@ -1963,7 +1966,7 @@ function WatchlistPage({ watchlists, setWatchlists, activeWLId, setActiveWLId, o
                       onBlur={()=>setTimeout(()=>{setAddTickerRes([]);setAddTickerQ('');setAddTickerHL(-1);setAddingTocat(null);},200)}
                       style={{fontSize:11,padding:'6px 10px',width:220}}/>
                     {(addTickerRes.length > 0 || false) && (
-                      <div style={{position:'absolute',top:'110%',right:0,zIndex:999}}>
+                      <div style={{position:'absolute',top:'110%',left:0,zIndex:999}}>
                         <TickerDropdown results={addTickerRes} searching={false} highlightIdx={addTickerHL}
                           onSelect={r=>{
                             addItemToCat(wl.categories[0]?.id, {symbol:r.symbol,name:r.name});
@@ -2087,7 +2090,7 @@ function WatchlistPage({ watchlists, setWatchlists, activeWLId, setActiveWLId, o
                           onBlur={()=>setTimeout(()=>{setAddTickerRes([]);setAddTickerQ('');setAddTickerHL(-1);setAddingTocat(null);},200)}
                           style={{fontSize:10,padding:'3px 8px',width:140}}/>
                         {addTickerRes.length > 0 && (
-                          <div style={{position:'absolute',top:'110%',right:0,zIndex:50}}>
+                          <div style={{position:'absolute',top:'110%',left:0,zIndex:50}}>
                             <TickerDropdown results={addTickerRes} searching={false} highlightIdx={addTickerHL}
                               onSelect={r=>{addItemToCat(cat.id,{symbol:r.symbol,name:r.name});setAddTickerQ('');setAddTickerRes([]);setAddTickerHL(-1);setAddingTocat(null);}}/>
                           </div>
@@ -2386,15 +2389,17 @@ function ChartsPage({ positions, watchlists, setWatchlists, activeWLId, setActiv
     if (!items.length) return;
     const syms = [...new Set(items.map(i => i.symbol))].filter(Boolean).join(',');
     if (!syms) return;
-    fetch('/api/fmp?path=' + encodeURIComponent('/quote?symbol=' + syms))
-      .then(r => r.json())
-      .then(data => {
-        if (!Array.isArray(data)) return;
-        const pm = {};
-        data.forEach(q => { const chg = q.changePercentage ?? q.changesPercentage ?? null; pm[q.symbol] = { price: q.price, change: chg }; });
-        setWlPrices(pm);
-      })
-      .catch(() => {});
+    const symArr = [...new Set(items.map(i => i.symbol))].filter(Boolean);
+    Promise.all(symArr.map(sym =>
+      fetch('/api/fmp?path=' + encodeURIComponent('/quote?symbol=' + sym))
+        .then(r => r.json())
+        .then(data => { const q = Array.isArray(data) ? data[0] : null; return q ? { sym, price: q.price, change: q.changePercentage ?? q.changesPercentage ?? null } : null; })
+        .catch(() => null)
+    )).then(results => {
+      const pm = {};
+      results.forEach(r => { if (r) pm[r.sym] = { price: r.price, change: r.change }; });
+      setWlPrices(pm);
+    });
   }, [watchlists, activeWL]);
 
   // ── Build TV chart ──
