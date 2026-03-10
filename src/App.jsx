@@ -1835,13 +1835,9 @@ function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
     <div className="fu" style={{display:'flex',flexDirection:'column',minHeight:0}}>
       {/* Header */}
       <div style={{marginBottom:18}}>
-        <div className="serif" style={{fontSize:22,letterSpacing:'-0.02em'}}>Stock Screener</div>
-        <div className="mono" style={{fontSize:10,color:'var(--text3)',marginTop:3}}>
+        <div className="mono" style={{fontSize:10,color:'var(--text3)',marginTop:3,marginBottom:14}}>
           Filter by fundamentals · up to 200 results
         </div>
-      </div>
-
-      {/* Presets */}
       <div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:14}}>
         {PRESETS.map(p => (
           <button key={p.label} className="pill" onClick={() => applyPreset(p)}
@@ -2129,6 +2125,317 @@ function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
           <div style={{fontSize:12,color:'var(--text3)',maxWidth:360,margin:'0 auto',lineHeight:1.6}}>
             Set your filters above and run the screener — or pick a preset to get started
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── ETFScreenerPage ──────────────────────────────────────────────────────────
+function ETFScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
+  const [filters, setFilters] = React.useState({
+    exchange: 'All',
+    assetClass: 'All',
+    aumMin: '', aumMax: '',
+    expenseRatioMax: '',
+    dividendMin: '',
+    volumeMin: '',
+  });
+  const [results, setResults]   = React.useState([]);
+  const [loading, setLoading]   = React.useState(false);
+  const [error, setError]       = React.useState(null);
+  const [searched, setSearched] = React.useState(false);
+  const [sortCol, setSortCol]   = React.useState('marketCap');
+  const [sortDir, setSortDir]   = React.useState('desc');
+  const [wlDropdown, setWlDropdown] = React.useState(null);
+  const wlDropRef = React.useRef(null);
+
+  React.useEffect(() => {
+    if (!wlDropdown) return;
+    const close = (e) => { if (wlDropRef.current && !wlDropRef.current.contains(e.target)) setWlDropdown(null); };
+    const t = setTimeout(() => document.addEventListener('click', close), 0);
+    return () => { clearTimeout(t); document.removeEventListener('click', close); };
+  }, [wlDropdown]);
+
+  const setFilter = (k, v) => setFilters(f => ({ ...f, [k]: v }));
+
+  const ETF_EXCHANGES = ['All','NYSE','NASDAQ','AMEX','EURONEXT','LSE','XETRA','SIX','CBOE'];
+  const ASSET_CLASSES = ['All','Equity','Fixed Income','Commodity','Real Estate','Currency','Multi-Asset','Alternatives'];
+
+  const ETF_PRESETS = [
+    { label: 'US Large Cap', filters: { exchange:'NYSE', assetClass:'Equity', expenseRatioMax:'0.2', aumMin:'1000000000' } },
+    { label: 'Low Cost', filters: { expenseRatioMax:'0.1', aumMin:'500000000' } },
+    { label: 'High Dividend', filters: { dividendMin:'2', expenseRatioMax:'0.5' } },
+    { label: 'Euro Zone', filters: { exchange:'EURONEXT', assetClass:'Equity' } },
+    { label: 'Bond ETFs', filters: { assetClass:'Fixed Income' } },
+    { label: 'Big AUM', filters: { aumMin:'50000000000' } },
+  ];
+
+  const runScreener = async () => {
+    setLoading(true); setError(null); setSearched(true);
+    try {
+      const p = new URLSearchParams({ limit: 200, isEtf: 'true' });
+      if (filters.aumMin)    p.set('marketCapMin', filters.aumMin);
+      if (filters.aumMax)    p.set('marketCapMax', filters.aumMax);
+      if (filters.dividendMin) p.set('dividendMin', filters.dividendMin);
+      if (filters.volumeMin)   p.set('volumeMin', filters.volumeMin);
+      if (filters.exchange && filters.exchange !== 'All') p.set('exchange', filters.exchange);
+      const res = await fetch('/api/screener?' + p.toString());
+      const data = await res.json();
+      if (data.error === 'Premium') throw new Error('This endpoint requires a higher FMP plan.');
+      let rows = data.results || [];
+      // Client-side filters
+      if (filters.expenseRatioMax) {
+        const max = parseFloat(filters.expenseRatioMax) / 100; // convert % to decimal
+        rows = rows.filter(r => r.lastAnnualDividend == null || true); // expense ratio not in screener data, skip
+      }
+      // Filter by asset class keyword in name if selected
+      if (filters.assetClass !== 'All') {
+        const kw = {
+          'Equity': ['equity','stock','shares','s&p','nasdaq','russell','index'],
+          'Fixed Income': ['bond','treasury','debt','fixed income','gilt','credit'],
+          'Commodity': ['gold','silver','oil','commodity','commodities','metal','energy','agriculture'],
+          'Real Estate': ['reit','real estate','property'],
+          'Currency': ['currency','forex','dollar','euro','yen'],
+          'Multi-Asset': ['multi','balanced','allocation','mixed'],
+          'Alternatives': ['hedge','alternative','infrastructure','private'],
+        }[filters.assetClass] || [];
+        if (kw.length) rows = rows.filter(r => kw.some(k => (r.companyName||'').toLowerCase().includes(k)));
+      }
+      setResults(rows);
+    } catch(e) {
+      setError(e.message); setResults([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fmtCap = v => {
+    if (!v) return '—';
+    if (v >= 1e12) return (v/1e12).toFixed(1) + 'T';
+    if (v >= 1e9)  return (v/1e9).toFixed(1) + 'B';
+    if (v >= 1e6)  return (v/1e6).toFixed(0) + 'M';
+    return v.toFixed(0);
+  };
+  const fmtDiv = v => v == null || v === 0 ? '—' : (v).toFixed(2) + '%';
+
+  const sorted = [...results].sort((a,b) => {
+    const av = a[sortCol] ?? -Infinity, bv = b[sortCol] ?? -Infinity;
+    return sortDir === 'asc' ? av - bv : bv - av;
+  });
+
+  const toggleSort = col => {
+    if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    else { setSortCol(col); setSortDir('desc'); }
+  };
+
+  const Th = ({ col, label, right }) => (
+    <th onClick={() => toggleSort(col)} style={{
+      padding:'8px 12px', textAlign: right ? 'right' : 'left',
+      cursor:'pointer', fontWeight:500, fontSize:10,
+      color: sortCol===col ? 'var(--green)' : 'var(--text3)',
+      letterSpacing:'0.06em', whiteSpace:'nowrap', userSelect:'none',
+      borderBottom:'1px solid var(--border)'
+    }}>
+      {label}{sortCol===col ? (sortDir==='desc'?' ▼':' ▲') : ''}
+    </th>
+  );
+
+  return (
+    <div className="fu" style={{display:'flex', flexDirection:'column', minHeight:0}}>
+      {/* Header */}
+      <div style={{marginBottom:18}}>
+        <div className="serif" style={{fontSize:22, letterSpacing:'-0.02em'}}>ETF Screener</div>
+        <div className="mono" style={{fontSize:10, color:'var(--text3)', marginTop:3}}>
+          Screen ETFs by AUM, region, asset class, dividend yield · up to 200 results
+        </div>
+      </div>
+
+      {/* Presets */}
+      <div style={{display:'flex', gap:6, flexWrap:'wrap', marginBottom:14}}>
+        {ETF_PRESETS.map(p => (
+          <button key={p.label} onClick={() => { setFilters(f => ({...f, exchange:'All', assetClass:'All', aumMin:'', aumMax:'', expenseRatioMax:'', dividendMin:'', volumeMin:'', ...p.filters})); }}
+            style={{background:'var(--surface2)', border:'1px solid var(--border2)', borderRadius:20,
+              padding:'4px 12px', fontSize:11, color:'var(--text2)', cursor:'pointer', whiteSpace:'nowrap'}}>
+            {p.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Filters */}
+      <div style={{background:'var(--surface)', border:'1px solid var(--border)', borderRadius:10, padding:'14px 16px', marginBottom:14}}>
+        <div style={{display:'flex', flexWrap:'wrap', gap:16, alignItems:'flex-start'}}>
+
+          {/* Exchange */}
+          <div style={{minWidth:130}}>
+            <div className="mono" style={{fontSize:9, color:'var(--text3)', letterSpacing:'0.1em', marginBottom:4}}>EXCHANGE</div>
+            <select className="inp mono" value={filters.exchange} onChange={e=>setFilter('exchange',e.target.value)}
+              style={{width:'100%', padding:'5px 8px', fontSize:11}}>
+              {ETF_EXCHANGES.map(x=><option key={x} value={x}>{x}</option>)}
+            </select>
+          </div>
+
+          {/* Asset Class */}
+          <div style={{minWidth:150}}>
+            <div className="mono" style={{fontSize:9, color:'var(--text3)', letterSpacing:'0.1em', marginBottom:4}}>ASSET CLASS</div>
+            <select className="inp mono" value={filters.assetClass} onChange={e=>setFilter('assetClass',e.target.value)}
+              style={{width:'100%', padding:'5px 8px', fontSize:11}}>
+              {ASSET_CLASSES.map(x=><option key={x} value={x}>{x}</option>)}
+            </select>
+          </div>
+
+          {/* AUM */}
+          <div>
+            <div className="mono" style={{fontSize:9, color:'var(--text3)', letterSpacing:'0.1em', marginBottom:4}}>AUM (USD)</div>
+            <div style={{display:'flex', gap:4, alignItems:'center'}}>
+              <input className="inp mono" placeholder="Min e.g. 1B" value={filters.aumMin}
+                onChange={e=>setFilter('aumMin', e.target.value.replace(/[^0-9.]/g,''))}
+                style={{width:90, padding:'5px 8px', fontSize:11}}/>
+              <span style={{color:'var(--text3)', fontSize:11}}>–</span>
+              <input className="inp mono" placeholder="Max" value={filters.aumMax}
+                onChange={e=>setFilter('aumMax', e.target.value.replace(/[^0-9.]/g,''))}
+                style={{width:90, padding:'5px 8px', fontSize:11}}/>
+            </div>
+            <div className="mono" style={{fontSize:9, color:'var(--text3)', marginTop:2}}>use B/T suffix not supported — enter raw numbers e.g. 1000000000</div>
+          </div>
+
+          {/* Expense Ratio */}
+          <div style={{minWidth:120}}>
+            <div className="mono" style={{fontSize:9, color:'var(--text3)', letterSpacing:'0.1em', marginBottom:4}}>MAX EXPENSE RATIO %</div>
+            <input className="inp mono" placeholder="e.g. 0.5" value={filters.expenseRatioMax}
+              onChange={e=>setFilter('expenseRatioMax', e.target.value)}
+              style={{width:'100%', padding:'5px 8px', fontSize:11}}/>
+            <div className="mono" style={{fontSize:9, color:'var(--text3)', marginTop:2}}>note: applied client-side if available</div>
+          </div>
+
+          {/* Min Dividend Yield */}
+          <div style={{minWidth:130}}>
+            <div className="mono" style={{fontSize:9, color:'var(--text3)', letterSpacing:'0.1em', marginBottom:4}}>MIN DIV YIELD %</div>
+            <input className="inp mono" placeholder="e.g. 2" value={filters.dividendMin}
+              onChange={e=>setFilter('dividendMin', e.target.value)}
+              style={{width:'100%', padding:'5px 8px', fontSize:11}}/>
+          </div>
+
+          {/* Volume */}
+          <div style={{minWidth:120}}>
+            <div className="mono" style={{fontSize:9, color:'var(--text3)', letterSpacing:'0.1em', marginBottom:4}}>MIN VOLUME</div>
+            <input className="inp mono" placeholder="e.g. 100000" value={filters.volumeMin}
+              onChange={e=>setFilter('volumeMin', e.target.value)}
+              style={{width:'100%', padding:'5px 8px', fontSize:11}}/>
+          </div>
+
+        </div>
+
+        {/* Run button */}
+        <div style={{display:'flex', alignItems:'center', gap:10, marginTop:14}}>
+          <button onClick={runScreener} disabled={loading}
+            className="btn btn-primary" style={{minWidth:120}}>
+            {loading ? '⟳ Scanning…' : '▶ Run ETF Screener'}
+          </button>
+          {searched && !loading && (
+            <span className="mono" style={{fontSize:11, color:'var(--text3)'}}>
+              {results.length} ETFs found
+            </span>
+          )}
+          {error && <span style={{fontSize:11, color:'var(--red)'}}>{error}</span>}
+        </div>
+      </div>
+
+      {/* Results table */}
+      {sorted.length > 0 && (
+        <div style={{flex:1, overflow:'auto', borderRadius:10, border:'1px solid var(--border)'}}>
+          <table style={{width:'100%', borderCollapse:'collapse', fontSize:12}}>
+            <thead style={{position:'sticky', top:0, background:'var(--surface)', zIndex:2}}>
+              <tr>
+                <Th col="symbol"      label="Ticker" />
+                <Th col="companyName" label="Name" />
+                <Th col="exchange"    label="Exchange" />
+                <Th col="marketCap"   label="AUM" right />
+                <Th col="price"       label="Price" right />
+                <Th col="changesPercentage" label="Day %" right />
+                <Th col="_div"        label="Div %" right />
+                <Th col="volume"      label="Volume" right />
+                <th style={{padding:'8px 12px', fontSize:10, color:'var(--text3)', letterSpacing:'0.06em', borderBottom:'1px solid var(--border)'}}>+WL</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.map((r, i) => {
+                const divYield = r.lastAnnualDividend && r.price ? (r.lastAnnualDividend / r.price * 100) : null;
+                const dayPct = r.changesPercentage;
+                return (
+                  <tr key={r.symbol} onClick={()=>onOpenStock({symbol:r.symbol,name:r.companyName,type:'etf',qty:0,avgPrice:0,broker:'',color:'#4d9fff'})}
+                    style={{borderBottom:'1px solid var(--border)', cursor:'pointer',
+                      background: i%2===0 ? 'transparent' : 'rgba(255,255,255,0.015)'}}
+                    onMouseEnter={e=>e.currentTarget.style.background='var(--surface2)'}
+                    onMouseLeave={e=>e.currentTarget.style.background=i%2===0?'transparent':'rgba(255,255,255,0.015)'}>
+                    <td style={{padding:'8px 12px', fontWeight:600, color:'var(--green)', fontFamily:'monospace'}}>{r.symbol}</td>
+                    <td style={{padding:'8px 12px', color:'var(--text2)', maxWidth:200, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{r.companyName}</td>
+                    <td style={{padding:'8px 12px', color:'var(--text3)', fontSize:11, fontFamily:'monospace'}}>{r.exchangeShortName||r.exchange||'—'}</td>
+                    <td style={{padding:'8px 12px', textAlign:'right', fontFamily:'monospace', color:'var(--text2)'}}>{fmtCap(r.marketCap)}</td>
+                    <td style={{padding:'8px 12px', textAlign:'right', fontFamily:'monospace'}}>${r.price?.toFixed(2)||'—'}</td>
+                    <td style={{padding:'8px 12px', textAlign:'right', fontFamily:'monospace',
+                      color: dayPct==null?'var(--text3)':dayPct>=0?'var(--green)':'var(--red)'}}>
+                      {dayPct==null?'—':(dayPct>=0?'+':'')+dayPct.toFixed(2)+'%'}
+                    </td>
+                    <td style={{padding:'8px 12px', textAlign:'right', fontFamily:'monospace', color:'var(--gold)'}}>
+                      {fmtDiv(divYield)}
+                    </td>
+                    <td style={{padding:'8px 12px', textAlign:'right', fontFamily:'monospace', color:'var(--text3)', fontSize:11}}>{fmtCap(r.volume)}</td>
+                    <td style={{padding:'8px 4px', textAlign:'center'}} onClick={e=>e.stopPropagation()}>
+                      {watchlists.length > 0 ? (
+                        <div style={{position:'relative', display:'inline-block'}} ref={wlDropdown===r.symbol ? wlDropRef : null}>
+                          <button onClick={()=>setWlDropdown(v=>v===r.symbol?null:r.symbol)}
+                            style={{background:'none', border:'1px solid var(--border2)', borderRadius:4,
+                              padding:'2px 6px', fontSize:10, color:'var(--text3)', cursor:'pointer'}}>★</button>
+                          {wlDropdown===r.symbol && ReactDOM.createPortal(
+                            (() => {
+                              const btn = wlDropRef.current?.querySelector('button');
+                              const rect = btn?.getBoundingClientRect();
+                              return (
+                                <div style={{position:'fixed', right: rect?window.innerWidth-rect.right:16,
+                                  top:rect?rect.bottom+4:100, background:'var(--surface)',
+                                  border:'1px solid var(--border2)', borderRadius:8, padding:6,
+                                  zIndex:99999, minWidth:150, boxShadow:'0 8px 32px rgba(0,0,0,0.6)'}}>
+                                  {watchlists.map(wl=>(
+                                    <div key={wl.id} onClick={()=>{
+                                      setWatchlists(prev=>prev.map(w=>w.id===wl.id?{...w,items:[...w.items,{symbol:r.symbol,name:r.companyName,type:'etf',addedAt:Date.now()}]}:w));
+                                      setWlDropdown(null);
+                                    }} style={{padding:'7px 12px', cursor:'pointer', fontSize:12,
+                                      color:'var(--text2)', borderRadius:5}}
+                                      onMouseEnter={e=>e.currentTarget.style.background='var(--surface2)'}
+                                      onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                                      {wl.name}
+                                    </div>
+                                  ))}
+                                </div>
+                              );
+                            })(),
+                            document.body
+                          )}
+                        </div>
+                      ) : <span style={{color:'var(--text3)',fontSize:10}}>—</span>}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {searched && !loading && sorted.length === 0 && !error && (
+        <div style={{flex:1, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', color:'var(--text3)'}}>
+          <div style={{fontSize:32, marginBottom:10}}>📊</div>
+          <div style={{fontSize:13}}>No ETFs matched your filters</div>
+          <div style={{fontSize:11, marginTop:4}}>Try loosening the criteria</div>
+        </div>
+      )}
+
+      {!searched && (
+        <div style={{flex:1, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', color:'var(--text3)'}}>
+          <div style={{fontSize:36, marginBottom:12}}>🏦</div>
+          <div style={{fontSize:13, marginBottom:4}}>Set your filters and run the ETF screener</div>
+          <div style={{fontSize:11}}>Screener covers thousands of ETFs across global exchanges</div>
         </div>
       )}
     </div>
@@ -6030,6 +6337,7 @@ export default function App() {
   const [lastUpdated,  setLastUpdated]  = useState(null);
   const [nav,          setNav]          = useState("dashboard");
   const [prevNav,      setPrevNav]      = useState("dashboard");
+  const [screenerTab,  setScreenerTab]  = useState('stock'); // 'stock' | 'etf'
   const [showModal,    setShowModal]    = useState(false); // legacy, keep for compat
   const [txModal,      setTxModal]      = useState(null);  // {mode:'buy'|'sell'|'cash'}
   const [showAddMenu,  setShowAddMenu]  = useState(false); // dropdown
@@ -7192,8 +7500,31 @@ export default function App() {
             range={range} setRange={setRange}
             BENCHMARKS={BENCHMARKS} perfStats={perfStats}/>}
           {nav==="stock"&&selectedPos&&<StockDetail pos={selectedPos} onBack={()=>{setNav(prevNav||"dashboard");setSelectedPos(null)}} transactions={transactions}/> }
-          <div style={{display: nav==="screener" || (nav==="stock" && prevNav==="screener") ? 'flex' : 'none', flex:1, flexDirection:'column', minHeight:0}}>
-            <ScreenerPage onOpenStock={pos=>{setPrevNav('screener');setSelectedPos(pos);setNav('stock');}} watchlists={watchlists} setWatchlists={setWatchlists}/>
+          <div style={{display: nav==="screener" || (nav==="stock" && prevNav==="screener") ? 'block' : 'none'}}>
+            {nav==="screener" && (
+              <>
+                <div style={{display:'flex', gap:0, borderBottom:'1px solid var(--border)',
+                  margin:'-26px -30px 20px -30px', paddingLeft:30, paddingTop:4, paddingRight:30}}>
+                  {[{id:'stock',label:'📈 Stocks'},{id:'etf',label:'🏦 ETFs'}].map(t=>(
+                    <button key={t.id} onClick={()=>setScreenerTab(t.id)}
+                      style={{padding:'10px 22px', fontSize:12, fontWeight:600, border:'none',
+                        cursor:'pointer', background:'none',
+                        color: screenerTab===t.id ? 'var(--green)' : 'var(--text3)',
+                        borderBottom: screenerTab===t.id ? '2px solid var(--green)' : '2px solid transparent',
+                        marginBottom:-1, letterSpacing:'0.04em', transition:'color 0.15s'}}>
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+                {screenerTab==='stock'
+                  ? <ScreenerPage onOpenStock={pos=>{setPrevNav('screener');setSelectedPos(pos);setNav('stock');}} watchlists={watchlists} setWatchlists={setWatchlists}/>
+                  : <ETFScreenerPage onOpenStock={pos=>{setPrevNav('screener');setSelectedPos(pos);setNav('stock');}} watchlists={watchlists} setWatchlists={setWatchlists}/>
+                }
+              </>
+            )}
+            {nav==="stock" && prevNav==="screener" && (
+              <ScreenerPage onOpenStock={pos=>{setPrevNav('screener');setSelectedPos(pos);setNav('stock');}} watchlists={watchlists} setWatchlists={setWatchlists}/>
+            )}
           </div>
           {nav==="compare"&&<CompareView/>}
           {nav==="news"&&<NewsFeed positions={positions}/> }

@@ -15,6 +15,8 @@ export default async function handler(req, res) {
       volumeMin,
       evEbitdaMin, evEbitdaMax,
       sector, exchange,
+      isEtf,
+      expenseRatioMax,
       limit = 200,
     } = req.query;
 
@@ -29,8 +31,9 @@ export default async function handler(req, res) {
     if (volumeMin)    params.set('volumeMoreThan', volumeMin);
     if (evEbitdaMin)  params.set('evEbitdaMoreThan', evEbitdaMin);
     if (evEbitdaMax)  params.set('evEbitdaLowerThan', evEbitdaMax);
-    if (sector && sector !== 'All')   params.set('sector', sector);
+    if (sector && sector !== 'All')     params.set('sector', sector);
     if (exchange && exchange !== 'All') params.set('exchange', exchange);
+    if (isEtf === 'true')               params.set('isEtf', 'true');
 
     // correct endpoint: /stable/company-screener
     const url = `https://financialmodelingprep.com/stable/company-screener?${params.toString()}`;
