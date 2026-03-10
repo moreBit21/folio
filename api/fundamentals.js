@@ -1,3 +1,66 @@
+
+// Server-side health score (mirrors client calcCanonicalHealthScore)
+function computeHealthScore({ byYear, sector, peRatio, pegRatio, evEbitda }) {
+  const yrs  = (byYear || []).slice(-3);
+  const last = yrs[yrs.length - 1] || {};
+  const prev = yrs[yrs.length - 2] || {};
+  const prev2= yrs[yrs.length - 3] || {};
+  const s = (sector || '').toLowerCase();
+  const isTech    = /tech|software|semi|information/i.test(s);
+  const isFinance = /financ|bank|insurance|reit/i.test(s);
+  const isRetail  = /retail|consumer staple|grocery/i.test(s);
+  const isHealth2 = /health|pharma|biotech|medical/i.test(s);
+  const isEnergy  = /energy|oil|gas|util/i.test(s);
+  const nmGood = isTech?0.15:isRetail?0.04:isEnergy?0.06:0.08;
+  const nmOk   = isTech?0.06:isRetail?0.01:isEnergy?0.02:0.03;
+  const deGood = isFinance?8:isTech?0.5:1;
+  const deOk   = isFinance?15:isTech?1.5:2;
+  const avg = arr => arr.length ? arr.reduce((a,b)=>a+b)/arr.length : null;
+  const sc = (v, good, ok) => v==null?null:v>=good?2:v>=ok?1:0;
+  const colorOf = (scores, t1=1.5, t2=0.8) => {
+    const f = scores.filter(s=>s!==null);
+    if (!f.length) return 'gray';
+    const a = avg(f);
+    return a>=t1?'green':a>=t2?'gold':'red';
+  };
+  const profitColor = colorOf([
+    sc(last.netMargin, nmGood, nmOk),
+    sc(last.roe, 0.15, 0.08),
+    sc(last.roic, 0.10, 0.05),
+    sc(last.grossMargin, isTech?0.50:isRetail?0.25:0.35, isTech?0.30:isRetail?0.15:0.20),
+  ]);
+  const g = (last.revenue&&prev.revenue&&prev.revenue>0)?(last.revenue/prev.revenue-1):null;
+  const growthColor = g==null?'gray':g>(isTech?0.15:0.07)?'green':g>(isTech?0.05:0.02)?'gold':'red';
+  const g2 = (prev.revenue&&prev2.revenue&&prev2.revenue>0)?prev.revenue/prev2.revenue-1:null;
+  const moatColor = colorOf([
+    sc(last.grossMargin, isTech?0.55:isRetail?0.30:0.40, isTech?0.35:isRetail?0.15:0.25),
+    sc(last.roic, 0.15, 0.08),
+    sc(last.roe, 0.20, 0.12),
+    (g!=null&&g2!=null&&g>0&&g2>0)?2:(g!=null?(g>0?1:0):null),
+  ]);
+  const balanceColor = colorOf([
+    last.debtEquity!=null?(last.debtEquity<=deGood?2:last.debtEquity<=deOk?1:0):null,
+    sc(last.currentRatio, 2.0, 1.0),
+  ]);
+  const fcfRev = last.freeCashFlow&&last.revenue?last.freeCashFlow/last.revenue:null;
+  const cashColor = colorOf([
+    last.freeCashFlow!=null?(last.freeCashFlow>0?(fcfRev>=0.10?2:1):0):null,
+    last.operatingCF!=null?(last.operatingCF>0?2:0):null,
+  ]);
+  const peFair=isTech?30:isHealth2?22:isFinance?15:20;
+  const peOk  =isTech?45:isHealth2?35:isFinance?20:30;
+  const valuationColor = colorOf([
+    peRatio !=null?(peRatio <=peFair?2:peRatio <=peOk?1:0):null,
+    evEbitda!=null?(evEbitda<=10   ?2:evEbitda<=18  ?1:0):null,
+    pegRatio!=null?(pegRatio<=1    ?2:pegRatio<=2   ?1:0):null,
+  ]);
+  const cScore = {green:2,gold:1,red:0,gray:null};
+  const dims = [profitColor,growthColor,moatColor,balanceColor,cashColor,valuationColor]
+    .map(c=>cScore[c]).filter(v=>v!==null);
+  if (!dims.length) return null;
+  return Math.round(avg(dims)*50);
+}
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
@@ -34,6 +97,63 @@ export default async function handler(req, res) {
   };
 
   const div = (a, b) => (a != null && b != null && b !== 0) ? a / b : null;
+
+  // Lite mode: screener table needs pe, peg, evEbitda + pre-computed health score
+  if (req.query.lite === '1') {
+    try {
+      const [keyMetrics, profile, income, cashflow, balance] = await Promise.all([
+        fmp(`/key-metrics?symbol=${symbol}&limit=3`),
+        fmp(`/profile?symbol=${symbol}`),
+        fmp(`/income-statement?symbol=${symbol}&limit=3`),
+        fmp(`/cash-flow-statement?symbol=${symbol}&limit=3`),
+        fmp(`/balance-sheet-statement?symbol=${symbol}&limit=3`),
+      ]);
+      const p = profile[0] || {};
+      const km0 = keyMetrics[0] || {};
+
+      // Build byYear for health score calc (reuse same shape as full endpoint)
+      const years = [...new Set(income.map(r => r.calendarYear || r.date?.slice(0,4)).filter(Boolean))].sort();
+      const byYear = years.map(yr => {
+        const inc = income.find(r=>(r.calendarYear||r.date?.slice(0,4))===yr)||{};
+        const cf  = cashflow.find(r=>(r.calendarYear||r.date?.slice(0,4))===yr)||{};
+        const bal = balance.find(r=>(r.calendarYear||r.date?.slice(0,4))===yr)||{};
+        const km  = keyMetrics.find(r=>(r.calendarYear||r.date?.slice(0,4))===yr)||{};
+        const rev = inc.revenue ?? 0;
+        const fcf = (cf.operatingCashFlow??0) + (cf.capitalExpenditure??0); // capex is negative
+        return {
+          revenue: rev,
+          netIncome: inc.netIncome,
+          grossMargin: rev > 0 ? (inc.grossProfit??0)/rev : null,
+          netMargin: rev > 0 ? (inc.netIncome??0)/rev : null,
+          roe: km.roe ?? null,
+          roic: km.roic ?? null,
+          debtEquity: bal.totalDebt && bal.totalStockholdersEquity
+            ? bal.totalDebt / bal.totalStockholdersEquity : null,
+          currentRatio: km.currentRatio ?? null,
+          freeCashFlow: fcf,
+          operatingCF: cf.operatingCashFlow ?? null,
+        };
+      });
+
+      const sector = p.sector || '';
+      const peRatio = km0.peRatio ?? p.pe ?? null;
+      const pegRatio = km0.priceEarningsToGrowthRatio ?? null;
+      const evEbitda = km0.enterpriseValueOverEBITDA ?? null;
+
+      // Compute health score inline (same logic as client calcCanonicalHealthScore)
+      const healthScore = computeHealthScore({ byYear, sector, peRatio, pegRatio, evEbitda });
+
+      return res.status(200).json({
+        symbol, peRatio, pegRatio, evEbitda,
+        healthScore,
+        sector,
+        marketCap: p.mktCap ?? null,
+        beta: p.beta ?? null,
+      });
+    } catch(e) {
+      return res.status(500).json({ error: e.message });
+    }
+  }
 
   try {
     const [income, cashflow, balance, keyMetrics, profile, analystEstimates, analystEstQ,

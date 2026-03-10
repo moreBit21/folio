@@ -1693,10 +1693,10 @@ function ScreenerPage({ onOpenStock }) {
       if (toLoad.length) {
         toLoad.forEach(sym => {
           setLoadingFund(prev => ({ ...prev, [sym]: true }));
-          fetch('/api/fundamentals?symbol=' + sym.split('.')[0])
+          fetch('/api/fundamentals?lite=1&symbol=' + sym.split('.')[0])
             .then(r => r.json())
             .then(d => {
-              const score = calcCanonicalHealthScore(d);
+              const score = d.healthScore ?? null;
               const pe = d.peRatio ?? null;
               const peg = d.pegRatio ?? null;
               setFundCache(prev => ({ ...prev, [sym]: { score, pe, peg } }));
@@ -1718,9 +1718,9 @@ function ScreenerPage({ onOpenStock }) {
     if (fundCache[symbol] !== undefined || loadingFund[symbol]) return;
     setLoadingFund(prev => ({ ...prev, [symbol]: true }));
     try {
-      const res = await fetch('/api/fundamentals?symbol=' + symbol.split('.')[0]);
+      const res = await fetch('/api/fundamentals?lite=1&symbol=' + symbol.split('.')[0]);
       const d = await res.json();
-      const score = calcCanonicalHealthScore(d);
+      const score = d.healthScore ?? null;
       const pe = d.peRatio ?? null;
       const peg = d.pegRatio ?? null;
       setFundCache(prev => ({ ...prev, [symbol]: { score, pe, peg } }));
