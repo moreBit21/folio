@@ -5218,9 +5218,7 @@ export default function App() {
   const positionsRef    = React.useRef([]);
   const transactionsRef = React.useRef([]);
   const watchlistsRef   = React.useRef([]);
-  React.useEffect(()=>{ positionsRef.current    = positions;    }, [positions]);
-  React.useEffect(()=>{ transactionsRef.current = transactions; }, [transactions]);
-  React.useEffect(()=>{ watchlistsRef.current   = watchlists;   }, [watchlists]);
+  React.useEffect(()=>{ positionsRef.current = positions; }, [positions]);
   // FMP key is server-side only (Vercel env var FMP_KEY)
   const [transactions, setTransactions] = useState([]);
   const [priceLoading,setPriceLoading]= useState(true);
@@ -5247,6 +5245,9 @@ export default function App() {
   const [watchlists,    setWatchlists]    = useState(mkDefaultWL);
   const [activeWLId,    setActiveWLId]    = useState('portfolio');
   const [chartTicker,   setChartTicker]   = useState('');
+  // Ref sync — must come AFTER all three state declarations to avoid Vite TDZ
+  React.useEffect(()=>{ transactionsRef.current = transactions; }, [transactions]);
+  React.useEffect(()=>{ watchlistsRef.current   = watchlists;   }, [watchlists]);
 
 
   // ─────────────────────────────────────────────
