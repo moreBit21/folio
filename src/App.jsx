@@ -1376,18 +1376,14 @@ function rankSearchResult(r) {
   return 5;
 }
 function dedupeSearchResults(results) {
-  // Group by name, keep best-ranked per company, limit to 7 total
-  const seen = new Map(); // name → best result
-  results.forEach(r => {
-    const key = (r.name || r.symbol || '').toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,16);
-    const existing = seen.get(key);
-    if (!existing || rankSearchResult(r) < rankSearchResult(existing)) {
-      seen.set(key, r);
-    }
-  });
-  return [...seen.values()]
-    .sort((a, b) => rankSearchResult(a) - rankSearchResult(b))
-    .slice(0, 7);
+  // Dedupe by name, keep first occurrence (preserves caller's sort order)
+  const seen = new Set();
+  return results.filter(r => {
+    const key = (r.name || r.symbol || '').toLowerCase().replace(/[^a-z0-9]/g,'').slice(0, 16);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, 7);
 }
 async function fetchTickerSearch(query, limit = 12) {
   if (!query || query.length < 1) return [];
@@ -5108,7 +5104,7 @@ function useAuth() {
     if (!supabase) { setSession(null); return; }
     supabase.auth.getSession().then(({ data }) => setSession(data.session));
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, s) => {
-      if (!s) { _sessionCryptoKey = null; _sessionSalt = null; } // clear key on logout
+      if (!s) { _sessionCryptoKey = null; _sessionSalt = null; sessionStorage.removeItem('folio_pw'); } // clear key on logout
       setSession(s);
     });
     return () => subscription.unsubscribe();
@@ -5132,10 +5128,24 @@ export function AuthGate({ children }) {
   // ── Once session exists, derive or set up the crypto key ──
   useEffect(() => {
     if (!session || !supabase || _sessionCryptoKey) { if (session) setKeyReady(true); return; }
-    // Session was restored from storage (e.g. page refresh) — we don't have the password.
-    // In this case we can't auto-decrypt; the user must log in again to get their data.
-    // For now mark keyReady so the app renders (empty state until they re-login properly).
-    setKeyReady(true);
+    // Try to restore key from sessionStorage (survives page refresh, not tab close)
+    const stored = sessionStorage.getItem('folio_pw');
+    if (stored) {
+      (async () => {
+        try {
+          const userId = session.user.id;
+          const { data: row } = await supabase.from('portfolios').select('salt,iv,ciphertext').eq('user_id', userId).single();
+          if (row?.salt) {
+            _sessionSalt = row.salt;
+            _sessionCryptoKey = await _deriveCryptoKey(stored, row.salt);
+            if (row.ciphertext) await _decryptPayload(_sessionCryptoKey, row.iv, row.ciphertext); // verify
+            setKeyReady(true);
+            return;
+          }
+        } catch { _sessionCryptoKey = null; }
+        sessionStorage.removeItem('folio_pw'); // bad stored pw, fall through to unlock screen
+      })();
+    }
   }, [session]);
 
   if (!supabase) return children;
@@ -5150,6 +5160,63 @@ export function AuthGate({ children }) {
   }
 
   if (session && keyReady) return children;
+
+
+  // ── Unlock screen (page refresh — session exists but no key in RAM) ──
+  const handleUnlock = async (e) => {
+    e.preventDefault();
+    setMsg(null);
+    setLoading(true);
+    try {
+      const userId = session.user.id;
+      const { data: row } = await supabase.from('portfolios').select('salt,iv,ciphertext').eq('user_id', userId).single();
+      if (!row?.salt) throw new Error('No encrypted data found.');
+      _sessionSalt = row.salt;
+      _sessionCryptoKey = await _deriveCryptoKey(pw, row.salt);
+      if (row.ciphertext) await _decryptPayload(_sessionCryptoKey, row.iv, row.ciphertext); // verify key
+      sessionStorage.setItem('folio_pw', pw);
+      setKeyReady(true);
+    } catch {
+      setMsg({ type: 'error', text: 'Wrong password.' });
+      _sessionCryptoKey = null;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (session && !keyReady) return (
+    <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',
+      background:'#080c10',fontFamily:"'IBM Plex Mono',monospace"}}>
+      <div style={{width:380,background:'#0d1117',border:'1px solid #1c2730',borderRadius:12,padding:32}}>
+        <div style={{textAlign:'center',marginBottom:24}}>
+          <div style={{fontFamily:"'DM Serif Display',serif",fontSize:22,color:'#e8edf2',marginBottom:6}}>foliologic</div>
+          <div style={{fontSize:11,color:'#3d4f5e',letterSpacing:'0.08em'}}>ENTER PASSWORD TO UNLOCK</div>
+        </div>
+        {msg && <div style={{padding:'8px 12px',borderRadius:6,marginBottom:16,fontSize:12,
+          background:msg.type==='error'?'rgba(255,77,109,0.1)':'rgba(0,229,160,0.1)',
+          color:msg.type==='error'?'#ff4d6d':'#00e5a0',border:`1px solid ${msg.type==='error'?'rgba(255,77,109,0.25)':'rgba(0,229,160,0.25)'}`}}>{msg.text}</div>}
+        <form onSubmit={handleUnlock}>
+          <div style={{fontSize:11,color:'#7a8a98',marginBottom:6}}>Password</div>
+          <input type="password" value={pw} onChange={e=>setPw(e.target.value)} placeholder="••••••••"
+            style={{width:'100%',padding:'11px 14px',background:'#111c24',border:'1px solid #1e2d3d',
+              borderRadius:6,color:'#e8f0f7',fontSize:13,fontFamily:"'IBM Plex Mono',monospace",
+              outline:'none',boxSizing:'border-box',marginBottom:16}} autoFocus/>
+          <button type="submit" disabled={loading||!pw}
+            style={{width:'100%',padding:11,background:'#00e5a0',color:'#080c10',border:'none',
+              borderRadius:6,fontSize:12,fontWeight:700,cursor:'pointer',letterSpacing:'0.06em',
+              opacity:loading||!pw?0.5:1}}>
+            {loading ? 'UNLOCKING…' : 'UNLOCK'}
+          </button>
+        </form>
+        <div style={{textAlign:'center',marginTop:16}}>
+          <button onClick={async()=>{await supabase.auth.signOut();setPw('');setMsg(null);}}
+            style={{background:'none',border:'none',color:'#3d4f5e',fontSize:11,cursor:'pointer'}}>
+            Sign out instead
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 
   // ── Form submit ──────────────────────────────
   const handleSubmit = async (e) => {
@@ -5207,6 +5274,7 @@ export function AuthGate({ children }) {
           { onConflict: 'user_id' }
         );
       }
+      sessionStorage.setItem('folio_pw', pw);
       setKeyReady(true);
 
     } catch (err) {
