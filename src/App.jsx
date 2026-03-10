@@ -6774,7 +6774,7 @@ export default function App() {
     // Check position exists and has enough qty
     const existing = positions.find(pos => pos.symbol === sym || pos.symbol === symbol);
     if (!existing) { setTxFormErr('Position not found in portfolio'); return; }
-    if (existing.qty < q) { setTxFormErr(\`Can only sell up to \${existing.qty} shares\`); return; }
+    if (existing.qty < q) { setTxFormErr('Can only sell up to ' + existing.qty + ' shares'); return; }
 
     const amountEur = q * p;
     const newQty = existing.qty - q;
@@ -6808,7 +6808,7 @@ export default function App() {
         return sum;
       }, 0);
       if (amt > cashBalance + 0.01) {
-        setTxFormErr(\`⚠ Insufficient cash balance. Available: €\${cashBalance.toFixed(2)}\`);
+        setTxFormErr('⚠ Insufficient cash balance. Available: €' + cashBalance.toFixed(2));
         return;
       }
     }
