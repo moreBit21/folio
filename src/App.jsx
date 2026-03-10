@@ -1692,6 +1692,7 @@ function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
       if (filters.evEbitdaMax)  p.set('evEbitdaMax', filters.evEbitdaMax);
       if (filters.sector && filters.sector !== 'All') p.set('sector', filters.sector);
       if (filters.exchange && filters.exchange !== 'All') p.set('exchange', filters.exchange);
+      p.set('isEtf', 'false');
       p.set('limit', '200');
       const res = await fetch('/api/screener?' + p.toString());
       const data = await res.json();
