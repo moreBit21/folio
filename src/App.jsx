@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect, useCallback } from "react"; // v25-compare-fwd-metrics
+import ReactDOM from "react-dom";
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, AreaChart, ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid } from "recharts";
 
@@ -6930,19 +6931,18 @@ export default function App() {
             </div>
             <div ref={addMenuRef}>
               <button className="btn btn-primary"
-                onClick={e => {
-                  e.stopPropagation();
-                  setShowAddMenu(v => !v);
-                }}>+ ADD ▾</button>
+                onClick={e => { e.stopPropagation(); setShowAddMenu(v => !v); }}>
+                + ADD ▾
+              </button>
               {showAddMenu && (() => {
                 const rect = addMenuRef.current?.getBoundingClientRect();
-                return (
+                return ReactDOM.createPortal(
                   <div style={{position:'fixed',
                     right: rect ? window.innerWidth - rect.right : 16,
                     top: rect ? rect.bottom + 4 : 50,
                     background:'var(--surface)',border:'1px solid var(--border2)',
-                    borderRadius:8,padding:6,zIndex:9999,minWidth:170,
-                    boxShadow:'0 8px 32px rgba(0,0,0,0.6)'}}>
+                    borderRadius:8,padding:6,zIndex:99999,minWidth:170,
+                    boxShadow:'0 12px 40px rgba(0,0,0,0.7)'}}>
                     {[
                       {icon:'📈', label:'Buy Position',  mode:'buy'},
                       {icon:'📉', label:'Sell Position', mode:'sell'},
@@ -6958,7 +6958,8 @@ export default function App() {
                         <span style={{fontSize:15}}>{icon}</span> {label}
                       </div>
                     ))}
-                  </div>
+                  </div>,
+                  document.body
                 );
               })()}
             </div>
