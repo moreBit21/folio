@@ -1394,10 +1394,9 @@ async function fetchTickerSearch(query, limit = 12, signal) {
 
   const safeFetch = (url) => fetch(url, opts).then(r => r.ok ? r.json() : []).catch(() => []);
 
-  // /search and /quote/SYM don't work on free plan — use /quote?symbol= (known working) + /search-name
-  // Also try common ticker variants: exact + with/without exchange suffix
-  const [nameData, quoteExact] = await Promise.all([
+  const [nameData, symbolData, quoteExact] = await Promise.all([
     safeFetch('/api/fmp?path=' + encodeURIComponent('/search-name?query=' + q + '&limit=' + searchLimit)),
+    safeFetch('/api/fmp?path=' + encodeURIComponent('/search?query=' + q + '&limit=' + searchLimit)),
     looksLikeTicker
       ? safeFetch('/api/fmp?path=' + encodeURIComponent('/quote?symbol=' + q))
       : Promise.resolve([]),
@@ -1406,10 +1405,9 @@ async function fetchTickerSearch(query, limit = 12, signal) {
   if (signal?.aborted) return [];
 
   const normalize = (arr) => (Array.isArray(arr) ? arr : []).filter(t => t?.symbol);
-  // quote?symbol= returns the exact ticker if it exists — treat as top result
-  const quoteResults = normalize(quoteExact).map(t => ({ symbol: t.symbol, name: t.name, exchange: t.exchange || '', exchangeFullName: t.exchangeFullName || t.exchange || '' }));
-  const nameResults  = normalize(nameData);
-  const symbolResults = []; // /search not available on free plan
+  const quoteResults  = normalize(quoteExact).map(t => ({ symbol: t.symbol, name: t.name, exchange: t.exchange || '', exchangeFullName: t.exchangeFullName || t.exchange || '' }));
+  const symbolResults = normalize(symbolData);
+  const nameResults   = normalize(nameData);
 
   // Merge: exact quote first, then symbol search, then name search
   const seen = new Set();
