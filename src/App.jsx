@@ -1780,10 +1780,17 @@ function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
       }
     }
     if (filters.dealOnly) {
-      const priceTrendDown = r.priceAvg50 != null && r.price != null
-        && r.price < r.priceAvg50
-        && r.yearHigh != null && r.price < r.yearHigh * 0.85;
-      if (!priceTrendDown) return false;
+      const fund = fundCache[r.symbol];
+      if (fund) {
+        const dp = fund.curPrice ?? r.price;
+        const priceTrendDown = fund.priceAvg50 != null && dp != null
+          && dp < fund.priceAvg50
+          && fund.yearHigh != null && dp < fund.yearHigh * 0.85;
+        const fundStrong = (fund.score ?? 0) >= 55
+          && (fund.ttmRevGrowth > 0 || fund.fy1RevGrowth > 0)
+          && (fund.ttmEpsGrowth > 0 || fund.fy1EpsGrowth > 0);
+        if (!priceTrendDown || !fundStrong) return false;
+      }
     }
     return true;
   });
