@@ -1404,8 +1404,10 @@ async function fetchTickerSearch(query, limit = 12, signal) {
 
   if (signal?.aborted) return [];
 
+  console.log('[search] query:', query, 'quote:', Array.isArray(quoteData)?quoteData.slice(0,3).map(x=>x.symbol):quoteData, 'symbol:', Array.isArray(symbolData)?symbolData.slice(0,5).map(x=>x.symbol):symbolData, 'name:', Array.isArray(nameData)?nameData.slice(0,5).map(x=>x.symbol):nameData);
+
   const normalize = (arr) => (Array.isArray(arr) ? arr : []).filter(t => t?.symbol);
-  const quoteResults  = normalize(quoteData).map(t => ({ symbol: t.symbol, name: t.name, exchangeShortName: t.exchange || '', exchange: t.exchange || '' }));
+  const quoteResults  = normalize(quoteData).map(t => ({ symbol: t.symbol, name: t.name, exchangeShortName: t.exchange || '', exchange: t.exchange || '', exchangeFullName: t.exchangeFullName || t.exchange || '' }));
   const symbolResults = normalize(symbolData);
   const nameResults   = normalize(nameData);
 
@@ -1417,12 +1419,13 @@ async function fetchTickerSearch(query, limit = 12, signal) {
   }
 
   merged.sort((a, b) => {
-    const aExact  = a.symbol?.toUpperCase() === q ? -20 : 0;
-    const bExact  = b.symbol?.toUpperCase() === q ? -20 : 0;
-    const aStarts = a.symbol?.toUpperCase().startsWith(q) ? -8 : 0;
-    const bStarts = b.symbol?.toUpperCase().startsWith(q) ? -8 : 0;
+    const aExact  = a.symbol?.toUpperCase() === q ? -100 : 0;
+    const bExact  = b.symbol?.toUpperCase() === q ? -100 : 0;
+    const aStarts = a.symbol?.toUpperCase().startsWith(q) ? -50 : 0;
+    const bStarts = b.symbol?.toUpperCase().startsWith(q) ? -50 : 0;
     const aLen    = a.symbol?.length || 99;
     const bLen    = b.symbol?.length || 99;
+    // exchange rank is 0-5, symbol length penalty tiny — neither can overcome starts-with bonus
     return (aExact + aStarts + (aStarts ? aLen * 0.1 : 0) + rankSearchResult(a))
          - (bExact + bStarts + (bStarts ? bLen * 0.1 : 0) + rankSearchResult(b));
   });
