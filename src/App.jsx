@@ -3861,6 +3861,7 @@ function ChartsPage({ positions, watchlists, setWatchlists, activeWLId, setActiv
   const [addingTicker, setAddingTicker] = React.useState(false);
   const [ctxMenu, setCtxMenu]         = React.useState(null);
   const [wlPrices, setWlPrices]       = React.useState({});
+  const [wlSort, setWlSort]           = React.useState('default'); // 'default' | 'change_asc' | 'change_desc'
 
   const RANGES = [['1W',7],['1M',30],['3M',90],['6M',180],['1Y',365],['2Y',730],['ALL',3650]];
 
@@ -4244,6 +4245,17 @@ function ChartsPage({ positions, watchlists, setWatchlists, activeWLId, setActiv
           </div>
 
           {/* Items by category */}
+          <div style={{ borderBottom: '1px solid var(--border)', padding: '6px 10px', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div className="mono" style={{ fontSize: 8, color: 'var(--text3)', letterSpacing: '0.1em' }}>STOCKS</div>
+            <button onClick={() => setWlSort(s => s === 'change_desc' ? 'change_asc' : s === 'change_asc' ? 'default' : 'change_desc')}
+              className="mono"
+              style={{ fontSize: 9, padding: '2px 7px', borderRadius: 3, border: '1px solid', cursor: 'pointer',
+                background: wlSort !== 'default' ? 'var(--green-dim)' : 'transparent',
+                borderColor: wlSort !== 'default' ? 'rgba(0,229,160,0.35)' : 'var(--border)',
+                color: wlSort !== 'default' ? 'var(--green)' : 'var(--text3)', letterSpacing: '0.04em' }}>
+              {wlSort === 'change_desc' ? '↓ Change%' : wlSort === 'change_asc' ? '↑ Change%' : '⇅ Sort'}
+            </button>
+          </div>
           <div style={{ flex: 1, overflow: 'auto' }}>
             {allWLItems.length === 0 && (
               <div style={{ padding: '30px 16px', textAlign: 'center' }}>
@@ -4263,7 +4275,14 @@ function ChartsPage({ positions, watchlists, setWatchlists, activeWLId, setActiv
                     {cat.name}
                   </div>
                 )}
-                {cat.items.map((item) => {
+                {(wlSort === 'default' ? cat.items : [...cat.items].sort((a, b) => {
+                  const ca = wlPrices[a.symbol]?.change ?? null;
+                  const cb = wlPrices[b.symbol]?.change ?? null;
+                  if (ca == null && cb == null) return 0;
+                  if (ca == null) return 1;
+                  if (cb == null) return -1;
+                  return wlSort === 'change_desc' ? cb - ca : ca - cb;
+                })).map((item) => {
                   const q = wlPrices[item.symbol];
                   const isActive = ticker === item.symbol;
                   const up = q?.change >= 0;
@@ -7931,7 +7950,7 @@ export default function App() {
               watchlists={watchlists} setWatchlists={setWatchlists}
               activeWLId={activeWLId} setActiveWLId={setActiveWLId}
               chartTicker={chartTicker} setChartTicker={setChartTicker}
-              onOpenStock={pos=>{ setPrevNav('portfolio'); setSelectedPos(pos); setNav("stock"); }}/>
+              onOpenStock={pos=>{ setPrevNav('charts'); setSelectedPos(pos); setNav("stock"); }}/>
           </div>
         )}
         {nav==="watchlist" && (
