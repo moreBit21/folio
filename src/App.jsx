@@ -5185,19 +5185,6 @@ function EtfOverview({ pos }) {
   );
 }
 
-class StockDetailBoundary extends React.Component {
-  constructor(props) { super(props); this.state = { err: null }; }
-  static getDerivedStateFromError(e) { return { err: e.message + '\n' + e.stack?.split('\n').slice(0,5).join('\n') }; }
-  render() {
-    if (this.state.err) return (
-      <div style={{padding:24,color:'var(--red)',fontFamily:'monospace',fontSize:11,whiteSpace:'pre-wrap',background:'var(--surface)',borderRadius:8,margin:16}}>
-        <strong>StockDetail crashed:</strong>{'\n'}{this.state.err}
-      </div>
-    );
-    return this.props.children;
-  }
-}
-
 function StockDetail({ pos, onBack, transactions }) {
   const [data, setData]     = useState(null);
   const [loading, setLoading] = useState(true);
@@ -8302,12 +8289,12 @@ export default function App() {
             </div>
             {/* StockDetail overlaid when coming from screener */}
             {nav==="stock" && prevNav==="screener" && selectedPos && (
-              <StockDetailBoundary><StockDetail pos={selectedPos} onBack={()=>{setNav('screener');setSelectedPos(null);}} transactions={transactions}/></StockDetailBoundary>
+              <StockDetail pos={selectedPos} onBack={()=>{setNav('screener');setSelectedPos(null);}} transactions={transactions}/>
             )}
           </div>
           {/* StockDetail for all other navigation sources */}
           {nav==="stock" && prevNav!=="screener" && selectedPos && (
-            <StockDetailBoundary><StockDetail pos={selectedPos} onBack={()=>{setNav(prevNav||'dashboard');setSelectedPos(null);}} transactions={transactions}/></StockDetailBoundary>
+            <StockDetail pos={selectedPos} onBack={()=>{setNav(prevNav||'dashboard');setSelectedPos(null);}} transactions={transactions}/>
           )}
           {nav==="compare"&&<CompareView/>}
           {nav==="news"&&<NewsFeed positions={positions}/> }
