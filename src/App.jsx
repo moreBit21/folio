@@ -2368,7 +2368,8 @@ function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
               const priceAvg50   = d.priceAvg50   ?? null;
               const yearHigh     = d.yearHigh     ?? null;
               const curPrice     = d.currentPrice ?? null;
-              setFundCache(prev => ({ ...prev, [sym]: { score, pe, peg, fwdPE, ttmRevGrowth, ttmEpsGrowth, fy1RevGrowth, fy1EpsGrowth, priceAvg50, yearHigh, curPrice } }));
+              const byYear       = d.byYear       ?? null;
+              setFundCache(prev => ({ ...prev, [sym]: { score, pe, peg, fwdPE, ttmRevGrowth, ttmEpsGrowth, fy1RevGrowth, fy1EpsGrowth, priceAvg50, yearHigh, curPrice, byYear } }));
             })
             .catch(() => setFundCache(prev => ({ ...prev, [sym]: { score: null, pe: null, peg: null, fwdPE: null } })))
             .finally(() => setLoadingFund(prev => ({ ...prev, [sym]: false })));
@@ -2408,12 +2409,41 @@ function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
       const priceAvg50   = d.priceAvg50   ?? null;
       const yearHigh     = d.yearHigh     ?? null;
       const curPrice     = d.currentPrice ?? null;
-      setFundCache(prev => ({ ...prev, [symbol]: { score, pe, peg, fwdPE, ttmRevGrowth, ttmEpsGrowth, fy1RevGrowth, fy1EpsGrowth, priceAvg50, yearHigh, curPrice } }));
+      const byYear       = d.byYear       ?? null;
+      setFundCache(prev => ({ ...prev, [symbol]: { score, pe, peg, fwdPE, ttmRevGrowth, ttmEpsGrowth, fy1RevGrowth, fy1EpsGrowth, priceAvg50, yearHigh, curPrice, byYear } }));
     } catch {
       setFundCache(prev => ({ ...prev, [symbol]: { score: null, pe: null, peg: null, fwdPE: null } }));
     } finally {
       setLoadingFund(prev => ({ ...prev, [symbol]: false }));
     }
+  };
+
+
+  // Deal signal: checks last 2-3 years of byYear for genuine upward fundamental trend
+  const isFundamentallyImproving = (fund) => {
+    const yrs = fund?.byYear;
+    if (!yrs || yrs.length < 2) {
+      // Fall back to growth rate fields if byYear unavailable
+      return (fund?.ttmRevGrowth > 0.03 && fund?.ttmEpsGrowth > 0) ||
+             (fund?.fy1RevGrowth > 0.05 && fund?.fy1EpsGrowth > 0.05);
+    }
+    const last = yrs[yrs.length - 1];
+    const prev = yrs[yrs.length - 2];
+    const older = yrs.length >= 3 ? yrs[yrs.length - 3] : null;
+    // Revenue must be growing
+    const revGrowing = last.revenue && prev.revenue && last.revenue > prev.revenue;
+    // EPS or net income trending up (at least last year positive, not collapsing)
+    const epsGrowing = last.eps != null && prev.eps != null && last.eps > prev.eps;
+    const epsPositive = last.eps != null && last.eps > 0;
+    // Net margin: stable or improving (not deteriorating significantly)
+    const marginOk = last.netMargin != null && prev.netMargin != null
+      ? last.netMargin >= prev.netMargin * 0.88  // allow up to 12% margin compression
+      : true; // no data = don't penalise
+    // Bonus: 2-year revenue trend (older → last is up)
+    const revTrend2yr = older?.revenue && last.revenue > older.revenue;
+    // Must have: revenue growing AND (eps growing OR positive eps with stable margin)
+    const fundOk = revGrowing && (epsGrowing || (epsPositive && marginOk));
+    return fundOk;
   };
 
   // Sort + health filter
@@ -2442,9 +2472,7 @@ function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
       const priceTrendDown = dp != null
         && (fund.priceAvg50 != null && dp < fund.priceAvg50)   // below 50d MA
         && (fund.yearHigh != null && dp < fund.yearHigh * 0.80); // AND >20% off 52w high
-      const fundStrong = (fund.score ?? 0) >= 55
-        && (fund.ttmRevGrowth > 0 || fund.fy1RevGrowth > 0)
-        && (fund.ttmEpsGrowth > 0 || fund.fy1EpsGrowth > 0);
+      const fundStrong = (fund.score ?? 0) >= 55 && isFundamentallyImproving(fund);
       if (!priceTrendDown || !fundStrong) return false;
     }
     return true;
@@ -2657,9 +2685,7 @@ function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
                     const priceTrendDown = dp != null
                       && (fund?.priceAvg50 != null && dp < fund.priceAvg50)   // below 50d MA
                       && (fund?.yearHigh != null && dp < fund.yearHigh * 0.80); // AND >20% off 52w high
-                    const fundStrong = score != null && score >= 55
-                      && (fund?.ttmRevGrowth > 0 || fund?.fy1RevGrowth > 0)
-                      && (fund?.ttmEpsGrowth > 0 || fund?.fy1EpsGrowth > 0);
+                    const fundStrong = score != null && score >= 55 && isFundamentallyImproving(fund);
                     const isPossibleDeal = fund != null && priceTrendDown && fundStrong;
                     return (
                       <tr key={row.symbol}
@@ -5539,8 +5565,7 @@ function StockDetail({ pos, onBack, transactions }) {
               && (avg50 != null && dp < avg50)
               && (high  != null && dp < high * 0.80);
             const fundStrong = overallScore != null && overallScore >= 55
-              && (data?.ttmRevGrowth > 0 || data?.fy1RevGrowth > 0)
-              && (data?.ttmEpsGrowth > 0 || data?.fy1EpsGrowth > 0);
+              && isFundamentallyImproving({ byYear: data?.byYear, ttmRevGrowth: data?.ttmRevGrowth, ttmEpsGrowth: data?.ttmEpsGrowth, fy1RevGrowth: data?.fy1RevGrowth, fy1EpsGrowth: data?.fy1EpsGrowth });
             if (!priceTrendDown || !fundStrong) return null;
             return (
               <div className="card" style={{padding:'14px 18px',marginBottom:12,
