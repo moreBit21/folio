@@ -2439,9 +2439,9 @@ function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
       const fund = fundCache[r.symbol];
       if (fund) {
         const dp = fund.curPrice ?? r.price;
-        const priceTrendDown = fund.priceAvg50 != null && dp != null
-          && dp < fund.priceAvg50
-          && fund.yearHigh != null && dp < fund.yearHigh * 0.85;
+        const priceTrendDown = dp != null
+          && (fund.priceAvg50 != null && dp < fund.priceAvg50)   // below 50d MA
+          && (fund.yearHigh != null && dp < fund.yearHigh * 0.80); // AND >20% off 52w high
         const fundStrong = (fund.score ?? 0) >= 55
           && (fund.ttmRevGrowth > 0 || fund.fy1RevGrowth > 0)
           && (fund.ttmEpsGrowth > 0 || fund.fy1EpsGrowth > 0);
@@ -2655,9 +2655,9 @@ function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
                     const isLoadingScore = loadingFund[row.symbol];
                     // Possible Deal: price below 50d MA + >15% off 52w high + strong fundamentals
                     const dp = fund?.curPrice ?? row.price;
-                    const priceTrendDown = fund?.priceAvg50 != null && dp != null
-                      && dp < fund.priceAvg50
-                      && fund?.yearHigh != null && dp < fund.yearHigh * 0.85;
+                    const priceTrendDown = dp != null
+                      && (fund?.priceAvg50 != null && dp < fund.priceAvg50)   // below 50d MA
+                      && (fund?.yearHigh != null && dp < fund.yearHigh * 0.80); // AND >20% off 52w high
                     const fundStrong = score != null && score >= 55
                       && (fund?.ttmRevGrowth > 0 || fund?.fy1RevGrowth > 0)
                       && (fund?.ttmEpsGrowth > 0 || fund?.fy1EpsGrowth > 0);
