@@ -669,6 +669,80 @@ function parseSmartbrokerDepot(rows, headers) {
 }
 
 
+const ALLOC_COLORS_EXT = ["#00e5a0","#627eea","#f7931a","#9945ff","#f0b429","#76b900","#e84142","#4d9fff","#a78bfa","#ff4d6d"];
+
+// ISIN detection
+const isISIN = s => /^[A-Z]{2}[A-Z0-9]{9}[0-9]$/.test(s);
+
+// Known ISINs for instant resolution without API call
+const ISIN_MAP = {
+  "US0378331005":"AAPL","US5949181045":"MSFT","US02079K3059":"GOOGL",
+  "US0231351067":"AMZN","US30303M1027":"META","US88160R1014":"TSLA",
+  "US67066G1040":"NVDA","US46625H1005":"JPM","US38141G1040":"GS",
+  "US02209S1033":"AMD","US9197941076":"V","US69343P1057":"MA",
+  "IE00B4L5Y983":"IWDA","IE00B5BMR087":"CSPX","IE00BKM4GZ66":"EIMI",
+  "IE00B4JNQZ49":"IUFS","IE00B4KBBD01":"IUUS","IE00BYXYX521":"VWCE",
+  "IE00B3RBWM25":"VWRL","DE000A0S9GB0":"4GLD","DE000ETFL037":"EL4A",
+  "IE000AON7ET1":"ARKX","IE000YDOORK7":"XDWH","IE00BMFKG444":"XNAS",
+  "JE00BQRFDY49":"WZRD",
+};
+
+const ETF_TICKERS = new Set([
+  'SPY','QQQ','IVV','VTI','VOO','GLD','SLV','VEA','VWO','EFA','AGG','BND',
+  'LQD','TLT','IEF','XLF','XLK','XLE','XLV','XLI','XLU','XLP','XLB','XLRE',
+  'GDX','GDXJ','HYG','JNK','EEM','EWJ','EWG','EWU','EWC','EWA','EWH','EWZ',
+  'ARKK','ARKG','ARKW','ARKF','ARKQ','ARKX',
+  'VWCE','IWDA','CSPX','EIMI','VEUR','VWRL','EXS1','XDWD','XMAW','XDWH','XDWS',
+  'VNQ','VNQI','BIL','SHY','MUB','VTIP','SCHD','JEPI','QYLD','XYLD','RYLD',
+  'SQQQ','TQQQ','UVXY','VXX','SVXY','SPXS','SPXL','UPRO','TMF','TNA','TZA',
+  'HACK','CIBR','KWEB','CQQQ','MCHI','ASHR','FXI',
+  'IWM','IWF','IWD','IWB','IJH','IJR','IEV','IAU','IEFA','IEMG',
+]);
+const STOCK_TICKERS = new Set([
+  'AAPL','MSFT','GOOGL','GOOG','AMZN','META','NVDA','TSLA','NFLX',
+  'BABA','BIDU','JD','PDD','TCEHY','SHOP','COIN','HUBS','IRM',
+  'JPM','GS','BAC','WFC','V','MA','PYPL','SQ','TTD','NDAQ',
+  'KO','PEP','MCD','SBUX','NKE','DIS','AMGN','PFE','MRNA','JNJ',
+  'XOM','CVX','WMT','PG','HD','INTC','AMD','QCOM','AVGO','ORCL',
+  'CRM','ADBE','NOW','SNOW','UBER','LYFT','ABNB','DASH','SNAP','PINS',
+]);
+
+const TICKER_NAMES = {
+  "AAPL":"Apple","MSFT":"Microsoft","GOOGL":"Alphabet","AMZN":"Amazon",
+  "META":"Meta","TSLA":"Tesla","NVDA":"NVIDIA","ABNB":"Airbnb",
+  "BKNG":"Booking Holdings","SNOW":"Snowflake","SHOP":"Shopify",
+  "SQ":"Block","TTD":"Trade Desk","NFLX":"Netflix","NDAQ":"Nasdaq Inc",
+  "COIN":"Coinbase","SAP":"SAP SE","DBK":"Deutsche Bank",
+  "DTE":"Deutsche Telekom","SIE":"Siemens","ALV":"Allianz","BMW":"BMW",
+  "BAS":"BASF","VOW3":"Volkswagen","ASML":"ASML Holding",
+  "IWDA":"iShares Core MSCI World","CSPX":"iShares Core S&P 500",
+  "EIMI":"iShares Core MSCI EM","VEUR":"Vanguard FTSE Europe",
+  "VWCE":"Vanguard FTSE All-World","VWRL":"Vanguard FTSE All-World Dist",
+  "EXS1":"iShares Core DAX","XDWH":"Xtrackers MSCI World Health",
+  "XDWS":"Xtrackers MSCI World Swap","XMAW":"Xtrackers MSCI All World",
+  "XDWD":"Xtrackers MSCI World","EL4A":"Deka MSCI World",
+};
+
+function inferType(ticker, isin, name, rawType) {
+  const t = (ticker || '').toUpperCase();
+  const n = (name   || '').toLowerCase();
+  const i = (isin   || '').toUpperCase();
+  if (rawType === 'crypto') return 'crypto';
+  if (rawType === 'derivative') return 'derivative';
+  if (/derivat|warrant|zertifikat|knock.out|turbo|faktor/i.test(n)) return 'derivative';
+  if (STOCK_TICKERS.has(t)) return 'stock';
+  if (i.startsWith('IE') || i.startsWith('LU')) return 'etf';
+  if (/^DE000(ETF|EXS|EL4|A0S|A1J)/.test(i)) return 'etf';
+  if (i.startsWith('US')) return ETF_TICKERS.has(t) ? 'etf' : 'stock';
+  if (i.startsWith('DE') || i.startsWith('FR') || i.startsWith('NL') || i.startsWith('CH')) {
+    return ETF_TICKERS.has(t) ? 'etf' : 'stock';
+  }
+  if (ETF_TICKERS.has(t)) return 'etf';
+  if (/\betf\b|index fund|ishares|vanguard|xtrackers|amundi|lyxor|invesco|spdr|wisdomtree/i.test(n)) return 'etf';
+  return rawType || 'stock';
+}
+function guessTypeFromISIN(isin, ticker) { return inferType(ticker, isin, '', 'stock'); }
+
 // ─────────────────────────────────────────────────────────────────────────────
 // ── LEARNED PARSER SYSTEM ────────────────────────────────────────────────────
 // After every successful AI parse, we save a structural spec to localStorage.
