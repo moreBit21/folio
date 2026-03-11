@@ -1468,14 +1468,56 @@ function ImportModal({ onClose, onImport, existingPositions = [], existingTransa
           date: t.date,
           type: t.type,
           isin: t.isin || null,
+          symbol: t.symbol || null,
           name: t.name || t.symbol,
           qty: t.qty,
-          amountEur: t.total || (t.qty * t.price),
+          price: t.price || 0,
+          amountEur: t.total || (t.qty * (t.price || 0)),
         }));
         setTxData(txs);
         const dates = txs.map(t => t.date).sort();
         const net = txs.reduce((s,t) => s + (t.type==="buy" ? t.amountEur : -t.amountEur), 0);
         setTxPreview({ count: txs.length, from: dates[0], to: dates[dates.length-1], net, isAI: true });
+
+        // ── Derive current positions from transaction history ──────────────
+        // Group buys/sells by symbol, compute net qty + weighted avg cost
+        const holdingMap = {};
+        for (const t of txs) {
+          const key = t.isin || t.symbol || t.name;
+          if (!key) continue;
+          if (!holdingMap[key]) holdingMap[key] = {
+            symbol: t.symbol || key,
+            isin: t.isin || null,
+            name: t.name || t.symbol || key,
+            qty: 0,
+            totalCost: 0,
+            type: 'crypto', // default for Bitvavo; will be overridden
+          };
+          const h = holdingMap[key];
+          if (t.type === 'buy') {
+            h.totalCost += t.amountEur || 0;
+            h.qty += t.qty || 0;
+          } else if (t.type === 'sell') {
+            // Reduce cost basis proportionally
+            if (h.qty > 0) h.totalCost *= Math.max(0, (h.qty - (t.qty || 0))) / h.qty;
+            h.qty -= t.qty || 0;
+          }
+        }
+        const derivedPositions = Object.values(holdingMap)
+          .filter(h => h.qty > 0.000001) // filter out fully sold / dust
+          .map((h, i) => ({
+            id: Date.now() + i,
+            symbol: h.isin && isISIN(h.isin) ? h.isin : h.symbol,
+            isin: h.isin || null,
+            name: h.name,
+            type: inferType(h.symbol, h.isin, h.name, h.type),
+            qty: Math.round(h.qty * 1e8) / 1e8, // round floating point dust
+            avgPrice: h.qty > 0 && h.totalCost > 0 ? h.totalCost / h.qty : 0,
+            currentPrice: h.qty > 0 && h.totalCost > 0 ? h.totalCost / h.qty : 0,
+            broker: data.broker || 'Imported',
+            color: ALLOC_COLORS_EXT[i % ALLOC_COLORS_EXT.length],
+          }));
+        setDerivedPositions(derivedPositions);
         setStep("activity");
       } else {
         let positions = (data.positions || []).map((p,i) => ({
@@ -1745,13 +1787,39 @@ function ImportModal({ onClose, onImport, existingPositions = [], existingTransa
           <div style={{ padding: "10px 14px", borderRadius: 8, background: "var(--surface2)", border: "1px solid var(--border)", marginBottom: 16, fontSize: 12, color: "var(--text2)" }}>
             This powers your <span style={{ color: "var(--green)" }}>real performance chart</span> — invested capital staircase based on actual trade dates.
           </div>
+          {/* ── Derived positions section ── */}
+          {derivedPositions.length > 0 && (
+            <div style={{ padding: "10px 14px", borderRadius: 8, background: "rgba(0,229,160,0.04)", border: "1px solid rgba(0,229,160,0.2)", marginBottom: 16 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                <div style={{ fontSize: 12, color: "var(--green)", fontWeight: 500 }}>
+                  📊 {derivedPositions.length} positions derived from transactions
+                </div>
+                <div className="mono" style={{ fontSize: 9, color: "var(--text3)" }}>auto-calculated</div>
+              </div>
+              <div className="mono" style={{ fontSize: 10, color: "var(--text2)", marginBottom: 10 }}>
+                Net holdings after all buys &amp; sells. Avg cost = weighted purchase price.
+              </div>
+              <div style={{ maxHeight: 140, overflowY: "auto", marginBottom: 10 }}>
+                {derivedPositions.map((p, i) => (
+                  <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px solid var(--border)", fontSize: 11 }}>
+                    <span className="mono" style={{ color: "var(--text)", fontWeight: 600 }}>{p.symbol}</span>
+                    <span style={{ color: "var(--text2)" }}>{p.name?.slice(0, 24)}</span>
+                    <span className="mono" style={{ color: "var(--text3)" }}>{p.qty % 1 === 0 ? p.qty : p.qty.toFixed(6)} @ €{p.avgPrice > 0 ? p.avgPrice.toFixed(p.avgPrice < 1 ? 4 : 2) : "—"}</span>
+                  </div>
+                ))}
+              </div>
+              <div style={{ fontSize: 11, color: "var(--text3)", fontStyle: "italic" }}>
+                These will be added to your portfolio alongside the transaction history.
+              </div>
+            </div>
+          )}
           <ImportModeButtons
             mode={importMode} onToggle={toggleMode}
             hasExisting={existingTransactions.length > 0}
             existingCount={existingTransactions.length}
             incomingCount={txPreview?.count || 0}
             label="transaction"
-            onImport={(m)=>onImport({ type: "transactions", data: txData, mode: m })}
+            onImport={(m)=>onImport({ type: "transactions", data: txData, mode: m, derivedPositions: derivedPositions.length > 0 ? derivedPositions : null })}
             onBack={()=>setStep("upload")}
           />
         </>)}
@@ -8369,23 +8437,32 @@ export default function App() {
             finalTxs = [...transactions, ...newOnes];
           } else {
             finalTxs = incoming;
-            if(positions.length > 0){
-              const txQty={};
-              finalTxs.forEach(t=>{if(!t.isin)return;txQty[t.isin]=(txQty[t.isin]||0)+(t.type==='buy'?t.qty:-t.qty);});
-              const mismatches=positions.filter(p=>{
-                if(!p.isin||p.qty<=0)return false;
-                const computed=Math.max(0,txQty[p.isin]||0);
-                if(computed===0&&p.qty>0)return true;
-                if(p.qty>0&&Math.abs(computed-p.qty)/p.qty>0.2)return true;
-                return false;
-              });
-              if(mismatches.length>positions.length*0.3){
-                const names=mismatches.slice(0,3).map(p=>p.name||p.symbol).join(', ');
-                if(!window.confirm("⚠ Incomplete transaction history\n\n"+mismatches.length+" of your "+positions.length+" positions have missing buy records\n(e.g. "+names+"...)\n\nImport anyway?"))return;
-              }
-            }
           }
           setTransactions(finalTxs);
+          // Apply derived positions if provided (transaction-only brokers)
+          if(imported.derivedPositions?.length > 0){
+            const derived = imported.derivedPositions;
+            if(mode === "append" && positions.length > 0){
+              // Merge: update qty/avgPrice for existing, add new
+              const merged = [...positions];
+              derived.forEach(p => {
+                const sym = (p.symbol||"").toUpperCase();
+                const idx = merged.findIndex(m =>
+                  (p.isin && m.isin === p.isin) ||
+                  (sym && (m.symbol||"").toUpperCase() === sym)
+                );
+                if(idx >= 0){
+                  merged[idx] = { ...merged[idx], qty: p.qty, avgPrice: p.avgPrice, currentPrice: p.avgPrice };
+                } else {
+                  merged.push(p);
+                }
+              });
+              setPositions(merged);
+            } else {
+              setPositions(derived);
+            }
+            setTimeout(fetchPrices, 100);
+          }
         } else {
           const incoming = imported.data || imported;
           const mode = imported.mode || "replace";
