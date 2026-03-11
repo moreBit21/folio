@@ -1462,6 +1462,8 @@ function ImportModal({ onClose, onImport }) {
   const confidenceColor = c => c >= 0.85 ? "var(--green)" : c >= 0.6 ? "var(--gold)" : "var(--red)";
   const confidenceLabel = c => c >= 0.85 ? "High confidence" : c >= 0.6 ? "Review recommended" : "Low confidence";
   const fmt2 = BROKER_FORMATS[broker];
+  const quotaColor = remaining > 2 ? "var(--text2)" : remaining > 0 ? "var(--gold)" : "var(--red)";
+  const quotaBarColor = remaining > 2 ? "var(--green)" : remaining > 0 ? "var(--gold)" : "var(--red)";
 
   return (
     <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
@@ -1531,7 +1533,7 @@ function ImportModal({ onClose, onImport }) {
           <div style={{ marginTop: 14, padding: "12px 14px", borderRadius: 8, background: "var(--surface2)", border: "1px solid var(--border)" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
               <div className="mono" style={{ fontSize: 9, color: "var(--text3)", letterSpacing: "0.1em" }}>AI IMPORTS · FREE TIER</div>
-              <div className="mono" style={{ fontSize: 10, color: remaining > 2 ? "var(--text2)" : remaining > 0 ? "var(--gold)" : "var(--red)" }}>
+              <div className="mono" style={{ fontSize: 10, color: quotaColor }}>
                 {remaining} / {AI_IMPORT_LIMIT} remaining
               </div>
             </div>
@@ -1539,7 +1541,7 @@ function ImportModal({ onClose, onImport }) {
               <div style={{
                 height: "100%", borderRadius: 2,
                 width: `${(remaining / AI_IMPORT_LIMIT) * 100}%`,
-                background: remaining > 2 ? "var(--green)" : remaining > 0 ? "var(--gold)" : "var(--red)",
+                background: quotaBarColor,
                 transition: "width 0.3s"
               }} />
             </div>
