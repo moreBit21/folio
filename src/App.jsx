@@ -697,6 +697,13 @@ const ALLOC_COLORS_EXT = ["#00e5a0","#627eea","#f7931a","#9945ff","#f0b429","#76
 
 // ISIN detection
 const isISIN = s => /^[A-Z]{2}[A-Z0-9]{9}[0-9]$/.test(s);
+// If symbol is still a raw ISIN, show first word of name or abbreviated ISIN
+const displayTicker = pos => {
+  if (!pos) return '?';
+  const sym = pos.symbol || '';
+  if (isISIN(sym)) return pos.name ? pos.name.split(' ')[0].slice(0,8).toUpperCase() : sym.slice(0,6)+'…';
+  return sym;
+};
 
 // Known ISINs for instant resolution without API call
 const ISIN_MAP = {
@@ -1582,19 +1589,23 @@ function ImportModal({ onClose, onImport, existingPositions = [], existingTransa
 
       // ── Route to correct preview step ─────────────────────────────────────
       if (data.mode === "transactions" && data.transactions?.length) {
-        const txs = data.transactions.map(t => ({
-          date: t.date,
-          type: t.type,
-          isin: t.isin || null,
-          symbol: t.symbol || null,
-          name: t.name || t.symbol,
-          qty: t.qty,
-          price: t.price || 0,
-          amountEur: t.total || (t.qty * (t.price || 0)),
-        }));
+        const txs = data.transactions
+          .filter(t => t.type !== 'ignore')
+          .map(t => ({
+            date: t.date,
+            type: t.type, // buy | sell | transfer_in | transfer_out | reward
+            isin: t.isin || null,
+            symbol: t.symbol || null,
+            name: t.name || t.symbol,
+            qty: Math.abs(t.qty || 0),
+            price: t.price || 0,
+            amountEur: Math.abs(t.total || (t.qty * (t.price || 0))),
+          }));
         setTxData(txs);
         const dates = txs.map(t => t.date).sort();
-        const net = txs.reduce((s,t) => s + (t.type==="buy" ? t.amountEur : -t.amountEur), 0);
+        const isBuy = t => t.type === 'buy';
+        const isSell = t => t.type === 'sell' || t.type === 'transfer_out';
+        const net = txs.reduce((s,t) => s + (isBuy(t) ? t.amountEur : isSell(t) ? -t.amountEur : 0), 0);
         setTxPreview({ count: txs.length, from: dates[0], to: dates[dates.length-1], net, isAI: true });
 
         // ── Derive current positions from transaction history ──────────────
@@ -1966,10 +1977,10 @@ function PreviewTable({ positions }) {
         <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr 0.7fr 0.9fr 0.7fr", padding: "10px 14px", borderBottom: i < positions.length-1 ? "1px solid var(--border)" : "none", alignItems: "center" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <div style={{ width: 28, height: 28, borderRadius: 6, background: `${p.color}22`, border: `1px solid ${p.color}44`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-              <span className="mono" style={{ fontSize: 7, color: p.color, fontWeight: 700 }}>{(p.symbol||"").slice(0,4)}</span>
+              <span className="mono" style={{ fontSize: 7, color: p.color, fontWeight: 700 }}>{displayTicker(p).slice(0,4)}</span>
             </div>
             <div>
-              <div style={{ fontSize: 12, fontWeight: 500 }}>{p.symbol}</div>
+              <div style={{ fontSize: 12, fontWeight: 500 }}>{displayTicker(p)}</div>
               <div style={{ fontSize: 10, color: "var(--text3)", maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</div>
             </div>
           </div>
@@ -6800,7 +6811,7 @@ function PortfolioPage({ positions, transactions, onOpenStock, priceLoading, cha
                 <div style={{display:'flex',alignItems:'center',gap:8,minWidth:0}}>
                   <AssetLogo pos={pos}/>
                   <div style={{minWidth:0}}>
-                    <div style={{fontSize:12,fontWeight:500}}>{pos.symbol}</div>
+                    <div style={{fontSize:12,fontWeight:500}}>{displayTicker(pos)}</div>
                     <div style={{fontSize:10,color:'var(--text3)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:110}}>{pos.name}</div>
                   </div>
                 </div>
@@ -7017,7 +7028,7 @@ function PortfolioPage({ positions, transactions, onOpenStock, priceLoading, cha
                               onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
                               <AssetLogo pos={pos}/>
                               <div style={{flex:1,minWidth:0}}>
-                                <div className="mono" style={{fontSize:12,fontWeight:600}}>{pos.symbol}</div>
+                                <div className="mono" style={{fontSize:12,fontWeight:600}}>{displayTicker(pos)}</div>
                                 <div style={{fontSize:10,color:'var(--text3)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{pos.name}</div>
                               </div>
                               <div style={{textAlign:'right',flexShrink:0}}>

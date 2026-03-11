@@ -1,6 +1,6 @@
 // api/ai-import.js — Phase 2c: AI Universal File Import
-// Accepts: { content: string, fileType: "csv"|"pdf"|"xlsx", fileName: string }
-// Returns: { positions: [...], transactions: [...] | null, broker: string, confidence: number }
+// AI job: detect format + normalize columns only
+// App job: derive positions from normalized transactions (correct semantics)
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
@@ -11,7 +11,6 @@ export default async function handler(req, res) {
   const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
   if (!ANTHROPIC_KEY) return res.status(500).json({ error: "ANTHROPIC_API_KEY not set" });
 
-  // ── Smart content sampling: send header + spread of rows, not just first N chars ──
   function sampleContent(raw, maxChars = 28000) {
     if (raw.length <= maxChars) return raw;
     const lines = raw.split("\n");
@@ -19,7 +18,6 @@ export default async function handler(req, res) {
     const header = lines[0];
     const dataLines = lines.slice(1).filter(l => l.trim());
     const totalData = dataLines.length;
-    // Always include first 40 rows (establishes pattern), last 10 rows, and spread sample
     const first = dataLines.slice(0, 40);
     const last = dataLines.slice(-10);
     const midCount = 30;
@@ -34,8 +32,7 @@ export default async function handler(req, res) {
 
   const sampledContent = sampleContent(content);
 
-  // ── System prompt ──────────────────────────────────────────────────────────
-  const systemPrompt = `You are a financial data extraction specialist. Parse broker export files and extract transaction history or portfolio positions.
+  const systemPrompt = `You are a financial data extraction specialist. Parse broker export files and normalize them into a standard schema.
 
 You MUST respond with ONLY a valid JSON object — no explanation, no markdown, no code fences.
 
@@ -51,78 +48,90 @@ JSON schema:
       "name": "full asset name",
       "type": "stock" | "etf" | "crypto" | "derivative",
       "qty": number,
-      "avgPrice": number,
-      "currency": "EUR" | "USD" | "GBP" etc,
+      "avgPrice": number (cost basis per unit in EUR, or current price if cost basis unavailable),
       "broker": "broker name"
     }
   ],
   "transactions": [
     {
       "date": "YYYY-MM-DD",
-      "type": "buy" | "sell",
+      "type": "buy" | "sell" | "transfer_in" | "transfer_out" | "reward" | "ignore",
       "isin": "ISIN if present, else null",
-      "symbol": "ticker symbol",
+      "symbol": "ticker symbol (NOT the ISIN — the actual symbol like BTC, AAPL)",
       "name": "asset name",
-      "qty": number,
-      "price": number,
-      "currency": "EUR",
-      "total": number
+      "qty": number (always positive),
+      "price": number (price per unit in EUR, 0 if unknown),
+      "total": number (total EUR value, always positive, 0 if unknown)
     }
   ] | null,
   "parserSpec": {
     "numberFormat": "de" | "en",
     "fieldMap": {
-      "symbol":   "regex pattern matching the ticker/symbol column header, or null",
-      "isin":     "regex pattern matching ISIN column header, or null",
-      "name":     "regex pattern matching name/asset column header, or null",
-      "type":     "regex pattern matching asset class column header, or null",
-      "qty":      "regex pattern matching quantity/shares column header, or null",
-      "avgPrice": "regex pattern matching price/cost column header, or null",
-      "currency": "regex pattern matching currency column header, or null",
-      "date":     "regex pattern matching date column header, or null",
-      "txType":   "regex pattern matching transaction type (buy/sell) column, or null",
-      "total":    "regex pattern matching total amount column, or null"
+      "symbol":   "regex matching ticker/symbol column header, or null",
+      "isin":     "regex matching ISIN column header, or null",
+      "name":     "regex matching name/asset column header, or null",
+      "qty":      "regex matching quantity/shares column header, or null",
+      "avgPrice": "regex matching avg price/cost column header, or null",
+      "date":     "regex matching date column header, or null",
+      "txType":   "regex matching transaction type column, or null",
+      "total":    "regex matching total amount column, or null"
+    },
+    "typeMap": {
+      "buy":         ["list of raw type strings that mean buy"],
+      "sell":        ["list of raw type strings that mean sell"],
+      "transfer_in": ["list of raw type strings that mean asset arriving (deposit, withdrawal_cancelled, etc)"],
+      "transfer_out":["list of raw type strings that mean asset leaving (withdrawal, etc)"],
+      "reward":      ["list of raw type strings that mean free incoming (staking, rebate, cashback, etc)"],
+      "ignore":      ["list of raw type strings to skip (margin bookkeeping, EUR cash flows, fees, etc)"]
     }
   }
 }
 
-Rules:
-- Use "positions" mode for depot snapshot files (current holdings with quantities and avg prices)
-- Use "transactions" mode for activity/transaction history files
-- If the file has both, prefer "transactions" as it's more valuable
-- For ISINs: always include if present in the data
-- For type detection: ISINs starting with IE/LU = etf, US = stock (unless known ETF), crypto = crypto
-- avgPrice should be cost basis per unit in EUR if available, else current price
-- Confidence: 1.0 = known broker format, 0.7 = likely correct, 0.4 = best guess
-- Known brokers: Bitvavo, Smartbroker+, Trade Republic, Scalable Capital, ING, Comdirect, DKB, Flatex, Interactive Brokers, Degiro
+TRANSACTION TYPE RULES — normalize source type strings to one of these 6 values:
+- "buy"          → user purchased an asset (kauf, purchase, buy, limit order filled, savings plan)
+- "sell"         → user sold an asset (verkauf, sale, sell)
+- "transfer_in"  → asset arrived from external wallet/account (deposit of crypto/stock, withdrawal_cancelled)
+- "transfer_out" → asset left to external wallet/account (withdrawal of crypto/stock to cold wallet)
+- "reward"       → free incoming assets with no cost basis (staking, rebate, cashback, airdrop, dividend reinvestment, fixed_staking, campaign incentive)
+- "ignore"       → internal bookkeeping, not a real position change (margin_loan_borrow, margin_loan_repay, margin_loan_collateral_*, EUR cash deposits/withdrawals, affiliate EUR payouts, fees)
 
-TRANSACTION TYPE MAPPING — map source types to "buy" or "sell":
-- "buy", "kauf", "purchase" → "buy"
-- "sell", "verkauf", "sale" → "sell"
-- "staking", "rebate", "affiliate", "campaign_new_user_incentive", "fixed_staking" → "buy" (treat as incoming, use qty from Amount column, price=0, total=0)
-- "withdrawal" → "sell" (asset leaving, use negative Amount as qty)
-- "deposit" → skip (EUR/cash deposits, not asset transactions)
-- "margin_loan_*" → skip (internal margin bookkeeping)
-- "withdrawal_cancelled" → skip
+CRITICAL SEMANTICS (the app will use these to derive positions):
+- "buy" and "transfer_in" and "reward" all ADD to holdings
+- "sell" and "transfer_out" both REDUCE holdings
+- "ignore" rows are skipped entirely
+- transfer_in has NO purchase cost (user bought it elsewhere)
+- reward has NO purchase cost (it was free)
+- qty is ALWAYS positive regardless of sign in source file
 
-BITVAVO FORMAT NOTES:
-- Columns: Timezone, Date, Time, Type, Currency, Amount, Quote Currency, Quote Price, Received/Paid Currency, Received/Paid Amount, Fee currency, Fee amount, Status, Transaction ID, Address
-- For buy rows: Currency=asset, Amount=qty bought, Quote Price=price in EUR, Received/Paid Amount=EUR total (negative = paid)
-- For sell rows: Amount is negative (asset sold), Received/Paid Amount is positive (EUR received)
-- For staking/rebate: Currency=asset, Amount=qty received, no price data
-- Only include rows where Status="Completed" or Status="Distributed"
-- symbol = Currency column value (e.g. BTC, ETH, SOL)
+POSITION MODE vs TRANSACTION MODE:
+- "positions" mode: file shows current holdings snapshot (depot statement, balance overview)
+- "transactions" mode: file shows activity history
+- If the file has both, prefer "transactions"
+- In transactions mode: positions = []
 
-- If transactions mode: set positions to [] (positions will be derived client-side from transactions)
-- parserSpec.fieldMap: provide regex patterns matching EXACT column headers for future local parsing
-- parserSpec.numberFormat: "de" if numbers use period as thousands sep and comma as decimal, else "en"
-- NEVER return markdown, NEVER add commentary, ONLY return the JSON object`;
+SYMBOL RULES:
+- symbol field must be the TRADING SYMBOL, never the ISIN
+- For ISINs: extract the ISIN separately into the isin field, look up or infer the ticker symbol
+- If you cannot determine the ticker from context, use the first 4-6 chars of the company name
 
-  const userPrompt = `File name: ${fileName || "unknown"}
-File type: ${fileType || "unknown"}
-Total content length: ${content.length} chars (${content.split("\n").length} lines)
+KNOWN BROKER FORMATS:
+Bitvavo CSV: Timezone,Date,Time,Type,Currency,Amount,Quote Currency,Quote Price,Received/Paid Currency,Received/Paid Amount,...
+  - symbol = Currency column (e.g. SOL, BTC)
+  - qty = abs(Amount)
+  - price = Quote Price (EUR)
+  - total = abs(Received/Paid Amount) when Received/Paid Currency = EUR
+  - Type mapping: buy→buy, sell→sell, deposit→transfer_in, withdrawal→transfer_out, staking→reward, fixed_staking→reward, rebate→reward, campaign_new_user_incentive→reward, margin_loan_*→ignore, affiliate→ignore, withdrawal_cancelled→ignore
 
-File content (sampled):
+Smartbroker+ activity CSV: German format, columns include Transaktionstyp, ISIN, Stücke, Anlagebetrag
+  - type mapping: Kauf/BUY_SAVINGSPLAN→buy, Verkauf→sell
+
+Scalable Capital: similar German format
+
+- NEVER return markdown, ONLY return the JSON object`;
+
+  const userPrompt = `File: ${fileName || "unknown"} (${fileType || "unknown"})
+Length: ${content.length} chars, ${content.split("\n").length} lines
+
 ${sampledContent}`;
 
   try {
@@ -148,28 +157,21 @@ ${sampledContent}`;
 
     const data = await response.json();
     const raw = data.content?.[0]?.text || "";
-
-    // Strip any accidental markdown fences
     const cleaned = raw.replace(/^```(?:json)?\n?/i, "").replace(/\n?```$/i, "").trim();
 
     let parsed;
     try {
       parsed = JSON.parse(cleaned);
     } catch (e) {
-      // Try to extract JSON from response if there's surrounding text
       const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
-        try {
-          parsed = JSON.parse(jsonMatch[0]);
-        } catch (e2) {
-          return res.status(422).json({ error: "Claude returned invalid JSON", raw: raw.slice(0, 800) });
-        }
+        try { parsed = JSON.parse(jsonMatch[0]); }
+        catch (e2) { return res.status(422).json({ error: "Claude returned invalid JSON", raw: raw.slice(0, 800) }); }
       } else {
         return res.status(422).json({ error: "Claude returned invalid JSON", raw: raw.slice(0, 800) });
       }
     }
 
-    // Validate minimal structure
     if (!parsed.positions) parsed.positions = [];
     if (!parsed.transactions) parsed.transactions = null;
     if (!parsed.broker) parsed.broker = "Unknown";
