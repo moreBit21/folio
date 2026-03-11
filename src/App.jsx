@@ -1466,7 +1466,7 @@ function ImportModal({ onClose, onImport }) {
   const quotaBarColor = remaining > 2 ? "var(--green)" : remaining > 0 ? "var(--gold)" : "var(--red)";
 
   return (
-    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+    <div className="modal-overlay" onClick={e=>e.target === e.currentTarget && onClose()}>
       <div className="modal" style={{ width: 580, maxHeight: "88vh", overflowY: "auto" }}>
 
         {/* Header */}
@@ -1509,10 +1509,10 @@ function ImportModal({ onClose, onImport }) {
           </div>
 
           <div
-            onDragOver={e => { e.preventDefault(); setDragging(true); }}
-            onDragLeave={() => setDragging(false)}
+            onDragOver={e=>{ e.preventDefault(); setDragging(true); }}
+            onDragLeave={()=>setDragging(false)}
             onDrop={onDrop}
-            onClick={() => document.getElementById("ai-file-input").click()}
+            onClick={()=>document.getElementById("ai-file-input").click()}
             style={{
               border: `2px dashed ${dragging ? "var(--green)" : "var(--border2)"}`,
               borderRadius: 10, padding: "40px 20px", textAlign: "center",
@@ -1599,8 +1599,8 @@ function ImportModal({ onClose, onImport }) {
           </div>
           <PreviewTable positions={preview} />
           <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 18 }}>
-            <button className="btn btn-ghost" onClick={() => setStep("upload")}>← Back</button>
-            <button className="btn btn-primary" onClick={() => onImport(preview)}>
+            <button className="btn btn-ghost" onClick={()=>setStep("upload")}>← Back</button>
+            <button className="btn btn-primary" onClick={()=>onImport(preview)}>
               Import {preview.length} position{preview.length !== 1 ? "s" : ""} →
             </button>
           </div>
@@ -1641,8 +1641,8 @@ function ImportModal({ onClose, onImport }) {
           </div>
           <PreviewTable positions={preview} />
           <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 18 }}>
-            <button className="btn btn-ghost" onClick={() => setStep("upload")}>← Back</button>
-            <button className="btn btn-primary" onClick={() => onImport(preview)}>
+            <button className="btn btn-ghost" onClick={()=>setStep("upload")}>← Back</button>
+            <button className="btn btn-primary" onClick={()=>onImport(preview)}>
               Import {preview.length} position{preview.length !== 1 ? "s" : ""} →
             </button>
           </div>
@@ -1678,8 +1678,8 @@ function ImportModal({ onClose, onImport }) {
             This powers your <span style={{ color: "var(--green)" }}>real performance chart</span> — invested capital staircase based on actual trade dates.
           </div>
           <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-            <button className="btn btn-ghost" onClick={() => setStep("upload")}>← Back</button>
-            <button className="btn btn-primary" onClick={() => onImport({ type: "transactions", data: txData })}>
+            <button className="btn btn-ghost" onClick={()=>setStep("upload")}>← Back</button>
+            <button className="btn btn-primary" onClick={()=>onImport({ type: "transactions", data: txData })}>
               Import {txPreview.count} transactions →
             </button>
           </div>
@@ -2703,6 +2703,7 @@ function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
         </div>
       )}
     </div>
+  </div>
   );
 }
 
