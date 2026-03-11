@@ -8225,33 +8225,38 @@ export default function App() {
             activeBM={activeBM} setActiveBM={setActiveBM}
             range={range} setRange={setRange}
             BENCHMARKS={BENCHMARKS} perfStats={perfStats}/>}
-          {nav==="stock"&&selectedPos&&<StockDetail pos={selectedPos} onBack={()=>{setNav(prevNav||"dashboard");setSelectedPos(null)}} transactions={transactions}/> }
+          {/* Screener container — always mounted to preserve list state */}
           <div style={{display: nav==="screener" || (nav==="stock" && prevNav==="screener") ? 'block' : 'none'}}>
-            {nav==="screener" && (
-              <>
-                <div style={{display:'flex', gap:0, borderBottom:'1px solid var(--border)',
-                  margin:'-26px -30px 20px -30px', paddingLeft:30, paddingTop:4, paddingRight:30}}>
-                  {[{id:'stock',label:'📈 Stocks'},{id:'etf',label:'🏦 ETFs'}].map(t=>(
-                    <button key={t.id} onClick={()=>setScreenerTab(t.id)}
-                      style={{padding:'10px 22px', fontSize:12, fontWeight:600, border:'none',
-                        cursor:'pointer', background:'none',
-                        color: screenerTab===t.id ? 'var(--green)' : 'var(--text3)',
-                        borderBottom: screenerTab===t.id ? '2px solid var(--green)' : '2px solid transparent',
-                        marginBottom:-1, letterSpacing:'0.04em', transition:'color 0.15s'}}>
-                      {t.label}
-                    </button>
-                  ))}
-                </div>
-                {screenerTab==='stock'
-                  ? <ScreenerPage onOpenStock={pos=>{setPrevNav('screener');setSelectedPos(pos);setNav('stock');}} watchlists={watchlists} setWatchlists={setWatchlists}/>
-                  : <ETFScreenerPage onOpenStock={pos=>{setPrevNav('screener');setSelectedPos(pos);setNav('stock');}} watchlists={watchlists} setWatchlists={setWatchlists}/>
-                }
-              </>
-            )}
-            {nav==="stock" && prevNav==="screener" && (
-              <ScreenerPage onOpenStock={pos=>{setPrevNav('screener');setSelectedPos(pos);setNav('stock');}} watchlists={watchlists} setWatchlists={setWatchlists}/>
+            {/* Tab bar */}
+            <div style={{display: nav==="screener" ? 'flex' : 'none', gap:0, borderBottom:'1px solid var(--border)',
+              margin:'-26px -30px 20px -30px', paddingLeft:30, paddingTop:4, paddingRight:30}}>
+              {[{id:'stock',label:'📈 Stocks'},{id:'etf',label:'🏦 ETFs'}].map(t=>(
+                <button key={t.id} onClick={()=>setScreenerTab(t.id)}
+                  style={{padding:'10px 22px', fontSize:12, fontWeight:600, border:'none',
+                    cursor:'pointer', background:'none',
+                    color: screenerTab===t.id ? 'var(--green)' : 'var(--text3)',
+                    borderBottom: screenerTab===t.id ? '2px solid var(--green)' : '2px solid transparent',
+                    marginBottom:-1, letterSpacing:'0.04em', transition:'color 0.15s'}}>
+                  {t.label}
+                </button>
+              ))}
+            </div>
+            {/* Screener list — hidden (not unmounted) when viewing a stock */}
+            <div style={{display: nav==="stock" && prevNav==="screener" ? 'none' : 'block'}}>
+              {screenerTab==='stock'
+                ? <ScreenerPage onOpenStock={pos=>{setPrevNav('screener');setSelectedPos(pos);setNav('stock');}} watchlists={watchlists} setWatchlists={setWatchlists}/>
+                : <ETFScreenerPage onOpenStock={pos=>{setPrevNav('screener');setSelectedPos(pos);setNav('stock');}} watchlists={watchlists} setWatchlists={setWatchlists}/>
+              }
+            </div>
+            {/* StockDetail overlaid when coming from screener */}
+            {nav==="stock" && prevNav==="screener" && selectedPos && (
+              <StockDetail pos={selectedPos} onBack={()=>{setNav('screener');setSelectedPos(null);}} transactions={transactions}/>
             )}
           </div>
+          {/* StockDetail for all other navigation sources */}
+          {nav==="stock" && prevNav!=="screener" && selectedPos && (
+            <StockDetail pos={selectedPos} onBack={()=>{setNav(prevNav||'dashboard');setSelectedPos(null);}} transactions={transactions}/>
+          )}
           {nav==="compare"&&<CompareView/>}
           {nav==="news"&&<NewsFeed positions={positions}/> }
           {nav==="settings"&&(

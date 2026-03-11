@@ -80,7 +80,8 @@ export default async function handler(req, res) {
       const text = await r.text();
       if (text.startsWith('Premium') || text.includes('Premium Query')) return [];
       const data = JSON.parse(text);
-      return Array.isArray(data) ? data : (data?.data ?? data ?? []);
+      const arr = Array.isArray(data) ? data : (Array.isArray(data?.data) ? data.data : []);
+      return arr;
     } catch { return []; }
   };
 
@@ -327,7 +328,11 @@ export default async function handler(req, res) {
       fy1Date: fwdEst?.date?.slice(0,7) ?? null,
       fy2Date: fwd2Est?.date?.slice(0,7) ?? null,
       beta: p.beta ?? null, dividendYield: p.lastDividend ?? null,
-      // Price trend fields from stable /quote endpoint
+      // Price trend fields from stable /quote endpoint (priceAvg50, yearHigh etc.)
+      // NOTE: These fields are on the free plan for US tickers.
+      // TODO: Test with premium — non-US tickers (e.g. VWCE) may return empty on the free plan
+      //       since FMP's free tier is US-only. If quoteData[0] is undefined for EU tickers,
+      //       the deal signal simply won't fire for them until premium is active.
       currentPrice:  quoteData[0]?.price      ?? p.price  ?? null,
       priceAvg50:    quoteData[0]?.priceAvg50  ?? null,
       priceAvg200:   quoteData[0]?.priceAvg200 ?? null,
