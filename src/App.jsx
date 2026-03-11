@@ -1247,16 +1247,26 @@ function ImportModal({ onClose, onImport, existingPositions = [], existingTransa
     }
 
     try {
-      const response = await fetch("/api/ai-import", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content, fileType: fType, fileName: file.name }),
-      });
+      let response;
+      try {
+        response = await fetch("/api/ai-import", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content, fileType: fType, fileName: file.name }),
+        });
+      } catch(fetchErr) {
+        throw new Error(`Network error — could not reach /api/ai-import: ${fetchErr.message}`);
+      }
 
-      const data = await response.json();
+      let data;
+      try {
+        data = await response.json();
+      } catch(jsonErr) {
+        throw new Error(`Server returned HTTP ${response.status} with non-JSON body`);
+      }
 
       if (!response.ok || data.error) {
-        setError(data.error || "AI parsing failed. Try a CSV export from your broker.");
+        setError(data.error || `Server error ${response.status}. Try again.`);
         setStep("upload");
         return;
       }
@@ -1364,7 +1374,10 @@ function ImportModal({ onClose, onImport, existingPositions = [], existingTransa
         setStep("ai_preview");
       }
     } catch(e) {
-      setError("Connection error. Check your internet and try again.");
+      console.error('[folio] ai-import error:', e);
+      const msg = e?.message || String(e);
+      // Show the real error so we can debug
+      setError(`Import failed: ${msg}`);
       setStep("upload");
     }
   }
