@@ -613,6 +613,30 @@ Return 6-8 items total. Prioritize market-moving news. RETURN ONLY THE JSON ARRA
   );
 }
 
+function DevModeToggle() {
+  const [devMode, setDevMode] = React.useState(() => {
+    try { return localStorage.getItem('folio_dev_mode') === 'true'; } catch(e) { return false; }
+  });
+  const toggle = () => {
+    const next = !devMode;
+    try { localStorage.setItem('folio_dev_mode', String(next)); } catch(e) {}
+    setDevMode(next);
+  };
+  return (
+    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+      <div>
+        <div style={{fontSize:13,fontWeight:500,marginBottom:3}}>Developer mode</div>
+        <div style={{fontSize:11,color:"var(--text3)"}}>Unlimited AI imports for testing. Disable before launch.</div>
+      </div>
+      <button className="btn" style={{flexShrink:0,marginLeft:16,
+        ...(devMode?{background:'var(--green-dim)',color:'var(--green)',borderColor:'rgba(0,229,160,0.3)'}:{})}}
+        onClick={toggle}>
+        {devMode ? '✓ Dev Mode ON' : 'Dev Mode OFF'}
+      </button>
+    </div>
+  );
+}
+
 // ── CSV Import Modal ──────────────────────────────────────────
 // Smartbroker+ activity CSV parser
 function parseSmartbrokerActivity(rows, headers) {
@@ -1096,6 +1120,10 @@ async function xlsxToCSV(file) {
 // Free CSV fast-path and learned parsers = always free, never counted.
 // ─────────────────────────────────────────────────────────────────────────────
 const AI_IMPORT_LIMIT = 5;
+const AI_IMPORT_LIMIT_DEV = 999;
+function getImportLimit() {
+  try { return localStorage.getItem('folio_dev_mode') === 'true' ? AI_IMPORT_LIMIT_DEV : AI_IMPORT_LIMIT; } catch(e) { return AI_IMPORT_LIMIT; }
+}
 
 function getAIImportUsage() {
   try {
@@ -1114,8 +1142,9 @@ function incrementAIImportUsage() {
 function getRemainingImports() {
   const now = new Date().toISOString().slice(0, 7);
   const usage = getAIImportUsage();
-  if (usage.month !== now) return AI_IMPORT_LIMIT;
-  return Math.max(0, AI_IMPORT_LIMIT - usage.count);
+  const limit = getImportLimit();
+  if (usage.month !== now) return limit;
+  return Math.max(0, limit - usage.count);
 }
 
 function readFileAsText(file) {
@@ -1575,13 +1604,13 @@ function ImportModal({ onClose, onImport, existingPositions = [], existingTransa
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
               <div className="mono" style={{ fontSize: 9, color: "var(--text3)", letterSpacing: "0.1em" }}>AI IMPORTS · FREE TIER</div>
               <div className="mono" style={{ fontSize: 10, color: quotaColor }}>
-                {remaining} / {AI_IMPORT_LIMIT} remaining
+                {remaining} / {getImportLimit()} remaining
               </div>
             </div>
             <div style={{ height: 3, borderRadius: 2, background: "var(--border2)", overflow: "hidden" }}>
               <div style={{
                 height: "100%", borderRadius: 2,
-                width: `${(remaining / AI_IMPORT_LIMIT) * 100}%`,
+                width: `${(remaining / getImportLimit()) * 100}%`,
                 background: quotaBarColor,
                 transition: "width 0.3s"
               }} />
@@ -8451,6 +8480,28 @@ export default function App() {
                   </div>
                 ))}
                 <div style={{marginTop:14}}><button className="btn btn-ghost">+ Connect new broker</button></div>
+              </div>
+
+              {/* Danger zone */}
+              <div className="card" style={{padding:28,borderColor:"rgba(255,77,109,0.2)"}}>
+                <div className="mono" style={{fontSize:10,color:"var(--red)",letterSpacing:"0.12em",marginBottom:18}}>DANGER ZONE</div>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",paddingBottom:16,marginBottom:16,borderBottom:"1px solid var(--border)"}}>
+                  <div>
+                    <div style={{fontSize:13,fontWeight:500,marginBottom:3}}>Delete all portfolio data</div>
+                    <div style={{fontSize:11,color:"var(--text3)"}}>Removes all positions and transactions. Cannot be undone.</div>
+                  </div>
+                  <button className="btn" style={{borderColor:"var(--red)",color:"var(--red)",flexShrink:0,marginLeft:16}}
+                    onClick={()=>{
+                      if(window.confirm('Delete ALL portfolio data?\n\nThis removes all positions and transactions and cannot be undone.')) {
+                        setPositions([]);
+                        setTransactions([]);
+                        setNav('dashboard');
+                      }
+                    }}>
+                    🗑 Delete Portfolio
+                  </button>
+                </div>
+                <DevModeToggle />
               </div>
             </div>
           )}
