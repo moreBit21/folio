@@ -2340,11 +2340,12 @@ function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
       if (filters.evEbitdaMax)  p.set('evEbitdaMax', filters.evEbitdaMax);
       if (filters.sector && filters.sector !== 'All') p.set('sector', filters.sector);
       if (filters.exchange && filters.exchange !== 'All') p.set('exchange', filters.exchange);
+      p.set('isEtf', 'false');
       p.set('limit', '200');
       const res = await fetch('/api/screener?' + p.toString());
       const data = await res.json();
       if (data.error && data.error === 'Premium') throw new Error('This endpoint requires a higher FMP plan.');
-      const res2 = data.results || [];
+      const res2 = (data.results || []).filter(r => !r.isEtf && !/\bETF\b|\bFund\b|\bTrust\b|\bIndex Fund\b/i.test(r.companyName || ''));
       setResults(res2);
       // Auto-batch load fundamentals for first 30 results in parallel
       const toLoad = res2.slice(0, 30).map(r => r.symbol).filter(sym => !fundCache[sym]);
