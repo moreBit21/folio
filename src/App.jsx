@@ -646,7 +646,6 @@ const BROKER_FORMATS = {
     name: "Bitvavo", color: "#1a6aff",
     detect: (headers) => headers.some(h => /market|side|amount|currency/i.test(h)),
     parse: (rows, headers) => {
-      // Bitvavo format: Date, Market (BTC-EUR), Side (buy/sell), Amount, Price, Total, Fee
       const h = k => headers.findIndex(h => new RegExp(k,"i").test(h));
       const iMarket=h("market"), iSide=h("side|type"), iAmt=h("^amount"), iPrice=h("price"), iDate=h("date|time");
       return rows.filter(r=>r[iSide]?.toLowerCase()==="buy").reduce((acc,r)=>{
@@ -666,9 +665,6 @@ const BROKER_FORMATS = {
     name: "Smartbroker+", color: "#00a4ef",
     detect: (headers) => headers.some(h => /kundennummer|depotnummer|einstandskurs|marktkurs|stücke|kürzel/i.test(h)),
     parse: (rows, headers) => {
-      // Smartbroker+ depot snapshot format
-      // Columns: DATUM,KUNDENNUMMER,DEPOTNUMMER,ISIN,WKN,KÜRZEL,NAME 1,NAME 2,ASSETKLASSE,STÜCKE,
-      //          EINSTANDSKURS PRO STÜCK,MARKTKURS PRO STÜCK,EINSTANDSWERT,MARKTWERT,...,WÄHRUNG,...
       const hi = k => headers.findIndex(h => new RegExp(k,"i").test(h));
       const iISIN    = hi("isin");
       const iKuerzel = hi("kürzel|kurzel");
@@ -678,58 +674,36 @@ const BROKER_FORMATS = {
       const iQty     = hi("stücke|stucke");
       const iAvg     = hi("einstandskurs pro|einstandskurs");
       const iCurrent = hi("marktkurs pro|marktkurs");
-      const iWaehrung= hi("währung|wahrung");
-
-      // German number format: "1.234,56" → 1234.56
       const parseDE = s => {
         if (!s) return 0;
         return parseFloat(s.replace(/\./g,"").replace(",",".")) || 0;
       };
-
       const typeMap = {
         "aktien": "stock", "etfs": "etf", "etf": "etf",
         "derivate": "derivative", "fonds": "etf", "anleihen": "stock"
       };
-
       return rows.reduce((acc, r) => {
         const isin    = (r[iISIN]    || "").trim();
         const kuerzel = (r[iKuerzel] || "").trim();
         const name1   = (r[iName1]   || "").trim();
         const name2   = (r[iName2]   || "").trim();
         const klasse  = (r[iKlasse]  || "").toLowerCase().trim();
-        // For derivatives use product description (NAME 2); for others use company name (NAME 1)
         const name = klasse === "derivate" && name2 ? name2 : (name1 || name2);
         const qty     = parseDE(r[iQty]);
         const avg     = parseDE(r[iAvg]);
         const current = parseDE(r[iCurrent]);
-
         if (!isin || !qty) return acc;
-
-        // Always use ISIN as the canonical symbol — KÜRZEL is a display name only
         const symbol = isin;
         const displaySymbol = (kuerzel && !isISIN(kuerzel)) ? kuerzel.toUpperCase() : null;
-
         const rawType = typeMap[klasse] || "stock";
         const knownTicker = ISIN_MAP[isin];
         const type = inferType(knownTicker, isin, name, rawType);
-
         const ex = acc.find(p => p.isin === isin || p.symbol === symbol);
         if (ex) {
           ex.avgPrice = (ex.avgPrice * ex.qty + avg * qty) / (ex.qty + qty);
           ex.qty += qty;
         } else {
-          acc.push({
-            symbol,
-            displaySymbol,
-            name,
-            type,
-            qty,
-            avgPrice: avg,
-            currentPrice: current,
-            broker: "Smartbroker+",
-            color: "#00a4ef",
-            isin,
-          });
+          acc.push({ symbol, displaySymbol, name, type, qty, avgPrice: avg, currentPrice: current, broker: "Smartbroker+", color: "#00a4ef", isin });
         }
         return acc;
       }, []);
@@ -783,12 +757,10 @@ const isISIN = s => /^[A-Z]{2}[A-Z0-9]{9}[0-9]$/.test(s);
 
 // Known ISINs for instant resolution without API call
 const ISIN_MAP = {
-  // Fast-path cache for common US mega-caps (avoids API round-trip)
   "US0378331005":"AAPL","US5949181045":"MSFT","US02079K3059":"GOOGL",
   "US0231351067":"AMZN","US30303M1027":"META","US88160R1014":"TSLA",
   "US67066G1040":"NVDA","US46625H1005":"JPM","US38141G1040":"GS",
   "US02209S1033":"AMD","US9197941076":"V","US69343P1057":"MA",
-  // Common ETFs (EU — FMP often misses these)
   "IE00B4L5Y983":"IWDA","IE00B5BMR087":"CSPX","IE00BKM4GZ66":"EIMI",
   "IE00B4JNQZ49":"IUFS","IE00B4KBBD01":"IUUS","IE00BYXYX521":"VWCE",
   "IE00B3RBWM25":"VWRL","DE000A0S9GB0":"4GLD","DE000ETFL037":"EL4A",
@@ -796,7 +768,6 @@ const ISIN_MAP = {
   "JE00BQRFDY49":"WZRD",
 };
 
-// Known ETF tickers — used to correct type after ISIN resolution
 const ETF_TICKERS = new Set([
   'SPY','QQQ','IVV','VTI','VOO','GLD','SLV','VEA','VWO','EFA','AGG','BND',
   'LQD','TLT','IEF','XLF','XLK','XLE','XLV','XLI','XLU','XLP','XLB','XLRE',
@@ -808,7 +779,6 @@ const ETF_TICKERS = new Set([
   'HACK','CIBR','KWEB','CQQQ','MCHI','ASHR','FXI',
   'IVV','IWM','IWF','IWD','IWB','IJH','IJR','IEV','IAU','IEFA','IEMG',
 ]);
-// Known stocks — always override ETF_TICKERS classification
 const STOCK_TICKERS = new Set([
   'AAPL','MSFT','GOOGL','GOOG','AMZN','META','NVDA','TSLA','NFLX',
   'BABA','BIDU','JD','PDD','TCEHY','SHOP','COIN','HUBS','IRM',
@@ -843,13 +813,10 @@ function inferType(ticker, isin, name, rawType) {
   const t = (ticker || '').toUpperCase();
   const n = (name   || '').toLowerCase();
   const i = (isin   || '').toUpperCase();
-
   if (rawType === 'crypto') return 'crypto';
   if (rawType === 'derivative') return 'derivative';
   if (/derivat|warrant|zertifikat|knock.out|turbo|faktor/i.test(n)) return 'derivative';
   if (STOCK_TICKERS.has(t)) return 'stock';
-
-  // ISIN prefix — most reliable for EU instruments
   if (i.startsWith('IE') || i.startsWith('LU')) return 'etf';
   if (/^DE000(ETF|EXS|EL4|A0S|A1J)/.test(i)) return 'etf';
   if (i.startsWith('US')) {
@@ -860,20 +827,15 @@ function inferType(ticker, isin, name, rawType) {
     if (ETF_TICKERS.has(t)) return 'etf';
     return 'stock';
   }
-
   if (ETF_TICKERS.has(t)) return 'etf';
   if (/\betf\b|index fund|ishares|vanguard|xtrackers|amundi|lyxor|invesco|spdr|wisdomtree/i.test(n)) return 'etf';
-
   return rawType || 'stock';
 }
-// legacy alias
 function guessTypeFromISIN(isin, ticker) { return inferType(ticker, isin, '', 'stock'); }
 
 async function resolveISINs(positions) {
   const toResolve = positions.filter(p => isISIN(p.symbol));
   if (!toResolve.length) return positions;
-
-  // First pass: use local map
   const resolved = positions.map(p => {
     if (!isISIN(p.symbol)) return p;
     const ticker = ISIN_MAP[p.symbol];
@@ -882,18 +844,13 @@ async function resolveISINs(positions) {
         ...p,
         fmpTicker: ticker,
         symbol: ticker,
-        // Preserve CSV name; only fallback to TICKER_NAMES if name is missing
         name: (p.name && p.name !== p.symbol) ? p.name : (TICKER_NAMES[ticker] || ticker),
-        // Preserve CSV type; only re-guess if type is generic 'stock'
         type: (p.type && p.type !== 'stock') ? p.type : guessTypeFromISIN(p.symbol, ticker),
         isin: p.symbol,
       };
     }
     return p;
   });
-
-  // Second pass: try FMP search-isin for any still unresolved
-  // Use sequential batches of 3 with 300ms delay to avoid FMP rate limits
   const stillISIN = resolved.filter(p => isISIN(p.symbol));
   if (stillISIN.length > 0) {
     const pickTicker = (data, isin) => {
@@ -911,7 +868,6 @@ async function resolveISINs(positions) {
           || data[0];
       }
     };
-
     const BATCH = 3;
     const delay = ms => new Promise(r => setTimeout(r, ms));
     for (let i = 0; i < stillISIN.length; i += BATCH) {
@@ -940,7 +896,6 @@ async function resolveISINs(positions) {
       if (i + BATCH < stillISIN.length) await delay(300);
     }
   }
-
   return resolved;
 }
 
@@ -970,6 +925,304 @@ function detectBroker(headers) {
   return "generic";
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ── LEARNED PARSER SYSTEM ────────────────────────────────────────────────────
+// After every successful AI parse, we save a structural spec to localStorage.
+// On the next import, we try learned parsers BEFORE calling the AI.
+// This means each broker only costs 1 AI call — ever (per device).
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Fingerprint = sorted, normalised headers joined — stable across column order changes
+function fingerprintHeaders(headers) {
+  return [...headers].map(h => h.toLowerCase().trim()).sort().join("|");
+}
+
+// ── Shared broker parser store (Supabase) ─────────────────────────────────
+// One AI call per broker format — globally, across all users, forever.
+// localStorage is used as a cache to avoid round-trips on every import.
+//
+// Supabase table:
+//   broker_parsers (
+//     fingerprint   text primary key,
+//     broker_name   text,
+//     parser_spec   jsonb,
+//     confidence    float,
+//     use_count     int  default 1,
+//     created_at    timestamptz default now()
+//   )
+//   -- public read, authenticated write (RLS)
+//
+const PARSER_CACHE_KEY = "folio_parser_cache";
+const PARSER_CACHE_TTL = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+function _getCachedParsers() {
+  try {
+    const raw = localStorage.getItem(PARSER_CACHE_KEY);
+    if (!raw) return {};
+    const { ts, data } = JSON.parse(raw);
+    if (Date.now() - ts > PARSER_CACHE_TTL) return {};
+    return data || {};
+  } catch { return {}; }
+}
+
+function _setCachedParser(fingerprint, spec) {
+  try {
+    const cache = _getCachedParsers();
+    cache[fingerprint] = spec;
+    localStorage.setItem(PARSER_CACHE_KEY, JSON.stringify({ ts: Date.now(), data: cache }));
+  } catch(e) {}
+}
+
+// Look up a parser: local cache first, then Supabase
+async function findLearnedParser(headers) {
+  const fp = fingerprintHeaders(headers);
+
+  // 1. Check local cache (instant)
+  const cache = _getCachedParsers();
+  if (cache[fp]) return cache[fp];
+
+  // 2. Check Supabase (shared across all users)
+  if (!supabase) return null;
+  try {
+    const { data, error } = await supabase
+      .from("broker_parsers")
+      .select("parser_spec, broker_name, confidence")
+      .eq("fingerprint", fp)
+      .single();
+    if (error || !data) return null;
+    const spec = { ...data.parser_spec, brokerName: data.broker_name, confidence: data.confidence };
+    _setCachedParser(fp, spec); // cache locally for next time
+    // Increment use_count in background (fire and forget)
+    supabase.from("broker_parsers").update({ use_count: supabase.rpc ? undefined : undefined })
+      .eq("fingerprint", fp)
+      .then(() => {});
+    // Use RPC for atomic increment
+    supabase.rpc("increment_parser_use_count", { fp }).catch(() => {});
+    return spec;
+  } catch(e) {
+    return null;
+  }
+}
+
+// Save a newly AI-learned parser to Supabase (only if confidence >= 0.75)
+async function saveLearnedParser(fingerprint, spec, confidence) {
+  if (confidence < 0.75) return; // don't pollute shared table with low-quality parses
+
+  // Always cache locally immediately
+  _setCachedParser(fingerprint, spec);
+
+  // Save to Supabase for all users
+  if (!supabase) return;
+  try {
+    await supabase.from("broker_parsers").upsert({
+      fingerprint,
+      broker_name: spec.brokerName || "Unknown",
+      parser_spec: spec,
+      confidence,
+      use_count: 1,
+    }, { onConflict: "fingerprint", ignoreDuplicates: true }); // first writer wins
+  } catch(e) {}
+}
+
+// Count of locally cached parsers (for UI display)
+function getLearnedParserCount() {
+  return Object.keys(_getCachedParsers()).length;
+}
+
+// Run a learned parser spec against rows
+// spec.fieldMap: { symbol, isin, name, type, qty, avgPrice, currency, broker, date, txType, total }
+// spec.numberFormat: "de" | "en"
+// spec.mode: "positions" | "transactions"
+// spec.brokerName: string
+function runLearnedParser(rows, headers, spec) {
+  const parseNum = (s) => {
+    if (!s) return 0;
+    const clean = spec.numberFormat === "de"
+      ? String(s).replace(/\./g, "").replace(",", ".")
+      : String(s).replace(/,/g, "");
+    return parseFloat(clean) || 0;
+  };
+
+  const col = (fieldName) => {
+    const hint = spec.fieldMap[fieldName];
+    if (!hint) return -1;
+    // Try exact index first, then by name search
+    if (typeof hint === "number") return hint;
+    return headers.findIndex(h => new RegExp(hint, "i").test(h));
+  };
+
+  if (spec.mode === "transactions") {
+    const txs = rows.map(r => ({
+      date: r[col("date")] || "",
+      type: /sell|verk/i.test(r[col("txType")] || "") ? "sell" : "buy",
+      isin: r[col("isin")] || null,
+      symbol: r[col("symbol")] || r[col("isin")] || "",
+      name: r[col("name")] || "",
+      qty: parseNum(r[col("qty")]),
+      price: parseNum(r[col("avgPrice")]),
+      currency: r[col("currency")] || "EUR",
+      total: parseNum(r[col("total")]),
+    })).filter(t => t.date && (t.qty > 0 || t.total > 0));
+
+    // Derive amountEur for compatibility
+    return txs.map(t => ({
+      ...t,
+      amountEur: t.total || (t.qty * t.price),
+    }));
+  }
+
+  // Positions mode
+  return rows.reduce((acc, r) => {
+    const isin = (r[col("isin")] || "").trim();
+    const sym = (r[col("symbol")] || isin || "").trim().toUpperCase();
+    if (!sym) return acc;
+    const qty = parseNum(r[col("qty")]);
+    const avg = parseNum(r[col("avgPrice")]);
+    if (!qty) return acc;
+    const rawType = (r[col("type")] || "stock").toLowerCase();
+    const type = inferType(sym, isin, r[col("name")] || "", rawType);
+    const ex = acc.find(p => p.isin === isin || p.symbol === sym);
+    if (ex) {
+      ex.avgPrice = (ex.avgPrice * ex.qty + avg * qty) / (ex.qty + qty);
+      ex.qty += qty;
+    } else {
+      acc.push({
+        symbol: isin && isISIN(isin) ? isin : sym,
+        isin: isin || null,
+        name: r[col("name")] || sym,
+        type,
+        qty,
+        avgPrice: avg,
+        currentPrice: avg,
+        broker: spec.brokerName || "Imported",
+        color: "#7a8a98",
+      });
+    }
+    return acc;
+  }, []);
+}
+
+// Build a parser spec from Claude's AI result + the original headers
+// This is what we save to localStorage after a successful AI parse
+function buildParserSpec(aiResult, headers) {
+  const { broker, mode, parserSpec } = aiResult;
+  // If Claude returned an explicit parserSpec, use it directly
+  if (parserSpec && parserSpec.fieldMap) {
+    return {
+      brokerName: broker,
+      mode: mode || "positions",
+      ...parserSpec,
+    };
+  }
+
+  // Otherwise, infer fieldMap by pattern-matching Claude's output against headers
+  const find = (...patterns) => {
+    for (const pat of patterns) {
+      const idx = headers.findIndex(h => new RegExp(pat, "i").test(h));
+      if (idx >= 0) return idx;
+    }
+    return -1;
+  };
+
+  const isDE = headers.some(h => /stücke|einstandskurs|valutadatum|kürzel/i.test(h));
+
+  const fieldMap = {
+    symbol:   find("kürzel|kurzel|ticker|symbol|kürzel"),
+    isin:     find("isin"),
+    name:     find("^name|name 1|name1|bezeichnung|wertpapier"),
+    type:     find("assetklasse|asset.?class|type|typ"),
+    qty:      find("stücke|stucke|quantity|qty|amount|shares|anzahl"),
+    avgPrice: find("einstandskurs|avg.?price|kurs|preis|cost"),
+    currency: find("währung|currency|ccy"),
+    broker:   -1,
+    date:     find("datum|date|valuta"),
+    txType:   find("transaktionstyp|type|typ|side"),
+    total:    find("anlagebetrag|total|betrag|amount"),
+  };
+
+  return {
+    brokerName: broker || "Unknown",
+    mode: mode || "positions",
+    numberFormat: isDE ? "de" : "en",
+    fieldMap,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ── XLSX CLIENT-SIDE PARSER (SheetJS CDN) ────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+let _xlsxPromise = null;
+function loadXLSX() {
+  if (_xlsxPromise) return _xlsxPromise;
+  _xlsxPromise = new Promise((resolve, reject) => {
+    if (window.XLSX) { resolve(window.XLSX); return; }
+    const s = document.createElement("script");
+    s.src = "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js";
+    s.onload = () => resolve(window.XLSX);
+    s.onerror = reject;
+    document.head.appendChild(s);
+  });
+  return _xlsxPromise;
+}
+
+async function xlsxToCSV(file) {
+  const XLSX = await loadXLSX();
+  const buffer = await file.arrayBuffer();
+  const wb = XLSX.read(buffer, { type: "array" });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  return XLSX.utils.sheet_to_csv(ws);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ── AI IMPORT QUOTA ───────────────────────────────────────────────────────────
+// Only counts when we actually call the API.
+// Free CSV fast-path and learned parsers = always free, never counted.
+// ─────────────────────────────────────────────────────────────────────────────
+const AI_IMPORT_LIMIT = 5;
+
+function getAIImportUsage() {
+  try {
+    const raw = localStorage.getItem("folio_ai_imports");
+    if (!raw) return { month: "", count: 0 };
+    return JSON.parse(raw);
+  } catch { return { month: "", count: 0 }; }
+}
+function incrementAIImportUsage() {
+  const now = new Date().toISOString().slice(0, 7);
+  const usage = getAIImportUsage();
+  const current = usage.month === now ? usage.count : 0;
+  localStorage.setItem("folio_ai_imports", JSON.stringify({ month: now, count: current + 1 }));
+  return current + 1;
+}
+function getRemainingImports() {
+  const now = new Date().toISOString().slice(0, 7);
+  const usage = getAIImportUsage();
+  if (usage.month !== now) return AI_IMPORT_LIMIT;
+  return Math.max(0, AI_IMPORT_LIMIT - usage.count);
+}
+
+function readFileAsText(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = e => resolve(e.target.result);
+    reader.onerror = reject;
+    reader.readAsText(file);
+  });
+}
+
+function getFileType(file) {
+  const name = file.name.toLowerCase();
+  if (name.endsWith(".pdf")) return "pdf";
+  if (name.endsWith(".xlsx") || name.endsWith(".xls")) return "xlsx";
+  if (name.endsWith(".csv") || name.endsWith(".txt")) return "csv";
+  if (file.type.includes("pdf")) return "pdf";
+  if (file.type.includes("spreadsheet") || file.type.includes("excel")) return "xlsx";
+  return "csv";
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ── ImportModal v3 ────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 function ImportModal({ onClose, onImport }) {
   const [step, setStep] = useState("upload");
   const [broker, setBroker] = useState(null);
@@ -977,178 +1230,498 @@ function ImportModal({ onClose, onImport }) {
   const [txPreview, setTxPreview] = useState(null);
   const [txData, setTxData] = useState([]);
   const [fileName, setFileName] = useState("");
+  const [fileType, setFileType] = useState("csv");
   const [error, setError] = useState(null);
   const [dragging, setDragging] = useState(false);
+  const [parseMethod, setParseMethod] = useState(""); // "hardcoded"|"learned"|"ai"
+  const [aiResult, setAiResult] = useState(null);
+  const remaining = getRemainingImports();
+  const learnedCount = getLearnedParserCount();
 
   async function processFile(file) {
     if (!file) return;
     setFileName(file.name);
     setError(null);
-    const reader = new FileReader();
-    reader.onload = async e => {
+    let fType = getFileType(file);
+    setFileType(fType);
+
+    // ── Step 1: Convert XLSX → CSV text (client-side, free, always) ──────────
+    let textContent = null;
+    if (fType === "xlsx") {
       try {
-        const { headers, rows } = parseCSV(e.target.result);
-        if(isSmartbrokerActivity(headers)){
-          const txs = parseSmartbrokerActivity(rows,headers);
-          if(!txs.length){setError("No confirmed transactions found.");return;}
-          const dates=txs.map(t=>t.date).sort();
-          const net=txs.reduce((s,t)=>s+(t.type==='buy'?t.amountEur:-t.amountEur),0);
-          setTxData(txs);
-          setTxPreview({count:txs.length,from:dates[0],to:dates[dates.length-1],net});
-          setStep("activity"); return;
+        setStep("resolving"); // reuse "thinking" spinner
+        textContent = await xlsxToCSV(file);
+        fType = "csv"; // treat as CSV from here
+      } catch(e) {
+        // SheetJS failed — fall through to AI with raw text
+        textContent = null;
+      }
+    } else if (fType !== "pdf") {
+      try { textContent = await readFileAsText(file); } catch(e) {}
+    }
+
+    // ── Step 2: Try hardcoded broker parsers (CSV only) ───────────────────────
+    if (textContent && fType === "csv") {
+      try {
+        const { headers, rows } = parseCSV(textContent);
+
+        // Smartbroker+ activity
+        if (isSmartbrokerActivity(headers)) {
+          const txs = parseSmartbrokerActivity(rows, headers);
+          if (txs.length) {
+            const dates = txs.map(t => t.date).sort();
+            const net = txs.reduce((s,t) => s + (t.type==="buy" ? t.amountEur : -t.amountEur), 0);
+            setTxData(txs);
+            setTxPreview({ count: txs.length, from: dates[0], to: dates[dates.length-1], net });
+            setParseMethod("hardcoded");
+            setStep("activity");
+            return;
+          }
         }
+
+        // Other known broker formats
         const detected = detectBroker(headers);
-        setBroker(detected);
         const fmt = BROKER_FORMATS[detected];
-        let parsed = fmt.parse(rows, headers).map((p,i)=>({
+        let parsed = fmt.parse(rows, headers).map((p,i) => ({
           ...p, id: Date.now()+i,
           color: ALLOC_COLORS_EXT[i % ALLOC_COLORS_EXT.length]
         }));
-        if (!parsed.length) { setError("No valid positions found. Make sure the file contains buy transactions."); return; }
 
-        // Check if any ISINs need resolving
-        const hasISINs = parsed.some(p => isISIN(p.symbol));
-        if (hasISINs) {
-          setStep("resolving");
-          parsed = await resolveISINs(parsed);
+        if (parsed.length > 0 && detected !== "generic") {
+          // Hardcoded broker matched confidently
+          setBroker(detected);
+          setParseMethod("hardcoded");
+          const hasISINs = parsed.some(p => isISIN(p.symbol));
+          if (hasISINs) { setStep("resolving"); parsed = await resolveISINs(parsed); }
+          setPreview(parsed);
+          setStep("preview");
+          return;
         }
-        setPreview(parsed);
-        setStep("preview");
-      } catch(err) {
-        setError("Could not parse this file. Please check the format.");
+
+        // ── Step 3: Try learned parsers (Supabase-backed, shared across all users) ──
+        const learned = await findLearnedParser(headers);
+        if (learned) {
+          try {
+            if (learned.mode === "transactions") {
+              const txs = runLearnedParser(rows, headers, learned);
+              if (txs.length > 0) {
+                const dates = txs.map(t => t.date).sort();
+                const net = txs.reduce((s,t) => s + (t.type==="buy" ? t.amountEur : -t.amountEur), 0);
+                setTxData(txs);
+                setTxPreview({ count: txs.length, from: dates[0], to: dates[dates.length-1], net, isLearned: true, brokerName: learned.brokerName });
+                setParseMethod("learned");
+                setStep("activity");
+                return;
+              }
+            } else {
+              let parsed = runLearnedParser(rows, headers, learned);
+              if (parsed.length > 0) {
+                parsed = parsed.map((p,i) => ({ ...p, id: Date.now()+i, color: ALLOC_COLORS_EXT[i % ALLOC_COLORS_EXT.length] }));
+                const hasISINs = parsed.some(p => isISIN(p.symbol));
+                if (hasISINs) { setStep("resolving"); parsed = await resolveISINs(parsed); }
+                setPreview(parsed);
+                setBroker("learned");
+                setAiResult({ broker: learned.brokerName, confidence: 0.95 });
+                setParseMethod("learned");
+                setStep("ai_preview");
+                return;
+              }
+            }
+          } catch(e) {
+            // Learned parser failed — fall through to AI
+          }
+        }
+
+        // ── Step 4: Generic CSV last resort before AI ────────────────────────
+        if (detected === "generic") {
+          const genericParsed = BROKER_FORMATS.generic.parse(rows, headers).map((p,i) => ({
+            ...p, id: Date.now()+i,
+            color: ALLOC_COLORS_EXT[i % ALLOC_COLORS_EXT.length]
+          }));
+          if (genericParsed.length > 0) {
+            setBroker("generic");
+            setParseMethod("hardcoded");
+            setPreview(genericParsed);
+            setStep("preview");
+            return;
+          }
+        }
+      } catch(e) {
+        // CSV parse error — fall through to AI
       }
-    };
-    reader.readAsText(file);
+    }
+
+    // ── Step 5: AI path — only here do we consume quota ──────────────────────
+    if (remaining <= 0) {
+      setError("You've used all 5 free AI imports this month. Upgrade to Starter for unlimited imports.");
+      setStep("upload");
+      return;
+    }
+
+    await runAIParse(file, fType, textContent);
   }
 
-  function onDrop(e) { e.preventDefault(); setDragging(false); processFile(e.dataTransfer.files[0]); }
+  async function runAIParse(file, fType, cachedText = null) {
+    setStep("ai_parsing");
+    let content = cachedText;
 
-  const fmt = BROKER_FORMATS[broker];
+    if (!content) {
+      try {
+        content = await readFileAsText(file);
+      } catch(e) {
+        setError("Could not read file.");
+        setStep("upload");
+        return;
+      }
+    }
+
+    try {
+      const response = await fetch("/api/ai-import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content, fileType: fType, fileName: file.name }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || data.error) {
+        setError(data.error || "AI parsing failed. Try a CSV export from your broker.");
+        setStep("upload");
+        return;
+      }
+
+      if (!data.positions?.length && !data.transactions?.length) {
+        setError("No portfolio data found. Try exporting as CSV from your broker.");
+        setStep("upload");
+        return;
+      }
+
+      // ── Quota only ticks here, after a confirmed successful AI call ────────
+      incrementAIImportUsage();
+      setAiResult(data);
+      setParseMethod("ai");
+
+      // ── Save learned parser for next time (CSV/XLSX only — not PDF) ────────
+      if (fType !== "pdf" && content) {
+        try {
+          const { headers } = parseCSV(content);
+          if (headers.length > 2) {
+            const fp = fingerprintHeaders(headers);
+            const spec = buildParserSpec(data, headers);
+            saveLearnedParser(fp, spec, data.confidence || 0); // only saves if confidence >= 0.75
+          }
+        } catch(e) {}
+      }
+
+      // ── Route to correct preview step ─────────────────────────────────────
+      if (data.mode === "transactions" && data.transactions?.length) {
+        const txs = data.transactions.map(t => ({
+          date: t.date,
+          type: t.type,
+          isin: t.isin || null,
+          name: t.name || t.symbol,
+          qty: t.qty,
+          amountEur: t.total || (t.qty * t.price),
+        }));
+        setTxData(txs);
+        const dates = txs.map(t => t.date).sort();
+        const net = txs.reduce((s,t) => s + (t.type==="buy" ? t.amountEur : -t.amountEur), 0);
+        setTxPreview({ count: txs.length, from: dates[0], to: dates[dates.length-1], net, isAI: true });
+        setStep("activity");
+      } else {
+        let positions = (data.positions || []).map((p,i) => ({
+          id: Date.now()+i,
+          symbol: p.isin && isISIN(p.isin) ? p.isin : (p.symbol || p.isin),
+          isin: p.isin || null,
+          name: p.name || p.symbol,
+          type: p.type || "stock",
+          qty: p.qty,
+          avgPrice: p.avgPrice,
+          currentPrice: p.avgPrice,
+          broker: p.broker || data.broker || "Imported",
+          color: ALLOC_COLORS_EXT[i % ALLOC_COLORS_EXT.length],
+        }));
+        const hasISINs = positions.some(p => isISIN(p.symbol));
+        if (hasISINs) { setStep("resolving"); positions = await resolveISINs(positions); }
+        setPreview(positions);
+        setBroker("ai");
+        setStep("ai_preview");
+      }
+    } catch(e) {
+      setError("Connection error. Check your internet and try again.");
+      setStep("upload");
+    }
+  }
+
+  function onDrop(e) {
+    e.preventDefault();
+    setDragging(false);
+    processFile(e.dataTransfer.files[0]);
+  }
+
+  const confidenceColor = c => c >= 0.85 ? "var(--green)" : c >= 0.6 ? "var(--gold)" : "var(--red)";
+  const confidenceLabel = c => c >= 0.85 ? "High confidence" : c >= 0.6 ? "Review recommended" : "Low confidence";
+  const fmt2 = BROKER_FORMATS[broker];
 
   return (
-    <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
-      <div className="modal" style={{width:560,maxHeight:"85vh",overflowY:"auto"}}>
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal" style={{ width: 580, maxHeight: "88vh", overflowY: "auto" }}>
 
         {/* Header */}
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:22}}>
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 22 }}>
           <div>
-            <div className="serif" style={{fontSize:20}}>Import Portfolio</div>
-            <div style={{fontSize:12,color:"var(--text2)",marginTop:2}}>Upload a CSV export from your broker</div>
+            <div className="serif" style={{ fontSize: 20 }}>Import Portfolio</div>
+            <div style={{ fontSize: 12, color: "var(--text2)", marginTop: 3 }}>
+              CSV, PDF, or Excel — any broker
+            </div>
           </div>
-          <button onClick={onClose} style={{background:"none",border:"none",color:"var(--text3)",fontSize:18,cursor:"pointer"}}>✕</button>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--text3)", fontSize: 18, cursor: "pointer", marginTop: 2 }}>✕</button>
         </div>
 
-        {step==="upload" && (<>
-          {/* Broker guide pills */}
-          <div style={{display:"flex",gap:6,marginBottom:16,flexWrap:"wrap"}}>
-            {Object.entries(BROKER_FORMATS).filter(([k])=>k!=="generic").map(([k,f])=>(
-              <div key={k} style={{padding:"4px 10px",borderRadius:4,background:`${f.color}18`,border:`1px solid ${f.color}33`,fontSize:11,color:f.color,fontFamily:"IBM Plex Mono,monospace"}}>{f.name}</div>
+        {/* ── UPLOAD ─────────────────────────────────────────────────────── */}
+        {step === "upload" && (<>
+
+          <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
+            {[
+              { label: "Smartbroker+", color: "#00a4ef" },
+              { label: "Bitvavo",       color: "#1a6aff" },
+              { label: "Trade Republic",color: "#e63b2e" },
+              { label: "Scalable",      color: "#00e5a0" },
+              { label: "+ Any broker",  color: "#7a8a98" },
+            ].map(b => (
+              <div key={b.label} style={{ padding: "4px 10px", borderRadius: 4, background: `${b.color}18`, border: `1px solid ${b.color}33`, fontSize: 11, color: b.color, fontFamily: "IBM Plex Mono,monospace" }}>{b.label}</div>
             ))}
-            <div style={{padding:"4px 10px",borderRadius:4,background:"var(--surface2)",border:"1px solid var(--border)",fontSize:11,color:"var(--text3)",fontFamily:"IBM Plex Mono,monospace"}}>+ Any CSV</div>
           </div>
 
-          {/* Drop zone */}
-          <div
-            onDragOver={e=>{e.preventDefault();setDragging(true)}}
-            onDragLeave={()=>setDragging(false)}
-            onDrop={onDrop}
-            onClick={()=>document.getElementById("csv-file-input").click()}
-            style={{
-              border:`2px dashed ${dragging?"var(--green)":"var(--border2)"}`,
-              borderRadius:10, padding:"44px 20px", textAlign:"center",
-              cursor:"pointer", transition:"all 0.2s",
-              background:dragging?"var(--green-dim)":"transparent"
-            }}>
-            <div style={{fontSize:32,marginBottom:12}}>📂</div>
-            <div style={{fontSize:14,color:"var(--text)",marginBottom:6}}>Drop your CSV file here</div>
-            <div style={{fontSize:12,color:"var(--text3)"}}>or click to browse — Bitvavo, Smartbroker+, Trade Republic, or any CSV</div>
-            <input id="csv-file-input" type="file" accept=".csv,.txt" style={{display:"none"}} onChange={e=>processFile(e.target.files[0])}/>
-          </div>
-
-          {error && <div style={{marginTop:14,padding:"10px 14px",borderRadius:6,background:"var(--red-dim)",border:"1px solid rgba(255,77,109,0.3)",color:"var(--red)",fontSize:12}}>{error}</div>}
-
-          {/* Sample CSV download hint */}
-          <div style={{marginTop:16,padding:"12px 16px",borderRadius:8,background:"var(--surface2)",border:"1px solid var(--border)"}}>
-            <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.1em",marginBottom:6}}>SAMPLE FORMAT (GENERIC CSV)</div>
-            <div className="mono" style={{fontSize:10,color:"var(--text2)",lineHeight:1.8}}>
-              symbol,name,type,qty,price,broker<br/>
-              BTC,Bitcoin,crypto,0.05,55000,Manual<br/>
-              MSFT,Microsoft,stock,3,390,Manual
-            </div>
-          </div>
-        </>)}
-
-        {step==="resolving" && (
-          <div style={{textAlign:"center",padding:"40px 20px"}}>
-            <div style={{fontSize:32,marginBottom:16}}>🔍</div>
-            <div style={{fontSize:14,color:"var(--text)",marginBottom:8}}>Resolving ISINs to tickers...</div>
-            <div style={{fontSize:12,color:"var(--text3)"}}>Resolving tickers via FMP…</div>
-          </div>
-        )}
-
-        {step==="preview" && (<>
-          {/* Detected broker */}
-          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:18,padding:"10px 14px",borderRadius:8,background:"var(--green-dim)",border:"1px solid rgba(0,229,160,0.25)"}}>
-            <span style={{fontSize:16}}>✓</span>
-            <div>
-              <div style={{fontSize:13,color:"var(--green)",fontWeight:500}}>Detected: {fmt?.name || "Generic"}</div>
-              <div className="mono" style={{fontSize:10,color:"var(--text2)"}}>{fileName} · {preview.length} positions found</div>
-            </div>
-          </div>
-
-          {/* Preview table */}
-          <div style={{border:"1px solid var(--border)",borderRadius:8,overflow:"hidden",marginBottom:18}}>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 0.7fr 0.8fr 0.8fr",padding:"8px 14px",background:"var(--surface2)",borderBottom:"1px solid var(--border)"}}>
-              {["ASSET","QTY","AVG PRICE","TYPE"].map(h=><div key={h} className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.1em"}}>{h}</div>)}
-            </div>
-            {preview.map((p,i)=>(
-              <div key={i} style={{display:"grid",gridTemplateColumns:"1fr 0.7fr 0.8fr 0.8fr",padding:"10px 14px",borderBottom:i<preview.length-1?"1px solid var(--border)":"none",alignItems:"center"}}>
-                <div style={{display:"flex",alignItems:"center",gap:8}}>
-                  <div style={{width:28,height:28,borderRadius:6,background:`${p.color}22`,border:`1px solid ${p.color}44`,display:"flex",alignItems:"center",justifyContent:"center"}}>
-                    <span className="mono" style={{fontSize:8,color:p.color,fontWeight:700}}>{p.symbol.slice(0,4)}</span>
-                  </div>
-                  <div>
-                    <div style={{fontSize:12,fontWeight:500}}>{p.symbol}</div>
-                    <div style={{fontSize:10,color:"var(--text3)"}}>{p.broker}</div>
-                  </div>
-                </div>
-                <div className="mono" style={{fontSize:12,color:"var(--text2)"}}>{p.qty.toFixed(p.qty<1?4:2)}</div>
-                <div className="mono" style={{fontSize:12,color:"var(--text2)"}}>€{p.avgPrice.toFixed(2)}</div>
-                <span className={`tag tag-${p.type==="crypto"?"gold":p.type==="etf"?"blue":"gray"}`}>{p.type.toUpperCase()}</span>
+          <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+            {[
+              { ext: "CSV",      icon: "📊", note: "instant"  },
+              { ext: "PDF",      icon: "📄", note: "AI"       },
+              { ext: "XLS/XLSX", icon: "📗", note: "instant"  },
+            ].map(f => (
+              <div key={f.ext} style={{ display: "flex", alignItems: "center", gap: 5, padding: "5px 10px", borderRadius: 6, background: "var(--surface2)", border: "1px solid var(--border)", fontSize: 11, color: "var(--text2)", fontFamily: "IBM Plex Mono,monospace" }}>
+                {f.icon} {f.ext}
+                <span style={{ marginLeft: 2, color: f.note === "instant" ? "var(--green)" : "var(--text3)", fontSize: 9 }}>{f.note}</span>
               </div>
             ))}
           </div>
 
-          <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
-            <button className="btn btn-ghost" onClick={()=>setStep("upload")}>← Back</button>
-            <button className="btn btn-primary" onClick={()=>onImport(preview)}>
-              Import {preview.length} position{preview.length!==1?"s":""} →
+          <div
+            onDragOver={e => { e.preventDefault(); setDragging(true); }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={onDrop}
+            onClick={() => document.getElementById("ai-file-input").click()}
+            style={{
+              border: `2px dashed ${dragging ? "var(--green)" : "var(--border2)"}`,
+              borderRadius: 10, padding: "40px 20px", textAlign: "center",
+              cursor: "pointer", transition: "all 0.2s",
+              background: dragging ? "var(--green-dim)" : "transparent"
+            }}>
+            <div style={{ fontSize: 30, marginBottom: 10 }}>📂</div>
+            <div style={{ fontSize: 14, color: "var(--text)", marginBottom: 6 }}>Drop your file here</div>
+            <div style={{ fontSize: 12, color: "var(--text3)" }}>CSV · PDF · Excel — click to browse</div>
+            <input id="ai-file-input" type="file" accept=".csv,.txt,.pdf,.xlsx,.xls" style={{ display: "none" }} onChange={e => processFile(e.target.files[0])} />
+          </div>
+
+          {error && (
+            <div style={{ marginTop: 14, padding: "10px 14px", borderRadius: 6, background: "var(--red-dim)", border: "1px solid rgba(255,77,109,0.3)", color: "var(--red)", fontSize: 12 }}>{error}</div>
+          )}
+
+          {/* AI quota + learned parser status */}
+          <div style={{ marginTop: 14, padding: "12px 14px", borderRadius: 8, background: "var(--surface2)", border: "1px solid var(--border)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+              <div className="mono" style={{ fontSize: 9, color: "var(--text3)", letterSpacing: "0.1em" }}>AI IMPORTS · FREE TIER</div>
+              <div className="mono" style={{ fontSize: 10, color: remaining > 2 ? "var(--text2)" : remaining > 0 ? "var(--gold)" : "var(--red)" }}>
+                {remaining} / {AI_IMPORT_LIMIT} remaining
+              </div>
+            </div>
+            <div style={{ height: 3, borderRadius: 2, background: "var(--border2)", overflow: "hidden" }}>
+              <div style={{
+                height: "100%", borderRadius: 2,
+                width: `${(remaining / AI_IMPORT_LIMIT) * 100}%`,
+                background: remaining > 2 ? "var(--green)" : remaining > 0 ? "var(--gold)" : "var(--red)",
+                transition: "width 0.3s"
+              }} />
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", marginTop: 7 }}>
+              <div style={{ fontSize: 10, color: "var(--text3)" }}>
+                CSV & Excel from known brokers are always free
+              </div>
+              {learnedCount > 0 && (
+                <div style={{ fontSize: 10, color: "var(--green)", fontFamily: "IBM Plex Mono,monospace" }}>
+                  ✦ {learnedCount} broker{learnedCount !== 1 ? "s" : ""} learned
+                </div>
+              )}
+            </div>
+          </div>
+
+        </>)}
+
+        {/* ── THINKING/RESOLVING ──────────────────────────────────────────── */}
+        {step === "resolving" && (
+          <div style={{ textAlign: "center", padding: "50px 20px" }}>
+            <div style={{ fontSize: 30, marginBottom: 14 }}>🔍</div>
+            <div style={{ fontSize: 14, color: "var(--text)", marginBottom: 8 }}>Resolving ISINs to tickers…</div>
+            <div style={{ fontSize: 12, color: "var(--text3)" }}>Looking up via FMP…</div>
+          </div>
+        )}
+
+        {/* ── AI PARSING ─────────────────────────────────────────────────── */}
+        {step === "ai_parsing" && (
+          <div style={{ textAlign: "center", padding: "50px 20px" }}>
+            <div style={{ fontSize: 30, marginBottom: 14 }}>✦</div>
+            <div style={{ fontSize: 14, color: "var(--text)", marginBottom: 8 }}>Reading your file…</div>
+            <div style={{ fontSize: 12, color: "var(--text3)", marginBottom: 20 }}>
+              Identifying broker format, extracting positions
+            </div>
+            <div style={{ display: "flex", justifyContent: "center", gap: 6 }}>
+              {[0,1,2].map(i => (
+                <div key={i} style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--green)", animation: `pulse 1.2s ${i*0.2}s ease-in-out infinite` }} />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ── STANDARD CSV PREVIEW ───────────────────────────────────────── */}
+        {step === "preview" && (<>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18, padding: "10px 14px", borderRadius: 8, background: "var(--green-dim)", border: "1px solid rgba(0,229,160,0.25)" }}>
+            <span>✓</span>
+            <div>
+              <div style={{ fontSize: 13, color: "var(--green)", fontWeight: 500 }}>
+                {fmt2?.name || "Generic CSV"} · {parseMethod === "hardcoded" ? "Instant parse" : "Parsed"}
+              </div>
+              <div className="mono" style={{ fontSize: 10, color: "var(--text2)" }}>
+                {fileName} · {preview.length} positions · no AI used
+              </div>
+            </div>
+          </div>
+          <PreviewTable positions={preview} />
+          <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 18 }}>
+            <button className="btn btn-ghost" onClick={() => setStep("upload")}>← Back</button>
+            <button className="btn btn-primary" onClick={() => onImport(preview)}>
+              Import {preview.length} position{preview.length !== 1 ? "s" : ""} →
             </button>
           </div>
         </>)}
-        {step==="activity"&&txPreview&&(<>
-          <div style={{padding:"10px 14px",borderRadius:8,background:"var(--green-dim)",border:"1px solid rgba(0,229,160,0.25)",marginBottom:16,display:"flex",gap:10,alignItems:"center"}}>
+
+        {/* ── AI / LEARNED POSITIONS PREVIEW ─────────────────────────────── */}
+        {step === "ai_preview" && aiResult && (<>
+          <div style={{ marginBottom: 16, padding: "12px 14px", borderRadius: 8, background: "var(--surface2)", border: "1px solid var(--border)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+              <div>
+                <div style={{ fontSize: 13, color: "var(--text)", fontWeight: 500, marginBottom: 3 }}>
+                  {parseMethod === "learned" ? "⚡ Learned parser" : "✦ AI parsed"} · {aiResult.broker}
+                </div>
+                <div className="mono" style={{ fontSize: 10, color: "var(--text3)" }}>
+                  {fileName} · {preview.length} positions
+                  {parseMethod === "learned" && <span style={{ color: "var(--green)", marginLeft: 6 }}>no AI used</span>}
+                </div>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <div className="mono" style={{ fontSize: 10, color: confidenceColor(aiResult.confidence), letterSpacing: "0.06em" }}>
+                  {Math.round(aiResult.confidence * 100)}%
+                </div>
+                <div style={{ fontSize: 10, color: "var(--text3)", marginTop: 2 }}>
+                  {confidenceLabel(aiResult.confidence)}
+                </div>
+              </div>
+            </div>
+            {parseMethod === "ai" && (
+              <div style={{ marginTop: 8, fontSize: 10, color: "var(--text3)" }}>
+                ✦ Format saved — next import from this broker will be instant
+              </div>
+            )}
+            {aiResult.confidence < 0.75 && (
+              <div style={{ marginTop: 10, padding: "8px 10px", borderRadius: 6, background: "rgba(240,180,41,0.08)", border: "1px solid rgba(240,180,41,0.2)", fontSize: 11, color: "var(--gold)" }}>
+                ⚠ Review the positions below before importing.
+              </div>
+            )}
+          </div>
+          <PreviewTable positions={preview} />
+          <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 18 }}>
+            <button className="btn btn-ghost" onClick={() => setStep("upload")}>← Back</button>
+            <button className="btn btn-primary" onClick={() => onImport(preview)}>
+              Import {preview.length} position{preview.length !== 1 ? "s" : ""} →
+            </button>
+          </div>
+        </>)}
+
+        {/* ── TRANSACTION HISTORY ─────────────────────────────────────────── */}
+        {step === "activity" && txPreview && (<>
+          <div style={{ padding: "10px 14px", borderRadius: 8, background: "var(--green-dim)", border: "1px solid rgba(0,229,160,0.25)", marginBottom: 16, display: "flex", gap: 10, alignItems: "center" }}>
             <span>📈</span>
             <div>
-              <div style={{fontSize:13,color:"var(--green)",fontWeight:500}}>Transaction History Detected</div>
-              <div className="mono" style={{fontSize:10,color:"var(--text2)"}}>{txPreview.count} confirmed transactions · {txPreview.from} → {txPreview.to}</div>
+              <div style={{ fontSize: 13, color: "var(--green)", fontWeight: 500 }}>
+                Transaction History
+                {txPreview.isAI && " · AI Parsed"}
+                {txPreview.isLearned && " · ⚡ Instant"}
+              </div>
+              <div className="mono" style={{ fontSize: 10, color: "var(--text2)" }}>
+                {txPreview.count} transactions · {txPreview.from} → {txPreview.to}
+                {(txPreview.isAI || txPreview.isLearned) && txPreview.brokerName && ` · ${txPreview.brokerName}`}
+              </div>
             </div>
           </div>
-          <div style={{padding:"10px 14px",borderRadius:8,background:"var(--surface2)",border:"1px solid var(--border)",marginBottom:16,fontSize:12,color:"var(--text2)"}}>
-            This powers your <span style={{color:"var(--green)"}}>real performance chart</span> — invested capital staircase based on actual trade dates and amounts.
+          {txPreview.isAI && aiResult && (
+            <div style={{ padding: "8px 12px", borderRadius: 6, background: "var(--surface2)", border: "1px solid var(--border)", marginBottom: 12, display: "flex", justifyContent: "space-between" }}>
+              <span style={{ fontSize: 11, color: "var(--text3)" }}>
+                ✦ Format saved — next import will be instant
+              </span>
+              <span className="mono" style={{ fontSize: 10, color: confidenceColor(aiResult.confidence) }}>
+                {Math.round(aiResult.confidence * 100)}% confidence
+              </span>
+            </div>
+          )}
+          <div style={{ padding: "10px 14px", borderRadius: 8, background: "var(--surface2)", border: "1px solid var(--border)", marginBottom: 16, fontSize: 12, color: "var(--text2)" }}>
+            This powers your <span style={{ color: "var(--green)" }}>real performance chart</span> — invested capital staircase based on actual trade dates.
           </div>
-          <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
-            <button className="btn btn-ghost" onClick={()=>setStep("upload")}>← Back</button>
-            <button className="btn btn-primary" onClick={()=>onImport({type:"transactions",data:txData})}>
+          <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+            <button className="btn btn-ghost" onClick={() => setStep("upload")}>← Back</button>
+            <button className="btn btn-primary" onClick={() => onImport({ type: "transactions", data: txData })}>
               Import {txPreview.count} transactions →
             </button>
           </div>
         </>)}
+
       </div>
     </div>
   );
 }
 
+// ── Shared preview table ────────────────────────────────────────────────────
+function PreviewTable({ positions }) {
+  return (
+    <div style={{ border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 0.7fr 0.9fr 0.7fr", padding: "8px 14px", background: "var(--surface2)", borderBottom: "1px solid var(--border)" }}>
+        {["ASSET","QTY","AVG PRICE","TYPE"].map(h => (
+          <div key={h} className="mono" style={{ fontSize: 9, color: "var(--text3)", letterSpacing: "0.1em" }}>{h}</div>
+        ))}
+      </div>
+      {positions.map((p,i) => (
+        <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr 0.7fr 0.9fr 0.7fr", padding: "10px 14px", borderBottom: i < positions.length-1 ? "1px solid var(--border)" : "none", alignItems: "center" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ width: 28, height: 28, borderRadius: 6, background: `${p.color}22`, border: `1px solid ${p.color}44`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <span className="mono" style={{ fontSize: 7, color: p.color, fontWeight: 700 }}>{(p.symbol||"").slice(0,4)}</span>
+            </div>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 500 }}>{p.symbol}</div>
+              <div style={{ fontSize: 10, color: "var(--text3)", maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</div>
+            </div>
+          </div>
+          <div className="mono" style={{ fontSize: 12, color: "var(--text2)" }}>
+            {p.qty < 1 ? p.qty.toFixed(6) : p.qty.toFixed(2)}
+          </div>
+          <div className="mono" style={{ fontSize: 12, color: "var(--text2)" }}>
+            €{(p.avgPrice||0).toLocaleString("de-DE",{minimumFractionDigits:2,maximumFractionDigits:2})}
+          </div>
+          <span className={`tag tag-${p.type==="crypto"?"gold":p.type==="etf"?"blue":"gray"}`}>
+            {(p.type||"stock").toUpperCase()}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 
 const fmt  = (n,d=2)=>n.toLocaleString("de-DE",{minimumFractionDigits:d,maximumFractionDigits:d});
@@ -1633,7 +2206,6 @@ const EXCHANGES = ['All','NASDAQ','NYSE','AMEX'];
 const PRESETS = [
   { label: 'Quality Growth', icon: '🚀', filters: { peMax:'40', marketCapMin:'1000000000', sector:'All', healthMin:60 } },
   { label: 'Value',          icon: '💎', filters: { peMax:'15', marketCapMin:'500000000',  sector:'All', healthMin:40 } },
-  { label: 'Possible Deal',  icon: '🎯', filters: { marketCapMin:'2000000000', sector:'All', healthMin:55, dealOnly:true } },
   { label: 'Large Cap',      icon: '🏛️', filters: { marketCapMin:'10000000000', sector:'All' } },
   { label: 'High Dividend',  icon: '💰', filters: { dividendMin:'1', sector:'All' } },
   { label: 'Small Cap',      icon: '🌱', filters: { marketCapMax:'2000000000', marketCapMin:'100000000', sector:'All' } },
@@ -1652,7 +2224,6 @@ function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
     pegMax: '',
     forwardPEMax: '',
     healthMin: 0,
-    dealOnly: false,
   });
   const [results, setResults]     = React.useState([]);
   const [wlDropdown, setWlDropdown] = React.useState(null); // symbol showing WL dropdown
@@ -1694,16 +2265,14 @@ function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
       if (filters.evEbitdaMax)  p.set('evEbitdaMax', filters.evEbitdaMax);
       if (filters.sector && filters.sector !== 'All') p.set('sector', filters.sector);
       if (filters.exchange && filters.exchange !== 'All') p.set('exchange', filters.exchange);
-      p.set('isEtf', 'false');
       p.set('limit', '200');
       const res = await fetch('/api/screener?' + p.toString());
       const data = await res.json();
       if (data.error && data.error === 'Premium') throw new Error('This endpoint requires a higher FMP plan.');
-      const res2 = (data.results || []).filter(r => !r.isEtf && !/\b(ETF|Fund|Trust|Index Fund)\b/i.test(r.companyName || ''));
+      const res2 = data.results || [];
       setResults(res2);
-      // Auto-batch load fundamentals — all results for dealOnly, first 30 otherwise
-      const loadLimit = filters.dealOnly ? res2.length : 30;
-      const toLoad = res2.slice(0, loadLimit).map(r => r.symbol).filter(sym => !fundCache[sym]);
+      // Auto-batch load fundamentals for first 30 results in parallel
+      const toLoad = res2.slice(0, 30).map(r => r.symbol).filter(sym => !fundCache[sym]);
       if (toLoad.length) {
         // Stagger in batches of 5 to avoid FMP rate limiting
         const BATCH = 5;
@@ -1716,14 +2285,7 @@ function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
               const pe = d.peRatio ?? null;
               const peg = d.pegRatio ?? null;
               const fwdPE = d.forwardPE ?? null;
-              const ttmRevGrowth = d.ttmRevGrowth ?? null;
-              const ttmEpsGrowth = d.ttmEpsGrowth ?? null;
-              const fy1RevGrowth = d.fy1RevGrowth ?? null;
-              const fy1EpsGrowth = d.fy1EpsGrowth ?? null;
-              const priceAvg50   = d.priceAvg50   ?? null;
-              const yearHigh     = d.yearHigh     ?? null;
-              const curPrice     = d.currentPrice ?? null;
-              setFundCache(prev => ({ ...prev, [sym]: { score, pe, peg, fwdPE, ttmRevGrowth, ttmEpsGrowth, fy1RevGrowth, fy1EpsGrowth, priceAvg50, yearHigh, curPrice } }));
+              setFundCache(prev => ({ ...prev, [sym]: { score, pe, peg, fwdPE } }));
             })
             .catch(() => setFundCache(prev => ({ ...prev, [sym]: { score: null, pe: null, peg: null, fwdPE: null } })))
             .finally(() => setLoadingFund(prev => ({ ...prev, [sym]: false })));
@@ -1756,14 +2318,7 @@ function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
       const pe = d.peRatio ?? null;
       const peg = d.pegRatio ?? null;
       const fwdPE = d.forwardPE ?? null;
-      const ttmRevGrowth = d.ttmRevGrowth ?? null;
-      const ttmEpsGrowth = d.ttmEpsGrowth ?? null;
-      const fy1RevGrowth = d.fy1RevGrowth ?? null;
-      const fy1EpsGrowth = d.fy1EpsGrowth ?? null;
-      const priceAvg50   = d.priceAvg50   ?? null;
-      const yearHigh     = d.yearHigh     ?? null;
-      const curPrice     = d.currentPrice ?? null;
-      setFundCache(prev => ({ ...prev, [symbol]: { score, pe, peg, fwdPE, ttmRevGrowth, ttmEpsGrowth, fy1RevGrowth, fy1EpsGrowth, priceAvg50, yearHigh, curPrice } }));
+      setFundCache(prev => ({ ...prev, [symbol]: { score, pe, peg, fwdPE } }));
     } catch {
       setFundCache(prev => ({ ...prev, [symbol]: { score: null, pe: null, peg: null, fwdPE: null } }));
     } finally {
@@ -1775,7 +2330,7 @@ function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
   const filtered = results.filter(r => {
     const f = fundCache[r.symbol];
     if (filters.healthMin > 0) {
-      if (f == null) return filters.dealOnly ? false : true; // dealOnly: exclude unloaded
+      if (f == null) return true; // include if not loaded yet
       if ((f.score ?? 0) < filters.healthMin) return false;
     }
     if (filters.pegMax) {
@@ -1789,19 +2344,6 @@ function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
       if (!isNaN(maxFPE) && f != null && f.fwdPE != null) {
         if (f.fwdPE > maxFPE) return false;
       }
-    }
-    if (filters.dealOnly) {
-      const fund = fundCache[r.symbol];
-      // If not yet loaded, exclude — we don't know if it's a deal
-      if (!fund) return false;
-      const dp = fund.curPrice ?? r.price;
-      const priceTrendDown = dp != null
-        && (fund.priceAvg50 != null && dp < fund.priceAvg50)  // below 50d MA
-        && (fund.yearHigh != null && dp < fund.yearHigh * 0.80); // AND >20% off 52w high
-      const fundStrong = (fund.score ?? 0) >= 55
-        && (fund.ttmRevGrowth > 0 || fund.fy1RevGrowth > 0)
-        && (fund.ttmEpsGrowth > 0 || fund.fy1EpsGrowth > 0);
-      if (!priceTrendDown || !fundStrong) return false;
     }
     return true;
   });
@@ -2008,14 +2550,6 @@ function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
                     const rowPeg = fund?.peg ?? null;
                     const rowFwdPE = fund?.fwdPE ?? null;
                     const isLoadingScore = loadingFund[row.symbol];
-                    const _dp = fund?.curPrice ?? row.price;
-                    const priceTrendDown = _dp != null
-                      && (fund?.priceAvg50 != null && _dp < fund.priceAvg50)   // below 50d MA
-                      && (fund?.yearHigh != null && _dp < fund.yearHigh * 0.80); // AND >20% off 52w high
-                    const fundStrong = score != null && score >= 55
-                      && (fund?.ttmRevGrowth > 0 || fund?.fy1RevGrowth > 0)
-                      && (fund?.ttmEpsGrowth > 0 || fund?.fy1EpsGrowth > 0);
-                    const isPossibleDeal = fund != null && priceTrendDown && fundStrong;
                     return (
                       <tr key={row.symbol}
                         onClick={() => {
@@ -2032,15 +2566,6 @@ function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
                         </td>
                         <td style={{padding:'8px 12px',maxWidth:180,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
                           <span style={{color:'var(--text2)',fontSize:11}}>{row.companyName || '—'}</span>
-                          {isPossibleDeal && (
-                            <span title="Strong fundamentals, price pulling back — possible opportunity" style={{
-                              marginLeft:6,fontSize:9,fontFamily:'IBM Plex Mono,monospace',
-                              fontWeight:700,letterSpacing:'0.05em',padding:'2px 5px',
-                              borderRadius:3,background:'rgba(0,229,160,0.10)',
-                              color:'var(--green)',border:'1px solid rgba(0,229,160,0.22)',
-                              verticalAlign:'middle',whiteSpace:'nowrap',cursor:'default'
-                            }}>🎯 DEAL?</span>
-                          )}
                         </td>
                         <td style={{padding:'8px 12px'}}>
                           <span style={{fontSize:10,color:'var(--text3)'}}>{row.sector?.split(' ')[0] || '—'}</span>
@@ -2176,7 +2701,6 @@ function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
         </div>
       )}
     </div>
-  </div>
   );
 }
 
@@ -4866,38 +5390,6 @@ function StockDetail({ pos, onBack, transactions }) {
           {pos.type === 'etf' ? (
             <EtfOverview pos={pos} />
           ) : (<>
-          {/* ── Possible Deal badge ── */}
-          {(() => {
-            const dp = data?.currentPrice;
-            const avg50 = data?.priceAvg50;
-            const high  = data?.yearHigh;
-            const priceTrendDown = dp != null
-              && (avg50 != null && dp < avg50)       // below 50d MA
-              && (high != null && dp < high * 0.80); // AND >20% off 52w high
-            const fundStrong = overallScore != null && overallScore >= 55
-              && (data?.ttmRevGrowth > 0 || data?.fy1RevGrowth > 0)
-              && (data?.ttmEpsGrowth > 0 || data?.fy1EpsGrowth > 0);
-            if (!priceTrendDown || !fundStrong) return null;
-            return (
-              <div className="card" style={{padding:'14px 18px',marginBottom:12,
-                borderColor:'rgba(0,229,160,0.3)',background:'rgba(0,229,160,0.06)',
-                display:'flex',alignItems:'center',gap:12}}>
-                <span style={{fontSize:22}}>🎯</span>
-                <div>
-                  <div className="mono" style={{fontSize:11,fontWeight:700,color:'var(--green)',
-                    letterSpacing:'0.08em',marginBottom:3}}>POSSIBLE DEAL</div>
-                  <div style={{fontSize:11,color:'var(--text2)',lineHeight:1.5}}>
-                    Fundamentals trending up while the stock is{' '}
-                    <span className="mono" style={{color:'var(--gold)'}}>
-                      {high ? Math.round((1 - dp/high)*100) : '—'}% below its 52w high
-                    </span>
-                    {avg50 ? <> and trading below its 50-day MA (${avg50.toFixed(2)})</> : ''}.
-                  </div>
-                </div>
-              </div>
-            );
-          })()}
-
           {/* ── Overall Health Score ── */}
           {overallScore != null && (
             <div className="card" style={{padding:'14px 18px',marginBottom:12,
