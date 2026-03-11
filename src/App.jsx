@@ -866,6 +866,143 @@ function parseCSV(text) {
   return { headers, rows };
 }
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ── BITVAVO HARDCODED PARSER ──────────────────────────────────────────────────
+// Handles all Bitvavo transaction types correctly:
+//   buy/sell → trades; deposit/withdrawal → transfers (affect qty, not cost basis);
+//   staking/fixed_staking/rebate/campaign → rewards (qty only);
+//   margin_loan_* → ignored (borrowed/repaid, not owned);
+//   withdrawal_cancelled → ignored (cancellation of a pending withdrawal)
+// ─────────────────────────────────────────────────────────────────────────────
+function isBitvavoCSV(headers) {
+  // Bitvavo exports have these exact headers
+  return headers.includes('timezone') && headers.includes('type') &&
+    headers.includes('currency') && headers.includes('amount') &&
+    headers.includes('quote currency') && headers.includes('quote price') &&
+    headers.includes('transaction id');
+}
+
+function parseBitvavoCSV(rows, headers) {
+  const col = h => headers.indexOf(h.toLowerCase());
+  const iDate = col('date'), iTime = col('time'), iType = col('type');
+  const iCurrency = col('currency'), iAmount = col('amount');
+  const iQuotePrice = col('quote price');
+  const iRecvCurrency = col('received / paid currency');
+  const iRecvAmount = col('received / paid amount');
+
+  // We only emit buy/sell rows as transactions (for transaction history display)
+  // Position derivation is done separately in deriveBitvavoPositions
+  const txs = [];
+  for (const row of rows) {
+    const type = (row[iType] || '').toLowerCase().trim();
+    const currency = (row[iCurrency] || '').trim();
+    const amount = parseFloat(row[iAmount]) || 0;
+    const quotePrice = parseFloat(row[iQuotePrice]) || 0;
+    const recvCurrency = (row[iRecvCurrency] || '').trim();
+    const recvAmount = parseFloat(row[iRecvAmount]) || 0;
+    const date = (row[iDate] || '').slice(0, 10);
+
+    if (type !== 'buy' && type !== 'sell') continue;
+    if (currency === 'EUR') continue;
+
+    const qty = Math.abs(amount);
+    const eurAmount = recvCurrency === 'EUR' ? Math.abs(recvAmount) : qty * quotePrice;
+
+    txs.push({
+      date,
+      type: type === 'buy' ? 'buy' : 'sell',
+      symbol: currency,
+      isin: null,
+      name: currency,
+      qty,
+      price: quotePrice,
+      amountEur: eurAmount,
+    });
+  }
+  return txs;
+}
+
+function deriveBitvavoPositions(rows, headers) {
+  const col = h => headers.indexOf(h.toLowerCase());
+  const iDate = col('date'), iType = col('type');
+  const iCurrency = col('currency'), iAmount = col('amount');
+  const iQuotePrice = col('quote price');
+  const iRecvCurrency = col('received / paid currency');
+  const iRecvAmount = col('received / paid amount');
+
+  // Track (qty, totalCost) per symbol using correct semantics per type
+  const hMap = {};
+  const get = sym => { if (!hMap[sym]) hMap[sym] = { qty: 0, totalCost: 0 }; return hMap[sym]; };
+
+  // Process in chronological order (CSV is newest-first, so reverse)
+  const chronoRows = [...rows].reverse();
+
+  for (const row of chronoRows) {
+    const type = (row[iType] || '').toLowerCase().trim();
+    const currency = (row[iCurrency] || '').trim();
+    if (!currency || currency === 'EUR') continue;
+
+    const amount = parseFloat(row[iAmount]) || 0;
+    const quotePrice = parseFloat(row[iQuotePrice]) || 0;
+    const recvCurrency = (row[iRecvCurrency] || '').trim();
+    const recvAmount = parseFloat(row[iRecvAmount]) || 0;
+    const qty = Math.abs(amount);
+    const eurAmount = recvCurrency === 'EUR' ? Math.abs(recvAmount) : qty * quotePrice;
+
+    const h = get(currency);
+
+    if (type === 'buy') {
+      h.qty += qty;
+      h.totalCost += eurAmount;
+    } else if (type === 'sell') {
+      if (h.qty > 0) {
+        const frac = Math.min(qty, h.qty) / h.qty;
+        h.totalCost *= (1 - frac);
+        h.qty = Math.max(0, h.qty - qty);
+      }
+    } else if (type === 'deposit') {
+      // Crypto moved TO Bitvavo from external wallet — add qty, no cost (bought elsewhere)
+      h.qty += qty;
+    } else if (type === 'withdrawal') {
+      // Crypto moved OUT of Bitvavo — reduce qty, proportional cost reduction
+      if (h.qty > 0) {
+        const frac = Math.min(qty, h.qty) / h.qty;
+        h.totalCost *= (1 - frac);
+        h.qty = Math.max(0, h.qty - qty);
+      }
+    } else if (type === 'staking' || type === 'fixed_staking' ||
+               type === 'rebate' || type === 'campaign_new_user_incentive') {
+      // Rewards — add qty, zero cost basis
+      h.qty += qty;
+    } else if (type === 'margin_loan_repay') {
+      // Returning borrowed crypto — removes it from your balance
+      if (h.qty > 0) {
+        const frac = Math.min(qty, h.qty) / h.qty;
+        h.totalCost *= (1 - frac);
+        h.qty = Math.max(0, h.qty - qty);
+      }
+    } else if (type === 'margin_loan_borrow' ||
+               type === 'margin_loan_collateral_deposit' || type === 'margin_loan_collateral_return' ||
+               type === 'withdrawal_cancelled' || type === 'affiliate') {
+      // Ignore — these don't change actual ownership
+    }
+  }
+
+  return Object.entries(hMap)
+    .filter(([, h]) => h.qty > 0.01)  // filter dust (staking crumbs, rounding residuals)
+    .map(([sym, h], i) => ({
+      symbol: sym,
+      name: sym,
+      qty: Math.round(h.qty * 1e8) / 1e8,
+      avgPrice: h.qty > 0 && h.totalCost > 0 ? h.totalCost / h.qty : 0,
+      type: 'crypto',
+      isin: null,
+      broker: 'Bitvavo',
+      coinId: getCoinId(sym),
+    }));
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // ── LEARNED PARSER SYSTEM ────────────────────────────────────────────────────
 // After every successful AI parse, we save a structural spec to localStorage.
@@ -1291,6 +1428,26 @@ function ImportModal({ onClose, onImport, existingPositions = [], existingTransa
           }
         }
 
+        // ── Step 2c: Bitvavo (hardcoded — handles all crypto tx types correctly) ──
+        if (isBitvavoCSV(headers)) {
+          const txs = parseBitvavoCSV(rows, headers);
+          const positions = deriveBitvavoPositions(rows, headers).map((p, i) => ({
+            ...p,
+            id: Date.now() + i,
+            color: ALLOC_COLORS_EXT[i % ALLOC_COLORS_EXT.length],
+            currentPrice: 0,
+          }));
+          const dates = txs.map(t => t.date).sort();
+          const net = txs.reduce((s,t) => s + (t.type==='buy' ? t.amountEur : -t.amountEur), 0);
+          setTxData(txs);
+          setTxPreview({ count: txs.length, from: dates[0], to: dates[dates.length-1], net, brokerName: 'Bitvavo' });
+          setParseMethod('hardcoded');
+          // Store derived positions so onImport can apply them
+          setDerivedPositions(positions);
+          setStep('activity');
+          return;
+        }
+
         // ── Step 3: Try learned parsers (Supabase-backed, free, instant) ──────
         const learned = await findLearnedParser(headers);
         if (learned) {
@@ -1452,18 +1609,19 @@ function ImportModal({ onClose, onImport, existingPositions = [], existingTransa
             name: t.name || t.symbol || key,
             qty: 0,
             totalCost: 0,
-            type: 'crypto', // default for Bitvavo; will be overridden
+            type: 'crypto',
           };
           const h = holdingMap[key];
+          const qty = Math.abs(t.qty || 0);
+          const cost = Math.abs(t.amountEur || 0);
           if (t.type === 'buy') {
-            h.totalCost += t.amountEur || 0;
-            h.qty += t.qty || 0;
+            h.totalCost += cost;
+            h.qty += qty;
           } else if (t.type === 'sell') {
-            // Proportional cost basis reduction
             if (h.qty > 0) {
-              const frac = Math.min(t.qty || 0, h.qty) / h.qty;
+              const frac = Math.min(qty, h.qty) / h.qty;
               h.totalCost *= (1 - frac);
-              h.qty = Math.max(0, h.qty - (t.qty || 0));
+              h.qty = Math.max(0, h.qty - qty);
             }
           }
         }
@@ -8528,7 +8686,7 @@ export default function App() {
         if(imported?.type==="transactions"){
           const incoming = imported.data;
           const mode = imported.mode || "replace";
-          const txKey = t=>`${(t.date||"").slice(0,10)}|${t.isin||t.symbol||""}|${Math.round((t.amountEur||t.total||t.amount||0)*100)}`;
+          const txKey = t=>`${(t.date||"").slice(0,10)}|${t.isin||t.symbol||""}|${Math.round(Math.abs(t.amountEur||t.total||t.amount||0)*100)}`;
           let finalTxs;
           if(mode==="append"){
             const existingKeys = new Set(transactions.map(txKey));
@@ -8538,60 +8696,25 @@ export default function App() {
             finalTxs = incoming;
           }
           setTransactions(finalTxs);
-          // Re-derive positions from the full combined transaction set
-          if(imported.derivedPositions?.length > 0){
-            // Always recalculate from scratch using ALL transactions
-            // This ensures append mode reflects the true current state
-            const allTxs = finalTxs;
-            const hMap = {};
-            for (const t of allTxs) {
-              const key = t.isin || t.symbol || t.name;
-              if (!key) continue;
-              if (!hMap[key]) hMap[key] = {
-                symbol: t.symbol || key, isin: t.isin || null,
-                name: t.name || t.symbol || key, qty: 0, totalCost: 0,
-                type: t.isin ? 'stock' : 'crypto',
+
+          // Apply derived crypto positions (from hardcoded parser or AI)
+          if (imported.derivedPositions?.length > 0) {
+            const incoming = imported.derivedPositions;
+            // Keep all existing non-crypto positions intact (Smartbroker+ stocks etc)
+            const existingNonCrypto = positions.filter(p => p.type !== 'crypto');
+            // Merge with existing crypto (preserve currentPrice, color, coinId)
+            const newCrypto = incoming.map((p, i) => {
+              const existing = positions.find(q => q.type === 'crypto' &&
+                (q.symbol||'').toUpperCase() === (p.symbol||'').toUpperCase());
+              return {
+                ...p,
+                id: existing?.id || Date.now() + i,
+                currentPrice: existing?.currentPrice || p.currentPrice || 0,
+                color: existing?.color || p.color || ALLOC_COLORS_EXT[(existingNonCrypto.length + i) % ALLOC_COLORS_EXT.length],
+                coinId: existing?.coinId || p.coinId || getCoinId(p.symbol),
               };
-              const h = hMap[key];
-              if (t.type === 'buy') {
-                h.totalCost += t.amountEur || t.total || 0;
-                h.qty += t.qty || 0;
-              } else if (t.type === 'sell' && h.qty > 0) {
-                const frac = Math.min(t.qty || 0, h.qty) / h.qty;
-                h.totalCost *= (1 - frac);
-                h.qty = Math.max(0, h.qty - (t.qty || 0));
-              }
-            }
-            // Merge with existing non-crypto positions (keep stocks from Smartbroker etc)
-            const cryptoSymbols = new Set(Object.values(hMap).filter(h=>h.type==='crypto').map(h=>h.symbol));
-            const existingNonCrypto = positions.filter(p => p.type !== 'crypto' && !cryptoSymbols.has(p.symbol));
-            const newDerived = Object.values(hMap)
-              .filter(h => h.qty > 0.000001)
-              .map((h, i) => {
-                // Preserve existing position data (color, coinId etc) if available
-                const existing = positions.find(p =>
-                  (h.isin && p.isin === h.isin) ||
-                  (p.symbol || '').toUpperCase() === (h.symbol || '').toUpperCase()
-                );
-                return {
-                  id: existing?.id || Date.now() + i,
-                  symbol: h.symbol,
-                  isin: h.isin || null,
-                  name: existing?.name || h.name,
-                  type: existing?.type || inferType(h.symbol, h.isin, h.name, h.type),
-                  qty: Math.round(h.qty * 1e8) / 1e8,
-                  avgPrice: h.qty > 0 && h.totalCost > 0 ? h.totalCost / h.qty : 0,
-                  currentPrice: existing?.currentPrice || (h.qty > 0 && h.totalCost > 0 ? h.totalCost / h.qty : 0),
-                  broker: existing?.broker || imported.broker || 'Imported',
-                  color: existing?.color || ALLOC_COLORS_EXT[i % ALLOC_COLORS_EXT.length],
-                  coinId: existing?.coinId || (inferType(h.symbol, h.isin, h.name, h.type) === 'crypto' ? getCoinId(h.symbol) : null),
-                };
-              });
-            if (mode === 'append') {
-              setPositions([...existingNonCrypto, ...newDerived]);
-            } else {
-              setPositions(newDerived);
-            }
+            });
+            setPositions([...existingNonCrypto, ...newCrypto]);
             setTimeout(fetchPrices, 100);
           }
         } else {
