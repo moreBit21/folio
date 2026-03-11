@@ -1223,7 +1223,48 @@ function getFileType(file) {
 // ─────────────────────────────────────────────────────────────────────────────
 // ── ImportModal v3 ────────────────────────────────────────────────────────────
 // ─────────────────────────────────────────────────────────────────────────────
-function ImportModal({ onClose, onImport }) {
+// ── Import mode confirmation buttons (shown at preview step) ─────────────────
+function ImportModeButtons({ mode, onToggle, hasExisting, existingCount, incomingCount, label, onImport, onBack }) {
+  const isAppend = mode === "append";
+  return (
+    <div style={{ marginTop: 18 }}>
+      {hasExisting && (
+        <div style={{ marginBottom: 12, padding: "10px 14px", borderRadius: 8, background: "var(--surface2)", border: "1px solid var(--border)", fontSize: 12, color: "var(--text2)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span>
+            {isAppend
+              ? `Adding to ${existingCount} existing ${label}${existingCount !== 1 ? "s" : ""}`
+              : `Replacing ${existingCount} existing ${label}${existingCount !== 1 ? "s" : ""}`}
+          </span>
+          <div style={{ display: "flex", borderRadius: 5, overflow: "hidden", border: "1px solid var(--border)", fontSize: 11 }}>
+            <button onClick={()=>onToggle("replace")} style={{ padding: "3px 9px", background: !isAppend ? "var(--surface2)" : "transparent", color: !isAppend ? "var(--text)" : "var(--text3)", border: "none", cursor: "pointer", fontFamily: "inherit", borderRight: "1px solid var(--border)" }}>Replace</button>
+            <button onClick={()=>onToggle("append")} style={{ padding: "3px 9px", background: isAppend ? "rgba(0,229,160,0.12)" : "transparent", color: isAppend ? "var(--green)" : "var(--text3)", border: "none", cursor: "pointer", fontFamily: "inherit" }}>+ Append</button>
+          </div>
+        </div>
+      )}
+      <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+        <button className="btn btn-ghost" onClick={onBack}>← Back</button>
+        {hasExisting && !isAppend && (
+          <button className="btn btn-ghost" style={{ color: "var(--text3)", borderColor: "var(--border)" }} onClick={()=>onImport("append")}>
+            + Add to existing
+          </button>
+        )}
+        <button className="btn btn-primary" onClick={()=>onImport(isAppend && hasExisting ? "append" : "replace")}>
+          {isAppend && hasExisting ? `Add ${incomingCount} ${label}${incomingCount !== 1 ? "s" : ""} →` : `Import ${incomingCount} ${label}${incomingCount !== 1 ? "s" : ""} →`}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+const IMPORT_MODE_KEY = "folio_import_mode";
+function getStoredImportMode() {
+  try { return localStorage.getItem(IMPORT_MODE_KEY) === "append" ? "append" : "replace"; } catch { return "replace"; }
+}
+function setStoredImportMode(mode) {
+  try { localStorage.setItem(IMPORT_MODE_KEY, mode); } catch {}
+}
+
+function ImportModal({ onClose, onImport, existingPositions = [], existingTransactions = [] }) {
   const [step, setStep] = useState("upload");
   const [broker, setBroker] = useState(null);
   const [preview, setPreview] = useState([]);
@@ -1235,8 +1276,16 @@ function ImportModal({ onClose, onImport }) {
   const [dragging, setDragging] = useState(false);
   const [parseMethod, setParseMethod] = useState(""); // "hardcoded"|"learned"|"ai"
   const [aiResult, setAiResult] = useState(null);
+  const [importMode, setImportMode] = useState(getStoredImportMode);
   const remaining = getRemainingImports();
   const learnedCount = getLearnedParserCount();
+
+  function toggleMode(mode) {
+    setImportMode(mode);
+    setStoredImportMode(mode);
+  }
+
+  const hasExisting = existingPositions.length > 0 || existingTransactions.length > 0;
 
   async function processFile(file) {
     if (!file) return;
@@ -1477,7 +1526,20 @@ function ImportModal({ onClose, onImport }) {
               CSV, PDF, or Excel — any broker
             </div>
           </div>
-          <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--text3)", fontSize: 18, cursor: "pointer", marginTop: 2 }}>✕</button>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            {/* Persistent mode toggle — only shown when there's existing data */}
+            {hasExisting && (
+              <div style={{ display: "flex", borderRadius: 6, overflow: "hidden", border: "1px solid var(--border)", fontSize: 11 }}>
+                <button onClick={()=>toggleMode("replace")} style={{ padding: "4px 10px", background: importMode === "replace" ? "var(--surface2)" : "transparent", color: importMode === "replace" ? "var(--text)" : "var(--text3)", border: "none", cursor: "pointer", fontFamily: "inherit", borderRight: "1px solid var(--border)" }}>
+                  Replace
+                </button>
+                <button onClick={()=>toggleMode("append")} style={{ padding: "4px 10px", background: importMode === "append" ? "rgba(0,229,160,0.12)" : "transparent", color: importMode === "append" ? "var(--green)" : "var(--text3)", border: "none", cursor: "pointer", fontFamily: "inherit" }}>
+                  + Append
+                </button>
+              </div>
+            )}
+            <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--text3)", fontSize: 18, cursor: "pointer", marginTop: 2 }}>✕</button>
+          </div>
         </div>
 
         {/* ── UPLOAD ─────────────────────────────────────────────────────── */}
@@ -1598,12 +1660,15 @@ function ImportModal({ onClose, onImport }) {
             </div>
           </div>
           <PreviewTable positions={preview} />
-          <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 18 }}>
-            <button className="btn btn-ghost" onClick={()=>setStep("upload")}>← Back</button>
-            <button className="btn btn-primary" onClick={()=>onImport(preview)}>
-              Import {preview.length} position{preview.length !== 1 ? "s" : ""} →
-            </button>
-          </div>
+          <ImportModeButtons
+            mode={importMode} onToggle={toggleMode}
+            hasExisting={existingPositions.length > 0}
+            existingCount={existingPositions.length}
+            incomingCount={preview.length}
+            label="position"
+            onImport={(m)=>onImport({ data: preview, mode: m })}
+            onBack={()=>setStep("upload")}
+          />
         </>)}
 
         {/* ── AI / LEARNED POSITIONS PREVIEW ─────────────────────────────── */}
@@ -1640,12 +1705,15 @@ function ImportModal({ onClose, onImport }) {
             )}
           </div>
           <PreviewTable positions={preview} />
-          <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 18 }}>
-            <button className="btn btn-ghost" onClick={()=>setStep("upload")}>← Back</button>
-            <button className="btn btn-primary" onClick={()=>onImport(preview)}>
-              Import {preview.length} position{preview.length !== 1 ? "s" : ""} →
-            </button>
-          </div>
+          <ImportModeButtons
+            mode={importMode} onToggle={toggleMode}
+            hasExisting={existingPositions.length > 0}
+            existingCount={existingPositions.length}
+            incomingCount={preview.length}
+            label="position"
+            onImport={(m)=>onImport({ data: preview, mode: m })}
+            onBack={()=>setStep("upload")}
+          />
         </>)}
 
         {/* ── TRANSACTION HISTORY ─────────────────────────────────────────── */}
@@ -1677,12 +1745,15 @@ function ImportModal({ onClose, onImport }) {
           <div style={{ padding: "10px 14px", borderRadius: 8, background: "var(--surface2)", border: "1px solid var(--border)", marginBottom: 16, fontSize: 12, color: "var(--text2)" }}>
             This powers your <span style={{ color: "var(--green)" }}>real performance chart</span> — invested capital staircase based on actual trade dates.
           </div>
-          <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-            <button className="btn btn-ghost" onClick={()=>setStep("upload")}>← Back</button>
-            <button className="btn btn-primary" onClick={()=>onImport({ type: "transactions", data: txData })}>
-              Import {txPreview.count} transactions →
-            </button>
-          </div>
+          <ImportModeButtons
+            mode={importMode} onToggle={toggleMode}
+            hasExisting={existingTransactions.length > 0}
+            existingCount={existingTransactions.length}
+            incomingCount={txPreview?.count || 0}
+            label="transaction"
+            onImport={(m)=>onImport({ type: "transactions", data: txData, mode: m })}
+            onBack={()=>setStep("upload")}
+          />
         </>)}
 
       </div>
@@ -8159,29 +8230,63 @@ export default function App() {
         </nav>
       </div>{/* end outer flex */}
 
-      {showImport&&<ImportModal onClose={()=>setShowImport(false)} onImport={(imported)=>{
+      {showImport&&<ImportModal
+        onClose={()=>setShowImport(false)}
+        existingPositions={positions}
+        existingTransactions={transactions}
+        onImport={(imported)=>{
         if(imported?.type==="transactions"){
-          const txs = imported.data;
-          if(positions.length > 0) {
-            const txQty = {};
-            txs.forEach(t=>{ if(!t.isin) return; txQty[t.isin]=(txQty[t.isin]||0)+(t.type==='buy'?t.qty:-t.qty); });
-            const mismatches = positions.filter(p=>{
-              if(!p.isin||p.qty<=0) return false;
-              const computed = Math.max(0, txQty[p.isin]||0);
-              const actual = p.qty;
-              if(computed===0 && actual>0) return true;
-              if(actual>0 && Math.abs(computed-actual)/actual > 0.2) return true;
-              return false;
-            });
-            if(mismatches.length > positions.length * 0.3) {
-              const names = mismatches.slice(0,3).map(p=>p.name||p.symbol).join(', ');
-              const msg = "\u26a0 Incomplete transaction history\n\n" + mismatches.length + " of your " + positions.length + " positions have missing buy records\n(e.g. " + names + "...)\n\nSmartbroker+ only exported partial history. Please re-export going back to your first purchase.\n\nImport anyway?";
-              if(!window.confirm(msg)) return;
+          const incoming = imported.data;
+          const mode = imported.mode || "replace";
+          const txKey = t=>`${(t.date||"").slice(0,10)}|${t.isin||t.symbol||""}|${Math.round((t.amountEur||t.amount||0)*100)}`;
+          let finalTxs;
+          if(mode==="append"){
+            const existingKeys = new Set(transactions.map(txKey));
+            const newOnes = incoming.filter(t=>!existingKeys.has(txKey(t)));
+            finalTxs = [...transactions, ...newOnes];
+          } else {
+            finalTxs = incoming;
+            if(positions.length > 0){
+              const txQty={};
+              finalTxs.forEach(t=>{if(!t.isin)return;txQty[t.isin]=(txQty[t.isin]||0)+(t.type==='buy'?t.qty:-t.qty);});
+              const mismatches=positions.filter(p=>{
+                if(!p.isin||p.qty<=0)return false;
+                const computed=Math.max(0,txQty[p.isin]||0);
+                if(computed===0&&p.qty>0)return true;
+                if(p.qty>0&&Math.abs(computed-p.qty)/p.qty>0.2)return true;
+                return false;
+              });
+              if(mismatches.length>positions.length*0.3){
+                const names=mismatches.slice(0,3).map(p=>p.name||p.symbol).join(', ');
+                if(!window.confirm("⚠ Incomplete transaction history\n\n"+mismatches.length+" of your "+positions.length+" positions have missing buy records\n(e.g. "+names+"...)\n\nImport anyway?"))return;
+              }
             }
           }
-          setTransactions(txs);
+          setTransactions(finalTxs);
+        } else {
+          const incoming = imported.data || imported;
+          const mode = imported.mode || "replace";
+          if(mode==="append" && positions.length>0){
+            const merged=[...positions];
+            incoming.forEach(p=>{
+              const sym=(p.symbol||p.ticker||"").toUpperCase();
+              const isin=p.isin||"";
+              const idx=merged.findIndex(m=>(sym&&(m.symbol||m.ticker||"").toUpperCase()===sym)||(isin&&m.isin===isin));
+              if(idx>=0){
+                const ex=merged[idx];
+                const totalQty=(ex.qty||0)+(p.qty||0);
+                const weightedPrice=totalQty>0?((ex.qty||0)*(ex.avgPrice||0)+(p.qty||0)*(p.avgPrice||p.currentPrice||0))/totalQty:ex.avgPrice||0;
+                merged[idx]={...ex,qty:totalQty,avgPrice:weightedPrice};
+              } else {
+                merged.push({...p,id:Date.now()+Math.random(),color:ALLOC_COLORS[merged.length%ALLOC_COLORS.length]});
+              }
+            });
+            setPositions(merged);
+          } else {
+            setPositions(incoming);
+          }
+          setTimeout(fetchPrices,100);
         }
-        else{setPositions(prev=>[...prev,...imported]);setTimeout(fetchPrices,100);}
         setShowImport(false); setNav("dashboard");
       }}/>}
 
