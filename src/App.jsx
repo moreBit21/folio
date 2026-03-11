@@ -641,332 +641,33 @@ function isSmartbrokerActivity(headers) {
   return headers.some(h=>/transaktionstyp/i.test(h)) && headers.some(h=>/valutadatum/i.test(h));
 }
 
-const BROKER_FORMATS = {
-  bitvavo: {
-    name: "Bitvavo", color: "#1a6aff",
-    // Detects "Vollständige Transaktionshistorie" export (Timezone,Date,Time,Type,Currency,Amount,...)
-    detect: (headers) => headers.some(h => /timezone/i.test(h)) && headers.some(h => /^type$/i.test(h)) && headers.some(h => /^currency$/i.test(h)),
-    mode: "transactions",
-    parse: (rows, headers) => {
-      const hi = k => headers.findIndex(h => new RegExp(k, "i").test(h));
-      const iDate = hi("^date$");
-      const iType = hi("^type$");
-      const iCurrency = hi("^currency$");
-      const iAmount = hi("^amount$");
-      const iQuotePrice = hi("quote price");
-      const iPaidAmount = hi("received.*paid amount|paid amount");
-      const iStatus = hi("^status$");
-
-      // Types that represent asset acquisition (map to buy)
-      const BUY_TYPES = new Set(["buy","staking","rebate","affiliate","fixed_staking","campaign_new_user_incentive"]);
-      // Types that represent asset disposal (map to sell)
-      const SELL_TYPES = new Set(["sell","withdrawal"]);
-      // Types to skip entirely
-      const SKIP_TYPES = new Set(["deposit","margin_loan_repay","margin_loan_collateral_return","margin_loan_borrow","margin_loan_collateral_deposit","withdrawal_cancelled"]);
-
-      const txs = [];
-      for (const r of rows) {
-        const status = (r[iStatus] || "").trim();
-        if (status !== "Completed" && status !== "Distributed") continue;
-
-        const rawType = (r[iType] || "").toLowerCase().trim();
-        if (SKIP_TYPES.has(rawType)) continue;
-
-        const symbol = (r[iCurrency] || "").toUpperCase().trim();
-        // Skip EUR-only rows (e.g. EUR deposits)
-        if (!symbol || symbol === "EUR") continue;
-
-        const rawAmt = parseFloat(r[iAmount]) || 0;
-        const qty = Math.abs(rawAmt);
-        if (qty < 0.000000001) continue;
-
-        const quotePrice = parseFloat(r[iQuotePrice]) || 0;
-        const paidAmt = Math.abs(parseFloat(r[iPaidAmount]) || 0);
-        const total = paidAmt || (qty * quotePrice);
-
-        let type;
-        if (BUY_TYPES.has(rawType)) type = "buy";
-        else if (SELL_TYPES.has(rawType)) type = "sell";
-        else continue;
-
-        txs.push({
-          date: (r[iDate] || "").slice(0, 10),
-          type,
-          symbol,
-          isin: null,
-          name: symbol,
-          qty,
-          price: quotePrice,
-          amountEur: type === "buy" ? total : -total,
-          total,
-        });
-      }
-      return txs;
-    }
-  },
-  smartbroker: {
-    name: "Smartbroker+", color: "#00a4ef",
-    detect: (headers) => headers.some(h => /kundennummer|depotnummer|einstandskurs|marktkurs|stücke|kürzel/i.test(h)),
-    parse: (rows, headers) => {
-      const hi = k => headers.findIndex(h => new RegExp(k,"i").test(h));
-      const iISIN    = hi("isin");
-      const iKuerzel = hi("kürzel|kurzel");
-      const iName1   = hi("name 1|name1");
-      const iName2   = hi("name 2|name2");
-      const iKlasse  = hi("assetklasse");
-      const iQty     = hi("stücke|stucke");
-      const iAvg     = hi("einstandskurs pro|einstandskurs");
-      const iCurrent = hi("marktkurs pro|marktkurs");
-      const parseDE = s => {
-        if (!s) return 0;
-        return parseFloat(s.replace(/\./g,"").replace(",",".")) || 0;
-      };
-      const typeMap = {
-        "aktien": "stock", "etfs": "etf", "etf": "etf",
-        "derivate": "derivative", "fonds": "etf", "anleihen": "stock"
-      };
-      return rows.reduce((acc, r) => {
-        const isin    = (r[iISIN]    || "").trim();
-        const kuerzel = (r[iKuerzel] || "").trim();
-        const name1   = (r[iName1]   || "").trim();
-        const name2   = (r[iName2]   || "").trim();
-        const klasse  = (r[iKlasse]  || "").toLowerCase().trim();
-        const name = klasse === "derivate" && name2 ? name2 : (name1 || name2);
-        const qty     = parseDE(r[iQty]);
-        const avg     = parseDE(r[iAvg]);
-        const current = parseDE(r[iCurrent]);
-        if (!isin || !qty) return acc;
-        const symbol = isin;
-        const displaySymbol = (kuerzel && !isISIN(kuerzel)) ? kuerzel.toUpperCase() : null;
-        const rawType = typeMap[klasse] || "stock";
-        const knownTicker = ISIN_MAP[isin];
-        const type = inferType(knownTicker, isin, name, rawType);
-        const ex = acc.find(p => p.isin === isin || p.symbol === symbol);
-        if (ex) {
-          ex.avgPrice = (ex.avgPrice * ex.qty + avg * qty) / (ex.qty + qty);
-          ex.qty += qty;
-        } else {
-          acc.push({ symbol, displaySymbol, name, type, qty, avgPrice: avg, currentPrice: current, broker: "Smartbroker+", color: "#00a4ef", isin });
-        }
-        return acc;
-      }, []);
-    }
-  },
-  traderepublic: {
-    name: "Trade Republic", color: "#e63b2e",
-    detect: (headers) => headers.some(h => /isin|shares|share price|asset/i.test(h)),
-    parse: (rows, headers) => {
-      const h = k => headers.findIndex(h => new RegExp(k,"i").test(h));
-      const iAsset=h("asset|name|titel|security"), iQty=h("shares|amount|anzahl|qty|stück"), iPrice=h("price|kurs|avg"), iType=h("type|typ|status");
-      return rows.filter(r=>/buy|kauf/i.test(r[iType]||"")).reduce((acc,r)=>{
-        const symbol=(r[iAsset]||"").toUpperCase().trim().split(" ")[0];
-        if(!symbol) return acc;
-        const qty=parseFloat((r[iQty]||"").replace(",","."))||0;
-        const price=parseFloat((r[iPrice]||"").replace(",","."))||0;
-        const ex=acc.find(p=>p.symbol===symbol);
-        if(ex){ex.avgPrice=(ex.avgPrice*ex.qty+price*qty)/(ex.qty+qty);ex.qty+=qty;}
-        else acc.push({symbol,name:r[iAsset]||symbol,type:"stock",qty,avgPrice:price,currentPrice:price,broker:"Trade Republic",color:"#e63b2e"});
-        return acc;
-      },[]);
-    }
-  },
-  generic: {
-    name: "Generic CSV", color: "#7a8a98",
-    detect: () => true,
-    parse: (rows, headers) => {
-      const h = k => headers.findIndex(h => new RegExp(k,"i").test(h));
-      const iSymbol=h("symbol|ticker|asset|coin"), iName=h("name"), iQty=h("qty|quantity|amount|shares|stück"), iPrice=h("price|avg|kurs"), iType=h("type|typ");
-      return rows.reduce((acc,r)=>{
-        const symbol=(r[iSymbol]||"").toUpperCase().trim();
-        if(!symbol||symbol==="SYMBOL") return acc;
-        const qty=parseFloat((r[iQty]||"").replace(",","."))||0;
-        const price=parseFloat((r[iPrice]||"").replace(",","."))||0;
-        if(!qty||!price) return acc;
-        const rawT=/crypto|btc|eth|sol/i.test(r[iType]||symbol)?'crypto':'stock';
-        const type=inferType(symbol,'',r[iName]||'',rawT);
-        const ex=acc.find(p=>p.symbol===symbol);
-        if(ex){ex.avgPrice=(ex.avgPrice*ex.qty+price*qty)/(ex.qty+qty);ex.qty+=qty;}
-        else acc.push({symbol,name:r[iName]||symbol,type,qty,avgPrice:price,currentPrice:price,broker:"Generic",color:"#7a8a98"});
-        return acc;
-      },[]);
-    }
-  }
-};
-
-const ALLOC_COLORS_EXT = ["#00e5a0","#627eea","#f7931a","#9945ff","#f0b429","#76b900","#e84142","#4d9fff","#a78bfa","#ff4d6d"];
-
-// ISIN detection
-const isISIN = s => /^[A-Z]{2}[A-Z0-9]{9}[0-9]$/.test(s);
-
-// Known ISINs for instant resolution without API call
-const ISIN_MAP = {
-  "US0378331005":"AAPL","US5949181045":"MSFT","US02079K3059":"GOOGL",
-  "US0231351067":"AMZN","US30303M1027":"META","US88160R1014":"TSLA",
-  "US67066G1040":"NVDA","US46625H1005":"JPM","US38141G1040":"GS",
-  "US02209S1033":"AMD","US9197941076":"V","US69343P1057":"MA",
-  "IE00B4L5Y983":"IWDA","IE00B5BMR087":"CSPX","IE00BKM4GZ66":"EIMI",
-  "IE00B4JNQZ49":"IUFS","IE00B4KBBD01":"IUUS","IE00BYXYX521":"VWCE",
-  "IE00B3RBWM25":"VWRL","DE000A0S9GB0":"4GLD","DE000ETFL037":"EL4A",
-  "IE000AON7ET1":"ARKX","IE000YDOORK7":"XDWH","IE00BMFKG444":"XNAS",
-  "JE00BQRFDY49":"WZRD",
-};
-
-const ETF_TICKERS = new Set([
-  'SPY','QQQ','IVV','VTI','VOO','GLD','SLV','VEA','VWO','EFA','AGG','BND',
-  'LQD','TLT','IEF','XLF','XLK','XLE','XLV','XLI','XLU','XLP','XLB','XLRE',
-  'GDX','GDXJ','HYG','JNK','EEM','EWJ','EWG','EWU','EWC','EWA','EWH','EWZ',
-  'ARKK','ARKG','ARKW','ARKF','ARKQ','ARKX',
-  'VWCE','IWDA','CSPX','EIMI','VEUR','VWRL','EXS1','XDWD','XMAW','XDWH','XDWS',
-  'VNQ','VNQI','BIL','SHY','MUB','VTIP','SCHD','JEPI','QYLD','XYLD','RYLD',
-  'SQQQ','TQQQ','UVXY','VXX','SVXY','SPXS','SPXL','UPRO','TMF','TNA','TZA',
-  'HACK','CIBR','KWEB','CQQQ','MCHI','ASHR','FXI',
-  'IVV','IWM','IWF','IWD','IWB','IJH','IJR','IEV','IAU','IEFA','IEMG',
-]);
-const STOCK_TICKERS = new Set([
-  'AAPL','MSFT','GOOGL','GOOG','AMZN','META','NVDA','TSLA','NFLX',
-  'BABA','BIDU','JD','PDD','TCEHY','SHOP','COIN','HUBS','IRM',
-  'JPM','GS','BAC','WFC','V','MA','PYPL','SQ','TTD','NDAQ',
-  'KO','PEP','MCD','SBUX','NKE','DIS','AMGN','PFE','MRNA','JNJ',
-  'XOM','CVX','WMT','PG','HD','INTC','AMD','QCOM','AVGO','ORCL',
-  'CRM','ADBE','NOW','SNOW','UBER','LYFT','ABNB','DASH','SNAP','PINS',
-]);
-
-const TICKER_NAMES = {
-  "AAPL":"Apple","MSFT":"Microsoft","GOOGL":"Alphabet","AMZN":"Amazon",
-  "META":"Meta","TSLA":"Tesla","NVDA":"NVIDIA","ABNB":"Airbnb",
-  "BKNG":"Booking Holdings","SNOW":"Snowflake","SHOP":"Shopify",
-  "SQ":"Block","TTD":"Trade Desk","NFLX":"Netflix","NDAQ":"Nasdaq Inc",
-  "COIN":"Coinbase","SAP":"SAP SE","DBK":"Deutsche Bank",
-  "DTE":"Deutsche Telekom","SIE":"Siemens","ALV":"Allianz","BMW":"BMW",
-  "BAS":"BASF","VOW3":"Volkswagen","ASML":"ASML Holding",
-  "IWDA":"iShares Core MSCI World","CSPX":"iShares Core S&P 500",
-  "EIMI":"iShares Core MSCI EM","VEUR":"Vanguard FTSE Europe",
-  "VWCE":"Vanguard FTSE All-World","VWRL":"Vanguard FTSE All-World Dist",
-  "EXS1":"iShares Core DAX","XDWH":"Xtrackers MSCI World Health",
-  "XDWS":"Xtrackers MSCI World Swap","XMAW":"Xtrackers MSCI All World",
-  "XDWD":"Xtrackers MSCI World","EL4A":"Deka MSCI World",
-};
-
-const ISIN_TYPES = {
-  "IE":"etf","DE0009":"etf","DE000ETF":"etf","DE000EXS":"etf",
-  "DE000EL4":"etf","LU":"etf","FR0010":"etf",
-};
-
-function inferType(ticker, isin, name, rawType) {
-  const t = (ticker || '').toUpperCase();
-  const n = (name   || '').toLowerCase();
-  const i = (isin   || '').toUpperCase();
-  if (rawType === 'crypto') return 'crypto';
-  if (rawType === 'derivative') return 'derivative';
-  if (/derivat|warrant|zertifikat|knock.out|turbo|faktor/i.test(n)) return 'derivative';
-  if (STOCK_TICKERS.has(t)) return 'stock';
-  if (i.startsWith('IE') || i.startsWith('LU')) return 'etf';
-  if (/^DE000(ETF|EXS|EL4|A0S|A1J)/.test(i)) return 'etf';
-  if (i.startsWith('US')) {
-    if (ETF_TICKERS.has(t)) return 'etf';
-    return 'stock';
-  }
-  if (i.startsWith('DE') || i.startsWith('FR') || i.startsWith('NL') || i.startsWith('CH')) {
-    if (ETF_TICKERS.has(t)) return 'etf';
-    return 'stock';
-  }
-  if (ETF_TICKERS.has(t)) return 'etf';
-  if (/\betf\b|index fund|ishares|vanguard|xtrackers|amundi|lyxor|invesco|spdr|wisdomtree/i.test(n)) return 'etf';
-  return rawType || 'stock';
+// ── Smartbroker+ depot snapshot parser (hardcoded — known reliable German format) ──
+function isSmartbrokerDepot(headers) {
+  return headers.some(h => /kundennummer|depotnummer|einstandskurs|marktkurs|stücke|kürzel/i.test(h));
 }
-function guessTypeFromISIN(isin, ticker) { return inferType(ticker, isin, '', 'stock'); }
-
-async function resolveISINs(positions) {
-  const toResolve = positions.filter(p => isISIN(p.symbol));
-  if (!toResolve.length) return positions;
-  const resolved = positions.map(p => {
-    if (!isISIN(p.symbol)) return p;
-    const ticker = ISIN_MAP[p.symbol];
-    if (ticker) {
-      return {
-        ...p,
-        fmpTicker: ticker,
-        symbol: ticker,
-        name: (p.name && p.name !== p.symbol) ? p.name : (TICKER_NAMES[ticker] || ticker),
-        type: (p.type && p.type !== 'stock') ? p.type : guessTypeFromISIN(p.symbol, ticker),
-        isin: p.symbol,
-      };
-    }
-    return p;
-  });
-  const stillISIN = resolved.filter(p => isISIN(p.symbol));
-  if (stillISIN.length > 0) {
-    const pickTicker = (data, isin) => {
-      if (!Array.isArray(data) || !data.length) return null;
-      const isUSIsin = isin?.startsWith('US');
-      if (isUSIsin) {
-        return data.filter(d => !d.symbol?.includes('.')).sort((a,b)=>(b.marketCap||0)-(a.marketCap||0))[0]
-          || data.sort((a,b)=>(b.marketCap||0)-(a.marketCap||0))[0]
-          || data[0];
-      } else {
-        return data.find(d => d.symbol?.endsWith('.DE'))
-          || data.find(d => d.symbol?.endsWith('.F'))
-          || data.find(d => d.symbol?.endsWith('.AS') || d.symbol?.endsWith('.PA'))
-          || data.sort((a,b) => (b.marketCap||0)-(a.marketCap||0))[0]
-          || data[0];
-      }
-    };
-    const BATCH = 3;
-    const delay = ms => new Promise(r => setTimeout(r, ms));
-    for (let i = 0; i < stillISIN.length; i += BATCH) {
-      const batch = stillISIN.slice(i, i + BATCH);
-      await Promise.all(batch.map(async p => {
-        try {
-          const r = await fetch('/api/fmp?path=' + encodeURIComponent('/search-isin?isin=' + p.symbol));
-          if (!r.ok) return;
-          const data = await r.json();
-          const pick = pickTicker(data, p.symbol);
-          if (!pick?.symbol) return;
-          const idx = resolved.findIndex(q => q.symbol === p.symbol);
-          if (idx >= 0) {
-            const orig = resolved[idx];
-            resolved[idx] = {
-              ...orig,
-              fmpTicker: pick.symbol,
-              symbol: pick.symbol,
-              name: (orig.name && orig.name !== orig.symbol) ? orig.name : (pick.name || orig.name),
-              type: (orig.type && orig.type !== 'stock') ? orig.type : guessTypeFromISIN(p.symbol, pick.symbol),
-              isin: p.symbol,
-            };
-          }
-        } catch(e) {}
-      }));
-      if (i + BATCH < stillISIN.length) await delay(300);
-    }
-  }
-  return resolved;
+function parseSmartbrokerDepot(rows, headers) {
+  const hi = k => headers.findIndex(h => new RegExp(k,"i").test(h));
+  const iISIN=hi("isin"), iKuerzel=hi("kürzel|kurzel"), iName1=hi("name 1|name1"),
+        iName2=hi("name 2|name2"), iKlasse=hi("assetklasse"), iQty=hi("stücke|stucke"),
+        iAvg=hi("einstandskurs pro|einstandskurs"), iCurrent=hi("marktkurs pro|marktkurs");
+  const parseDE = s => s ? parseFloat(String(s).replace(/\./g,"").replace(",",".")) || 0 : 0;
+  const typeMap = { "aktien":"stock","etfs":"etf","etf":"etf","derivate":"derivative","fonds":"etf","anleihen":"stock" };
+  return rows.reduce((acc, r) => {
+    const isin=(r[iISIN]||"").trim(), kuerzel=(r[iKuerzel]||"").trim();
+    const name1=(r[iName1]||"").trim(), name2=(r[iName2]||"").trim();
+    const klasse=(r[iKlasse]||"").toLowerCase().trim();
+    const name = klasse==="derivate"&&name2 ? name2 : (name1||name2);
+    const qty=parseDE(r[iQty]), avg=parseDE(r[iAvg]), current=parseDE(r[iCurrent]);
+    if (!isin||!qty) return acc;
+    const displaySymbol = (kuerzel&&!isISIN(kuerzel)) ? kuerzel.toUpperCase() : null;
+    const type = inferType(ISIN_MAP[isin], isin, name, typeMap[klasse]||"stock");
+    const ex = acc.find(p=>p.isin===isin||p.symbol===isin);
+    if (ex) { ex.avgPrice=(ex.avgPrice*ex.qty+avg*qty)/(ex.qty+qty); ex.qty+=qty; }
+    else acc.push({ symbol:isin, displaySymbol, name, type, qty, avgPrice:avg, currentPrice:current, broker:"Smartbroker+", color:"#00a4ef", isin });
+    return acc;
+  }, []);
 }
 
-function parseCSV(text) {
-  const lines = text.trim().split(/\r?\n/);
-  const firstLine = lines[0];
-  const delim = (firstLine.split(";").length > firstLine.split(",").length) ? ";" : ",";
-  function parseLine(line) {
-    const cells = []; let cur = "", inQ = false;
-    for(let i=0;i<line.length;i++){
-      const ch=line[i];
-      if(ch==='"'){inQ=!inQ;}
-      else if(ch===delim&&!inQ){cells.push(cur.trim());cur="";}
-      else{cur+=ch;}
-    }
-    cells.push(cur.trim()); return cells;
-  }
-  const headers = parseLine(firstLine).map(h=>h.replace(/^"|"$/g,"").trim().toLowerCase());
-  const rows = lines.slice(1).filter(l=>l.trim()).map(l=>parseLine(l).map(c=>c.replace(/^"|"$/g,"").trim()));
-  return { headers, rows };
-}
-
-function detectBroker(headers) {
-  for (const [key, fmt] of Object.entries(BROKER_FORMATS)) {
-    if (key !== "generic" && fmt.detect(headers)) return key;
-  }
-  return "generic";
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ── LEARNED PARSER SYSTEM ────────────────────────────────────────────────────
@@ -1352,85 +1053,42 @@ function ImportModal({ onClose, onImport, existingPositions = [], existingTransa
       try { textContent = await readFileAsText(file); } catch(e) {}
     }
 
-    // ── Step 2: Try hardcoded broker parsers (CSV only) ───────────────────────
+    // ── Step 2: Smartbroker+ depot snapshot (hardcoded — reliable German format) ─
     if (textContent && fType === "csv") {
       try {
         const { headers, rows } = parseCSV(textContent);
 
-        // Smartbroker+ activity
+        // Smartbroker+ activity (transaction history)
         if (isSmartbrokerActivity(headers)) {
           const txs = parseSmartbrokerActivity(rows, headers);
           if (txs.length) {
             const dates = txs.map(t => t.date).sort();
             const net = txs.reduce((s,t) => s + (t.type==="buy" ? t.amountEur : -t.amountEur), 0);
             setTxData(txs);
-            setTxPreview({ count: txs.length, from: dates[0], to: dates[dates.length-1], net });
+            setTxPreview({ count: txs.length, from: dates[0], to: dates[dates.length-1], net, brokerName: "Smartbroker+" });
             setParseMethod("hardcoded");
             setStep("activity");
             return;
           }
         }
 
-        // Other known broker formats
-        const detected = detectBroker(headers);
-        const fmt = BROKER_FORMATS[detected];
-
-        if (detected !== "generic" && fmt.mode === "transactions") {
-          // Hardcoded transaction-format broker (e.g. Bitvavo history export)
-          const txs = fmt.parse(rows, headers);
-          if (txs.length > 0) {
-            const dates = txs.map(t => t.date).filter(Boolean).sort();
-            const net = txs.reduce((s,t) => s + (t.type==="buy" ? (t.total||0) : -(t.total||0)), 0);
-            setTxData(txs);
-            setTxPreview({ count: txs.length, from: dates[0], to: dates[dates.length-1], net, brokerName: fmt.name });
+        // Smartbroker+ depot snapshot (positions)
+        if (isSmartbrokerDepot(headers)) {
+          let parsed = parseSmartbrokerDepot(rows, headers).map((p,i) => ({
+            ...p, id: Date.now()+i, color: ALLOC_COLORS_EXT[i % ALLOC_COLORS_EXT.length]
+          }));
+          if (parsed.length > 0) {
+            setBroker("smartbroker");
             setParseMethod("hardcoded");
-            // Derive positions
-            const holdingMap = {};
-            for (const t of txs) {
-              const key = t.symbol || t.name;
-              if (!key) continue;
-              if (!holdingMap[key]) holdingMap[key] = { symbol: t.symbol||key, isin: t.isin||null, name: t.name||key, qty: 0, totalCost: 0 };
-              const h = holdingMap[key];
-              if (t.type === 'buy') { h.totalCost += t.total||0; h.qty += t.qty||0; }
-              else if (t.type === 'sell') {
-                if (h.qty > 0) {
-                  const frac = Math.min(t.qty||0, h.qty) / h.qty;
-                  h.totalCost *= (1 - frac);
-                  h.qty = Math.max(0, h.qty - (t.qty||0));
-                }
-              }
-            }
-            const dp = Object.values(holdingMap).filter(h=>h.qty>0.000001).map((h,i)=>({
-              id: Date.now()+i, symbol: h.symbol, isin: h.isin, name: h.name,
-              type: inferType(h.symbol, h.isin, h.name, 'crypto'),
-              qty: Math.round(h.qty*1e8)/1e8,
-              avgPrice: h.qty>0&&h.totalCost>0 ? h.totalCost/h.qty : 0,
-              currentPrice: h.qty>0&&h.totalCost>0 ? h.totalCost/h.qty : 0,
-              broker: fmt.name, color: ALLOC_COLORS_EXT[i % ALLOC_COLORS_EXT.length],
-            }));
-            setDerivedPositions(dp);
-            setStep("activity");
+            const hasISINs = parsed.some(p => isISIN(p.symbol));
+            if (hasISINs) { setStep("resolving"); parsed = await resolveISINs(parsed); }
+            setPreview(parsed);
+            setStep("preview");
             return;
           }
         }
 
-        let parsed = fmt.parse(rows, headers).map((p,i) => ({
-          ...p, id: Date.now()+i,
-          color: ALLOC_COLORS_EXT[i % ALLOC_COLORS_EXT.length]
-        }));
-
-        if (parsed.length > 0 && detected !== "generic") {
-          // Hardcoded broker matched confidently
-          setBroker(detected);
-          setParseMethod("hardcoded");
-          const hasISINs = parsed.some(p => isISIN(p.symbol));
-          if (hasISINs) { setStep("resolving"); parsed = await resolveISINs(parsed); }
-          setPreview(parsed);
-          setStep("preview");
-          return;
-        }
-
-        // ── Step 3: Try learned parsers (Supabase-backed, shared across all users) ──
+        // ── Step 3: Try learned parsers (Supabase-backed, free, instant) ──────
         const learned = await findLearnedParser(headers);
         if (learned) {
           try {
@@ -1442,6 +1100,28 @@ function ImportModal({ onClose, onImport, existingPositions = [], existingTransa
                 setTxData(txs);
                 setTxPreview({ count: txs.length, from: dates[0], to: dates[dates.length-1], net, isLearned: true, brokerName: learned.brokerName });
                 setParseMethod("learned");
+                // Derive positions from learned transaction parse
+                const hMap = {};
+                for (const t of txs) {
+                  const key = t.isin || t.symbol || t.name;
+                  if (!key) continue;
+                  if (!hMap[key]) hMap[key] = { symbol:t.symbol||key, isin:t.isin||null, name:t.name||key, qty:0, totalCost:0 };
+                  const h = hMap[key];
+                  if (t.type==='buy') { h.totalCost+=t.amountEur||0; h.qty+=t.qty||0; }
+                  else if (t.type==='sell' && h.qty>0) {
+                    const frac = Math.min(t.qty||0,h.qty)/h.qty;
+                    h.totalCost *= (1-frac); h.qty = Math.max(0,h.qty-(t.qty||0));
+                  }
+                }
+                const dp = Object.values(hMap).filter(h=>h.qty>0.000001).map((h,i)=>({
+                  id:Date.now()+i, symbol:h.isin&&isISIN(h.isin)?h.isin:h.symbol, isin:h.isin,
+                  name:h.name, type:inferType(h.symbol,h.isin,h.name,'stock'),
+                  qty:Math.round(h.qty*1e8)/1e8,
+                  avgPrice:h.qty>0&&h.totalCost>0?h.totalCost/h.qty:0,
+                  currentPrice:h.qty>0&&h.totalCost>0?h.totalCost/h.qty:0,
+                  broker:learned.brokerName, color:ALLOC_COLORS_EXT[i%ALLOC_COLORS_EXT.length],
+                }));
+                setDerivedPositions(dp);
                 setStep("activity");
                 return;
               }
@@ -1461,21 +1141,6 @@ function ImportModal({ onClose, onImport, existingPositions = [], existingTransa
             }
           } catch(e) {
             // Learned parser failed — fall through to AI
-          }
-        }
-
-        // ── Step 4: Generic CSV last resort before AI ────────────────────────
-        if (detected === "generic") {
-          const genericParsed = BROKER_FORMATS.generic.parse(rows, headers).map((p,i) => ({
-            ...p, id: Date.now()+i,
-            color: ALLOC_COLORS_EXT[i % ALLOC_COLORS_EXT.length]
-          }));
-          if (genericParsed.length > 0) {
-            setBroker("generic");
-            setParseMethod("hardcoded");
-            setPreview(genericParsed);
-            setStep("preview");
-            return;
           }
         }
       } catch(e) {
@@ -1638,7 +1303,6 @@ function ImportModal({ onClose, onImport, existingPositions = [], existingTransa
 
   const confidenceColor = c => c >= 0.85 ? "var(--green)" : c >= 0.6 ? "var(--gold)" : "var(--red)";
   const confidenceLabel = c => c >= 0.85 ? "High confidence" : c >= 0.6 ? "Review recommended" : "Low confidence";
-  const fmt2 = BROKER_FORMATS[broker];
   const quotaColor = remaining > 2 ? "var(--text2)" : remaining > 0 ? "var(--gold)" : "var(--red)";
   const quotaBarColor = remaining > 2 ? "var(--green)" : remaining > 0 ? "var(--gold)" : "var(--red)";
 
@@ -1780,7 +1444,7 @@ function ImportModal({ onClose, onImport, existingPositions = [], existingTransa
             <span>✓</span>
             <div>
               <div style={{ fontSize: 13, color: "var(--green)", fontWeight: 500 }}>
-                {fmt2?.name || "Generic CSV"} · {parseMethod === "hardcoded" ? "Instant parse" : "Parsed"}
+                {broker === "smartbroker" ? "Smartbroker+" : broker === "learned" ? (aiResult?.broker || "Known broker") : "Portfolio"} · {parseMethod === "hardcoded" ? "Instant parse" : parseMethod === "learned" ? "⚡ Instant" : "Parsed"}
               </div>
               <div className="mono" style={{ fontSize: 10, color: "var(--text2)" }}>
                 {fileName} · {preview.length} positions · no AI used
