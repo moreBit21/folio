@@ -723,6 +723,30 @@ const TICKER_NAMES = {
   "XDWD":"Xtrackers MSCI World","EL4A":"Deka MSCI World",
 };
 
+// CoinGecko ID map for common crypto symbols
+const CRYPTO_COIN_IDS = {
+  'BTC':'bitcoin','ETH':'ethereum','SOL':'solana','BNB':'binancecoin',
+  'XRP':'ripple','ADA':'cardano','AVAX':'avalanche-2','DOT':'polkadot',
+  'MATIC':'matic-network','LINK':'chainlink','UNI':'uniswap','ATOM':'cosmos',
+  'NEAR':'near','FTM':'fantom','ALGO':'algorand','XLM':'stellar',
+  'ICP':'internet-computer','FIL':'filecoin','HBAR':'hedera-hashgraph',
+  'VET':'vechain','SAND':'the-sandbox','MANA':'decentraland','AXS':'axie-infinity',
+  'AAVE':'aave','MKR':'maker','COMP':'compound-governance-token','CRV':'curve-dao-token',
+  'SNX':'havven','YFI':'yearn-finance','SUSHI':'sushi','1INCH':'1inch',
+  'LTC':'litecoin','BCH':'bitcoin-cash','ETC':'ethereum-classic','XMR':'monero',
+  'ZEC':'zcash','DASH':'dash','DOGE':'dogecoin','SHIB':'shiba-inu',
+  'CRO':'crypto-com-chain','FET':'fetch-ai','INJ':'injective-protocol',
+  'SEI':'sei-network','SUI':'sui','APT':'aptos','ARB':'arbitrum',
+  'OP':'optimism','IMX':'immutable-x','RNDR':'render-token','RENDER':'render-token',
+  'QNT':'quant-network','AERO':'aerodrome-finance','MORPHO':'morpho',
+  'PYTH':'pyth-network','W':'wormhole','PLUME':'plume',
+  'FLUX':'zelcash','ONDO':'ondo-finance',
+};
+
+function getCoinId(symbol) {
+  return CRYPTO_COIN_IDS[(symbol||'').toUpperCase()] || (symbol||'').toLowerCase();
+}
+
 function inferType(ticker, isin, name, rawType) {
   const t = (ticker || '').toUpperCase();
   const n = (name   || '').toLowerCase();
@@ -742,6 +766,81 @@ function inferType(ticker, isin, name, rawType) {
   return rawType || 'stock';
 }
 function guessTypeFromISIN(isin, ticker) { return inferType(ticker, isin, '', 'stock'); }
+
+async function resolveISINs(positions) {
+  const toResolve = positions.filter(p => isISIN(p.symbol));
+  if (!toResolve.length) return positions;
+  const resolved = positions.map(p => {
+    if (!isISIN(p.symbol)) return p;
+    const ticker = ISIN_MAP[p.symbol];
+    if (ticker) {
+      return { ...p, fmpTicker: ticker, symbol: ticker,
+        name: (p.name && p.name !== p.symbol) ? p.name : (TICKER_NAMES[ticker] || ticker),
+        type: (p.type && p.type !== 'stock') ? p.type : guessTypeFromISIN(p.symbol, ticker),
+        isin: p.symbol };
+    }
+    return p;
+  });
+  const stillISIN = resolved.filter(p => isISIN(p.symbol));
+  if (stillISIN.length > 0) {
+    const pickTicker = (data, isin) => {
+      if (!Array.isArray(data) || !data.length) return null;
+      const isUSIsin = isin?.startsWith('US');
+      if (isUSIsin) {
+        return data.filter(d => !d.symbol?.includes('.')).sort((a,b)=>(b.marketCap||0)-(a.marketCap||0))[0]
+          || data.sort((a,b)=>(b.marketCap||0)-(a.marketCap||0))[0] || data[0];
+      } else {
+        return data.find(d => d.symbol?.endsWith('.DE'))
+          || data.find(d => d.symbol?.endsWith('.F'))
+          || data.find(d => d.symbol?.endsWith('.AS') || d.symbol?.endsWith('.PA'))
+          || data.sort((a,b) => (b.marketCap||0)-(a.marketCap||0))[0] || data[0];
+      }
+    };
+    const BATCH = 3;
+    const delay = ms => new Promise(r => setTimeout(r, ms));
+    for (let i = 0; i < stillISIN.length; i += BATCH) {
+      const batch = stillISIN.slice(i, i + BATCH);
+      await Promise.all(batch.map(async p => {
+        try {
+          const r = await fetch('/api/fmp?path=' + encodeURIComponent('/search-isin?isin=' + p.symbol));
+          if (!r.ok) return;
+          const data = await r.json();
+          const pick = pickTicker(data, p.symbol);
+          if (!pick?.symbol) return;
+          const idx = resolved.findIndex(q => q.symbol === p.symbol);
+          if (idx >= 0) {
+            const orig = resolved[idx];
+            resolved[idx] = { ...orig, fmpTicker: pick.symbol, symbol: pick.symbol,
+              name: (orig.name && orig.name !== orig.symbol) ? orig.name : (pick.name || orig.name),
+              type: (orig.type && orig.type !== 'stock') ? orig.type : guessTypeFromISIN(p.symbol, pick.symbol),
+              isin: p.symbol };
+          }
+        } catch(e) {}
+      }));
+      if (i + BATCH < stillISIN.length) await delay(300);
+    }
+  }
+  return resolved;
+}
+
+function parseCSV(text) {
+  const lines = text.trim().split(/\r?\n/);
+  const firstLine = lines[0];
+  const delim = (firstLine.split(";").length > firstLine.split(",").length) ? ";" : ",";
+  function parseLine(line) {
+    const cells = []; let cur = "", inQ = false;
+    for(let i=0;i<line.length;i++){
+      const ch=line[i];
+      if(ch==='"'){inQ=!inQ;}
+      else if(ch===delim&&!inQ){cells.push(cur.trim());cur="";}
+      else{cur+=ch;}
+    }
+    cells.push(cur.trim()); return cells;
+  }
+  const headers = parseLine(firstLine).map(h=>h.replace(/^"|"$/g,"").trim().toLowerCase());
+  const rows = lines.slice(1).filter(l=>l.trim()).map(l=>parseLine(l).map(c=>c.replace(/^"|"$/g,"").trim()));
+  return { headers, rows };
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ── LEARNED PARSER SYSTEM ────────────────────────────────────────────────────
@@ -5091,6 +5190,111 @@ function EtfOverview({ pos }) {
   );
 }
 
+function CryptoOverview({ pos }) {
+  const [mkt, setMkt] = useState(null);
+  const coinId = pos.coinId || pos.symbol?.toLowerCase();
+
+  useEffect(() => {
+    if (!coinId) return;
+    fetch(`https://api.coingecko.com/api/v3/coins/${coinId}?localization=false&tickers=false&community_data=false&developer_data=false`)
+      .then(r => r.json())
+      .then(d => setMkt(d))
+      .catch(() => {});
+  }, [coinId]);
+
+  const fmt = (v, decimals=2) => v == null ? '—' : '€' + Number(v).toLocaleString('de-DE', {minimumFractionDigits: decimals, maximumFractionDigits: decimals});
+  const fmtB = v => {
+    if (v == null) return '—';
+    if (v >= 1e12) return '€' + (v/1e12).toFixed(2) + 'T';
+    if (v >= 1e9)  return '€' + (v/1e9).toFixed(2) + 'B';
+    if (v >= 1e6)  return '€' + (v/1e6).toFixed(1) + 'M';
+    return '€' + v.toFixed(0);
+  };
+  const fmtPct = v => v == null ? '—' : (v >= 0 ? '+' : '') + v.toFixed(2) + '%';
+  const pctColor = v => v == null ? 'var(--text2)' : v >= 0 ? 'var(--green)' : 'var(--red)';
+
+  const md = mkt?.market_data;
+  const ath = md?.ath?.eur;
+  const athPct = md?.ath_change_percentage?.eur;
+  const atl = md?.atl?.eur;
+  const rank = mkt?.market_cap_rank;
+  const supply = md?.circulating_supply;
+  const maxSupply = md?.max_supply;
+  const vol24h = md?.total_volume?.eur;
+  const mktCap = md?.market_cap?.eur;
+  const change7d = md?.price_change_percentage_7d;
+  const change30d = md?.price_change_percentage_30d;
+  const change1y = md?.price_change_percentage_1y;
+
+  return (
+    <div>
+      {/* Market stats grid */}
+      <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:10,marginBottom:16}}>
+        {[
+          {l:'MARKET CAP', v: fmtB(mktCap)},
+          {l:'24H VOLUME',  v: fmtB(vol24h)},
+          {l:'CMC RANK',    v: rank ? '#' + rank : '—'},
+          {l:'7D CHANGE',   v: fmtPct(change7d),  c: pctColor(change7d)},
+          {l:'30D CHANGE',  v: fmtPct(change30d), c: pctColor(change30d)},
+          {l:'1Y CHANGE',   v: fmtPct(change1y),  c: pctColor(change1y)},
+          {l:'ALL-TIME HIGH', v: fmt(ath)},
+          {l:'FROM ATH',    v: fmtPct(athPct),    c: pctColor(athPct)},
+          {l:'ALL-TIME LOW', v: fmt(atl)},
+        ].map(({l,v,c}) => (
+          <div key={l} className="card" style={{padding:'14px 16px'}}>
+            <div className="mono" style={{fontSize:8,color:'var(--text3)',letterSpacing:'0.1em',marginBottom:5}}>{l}</div>
+            <div className="mono" style={{fontSize:13,fontWeight:600,color:c||'var(--text)'}}>{v}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Supply info */}
+      {supply != null && (
+        <div className="card" style={{padding:'14px 16px',marginBottom:16}}>
+          <div className="mono" style={{fontSize:9,color:'var(--text3)',letterSpacing:'0.1em',marginBottom:8}}>SUPPLY</div>
+          <div style={{display:'flex',justifyContent:'space-between',marginBottom:6}}>
+            <span style={{fontSize:12,color:'var(--text2)'}}>Circulating</span>
+            <span className="mono" style={{fontSize:12}}>{Number(supply).toLocaleString('de-DE',{maximumFractionDigits:0})}</span>
+          </div>
+          {maxSupply && <>
+            <div style={{display:'flex',justifyContent:'space-between',marginBottom:8}}>
+              <span style={{fontSize:12,color:'var(--text2)'}}>Max supply</span>
+              <span className="mono" style={{fontSize:12}}>{Number(maxSupply).toLocaleString('de-DE',{maximumFractionDigits:0})}</span>
+            </div>
+            <div style={{background:'var(--surface2)',borderRadius:4,height:6,overflow:'hidden'}}>
+              <div style={{height:'100%',background:'var(--green)',borderRadius:4,width:`${Math.min(100,(supply/maxSupply)*100).toFixed(1)}%`}}/>
+            </div>
+            <div className="mono" style={{fontSize:9,color:'var(--text3)',marginTop:4,textAlign:'right'}}>
+              {((supply/maxSupply)*100).toFixed(1)}% mined
+            </div>
+          </>}
+        </div>
+      )}
+
+      {/* Description */}
+      {mkt?.description?.en && (
+        <div className="card" style={{padding:'14px 16px'}}>
+          <div className="mono" style={{fontSize:9,color:'var(--text3)',letterSpacing:'0.1em',marginBottom:8}}>ABOUT</div>
+          <div style={{fontSize:12,color:'var(--text2)',lineHeight:1.6}}>
+            {mkt.description.en.replace(/<[^>]+>/g,'').slice(0, 400)}{mkt.description.en.length > 400 ? '…' : ''}
+          </div>
+        </div>
+      )}
+
+      {!mkt && coinId && (
+        <div className="card" style={{padding:24,textAlign:'center'}}>
+          <span className="mono shimmer" style={{fontSize:12,color:'var(--text3)'}}>⟳ Loading market data…</span>
+        </div>
+      )}
+      {!coinId && (
+        <div className="card" style={{padding:24,color:'var(--text3)',fontSize:12,textAlign:'center'}}>
+          No CoinGecko ID set for this position. Add coinId to enable market data.
+        </div>
+      )}
+    </div>
+  );
+}
+
 function StockDetail({ pos, onBack, transactions }) {
   const [data, setData]     = useState(null);
   const [loading, setLoading] = useState(true);
@@ -5101,7 +5305,7 @@ function StockDetail({ pos, onBack, transactions }) {
   const ticker = pos.fmpTicker || ISIN_MAP[pos.isin] || pos.symbol;
 
   useEffect(() => {
-    if (pos.type === 'etf') { setData({}); setLoading(false); return; }
+    if (pos.type === 'etf' || pos.type === 'crypto') { setData({}); setLoading(false); return; }
     setLoading(true); setError(null); setData(null);
 
     // If ticker is still a raw ISIN, resolve it first via FMP search-isin
@@ -5432,7 +5636,10 @@ function StockDetail({ pos, onBack, transactions }) {
 
       {/* ── Tabs ── */}
       <div style={{display:'flex',gap:6,marginBottom:20}}>
-        {[['overview','Overview'],['charts','Charts'],['financials','Financials'],['ratios','Ratios'],['transactions','Transactions']].map(([id,label])=>(
+        {(pos.type === 'crypto'
+          ? [['overview','Overview'],['charts','Charts'],['transactions','Transactions']]
+          : [['overview','Overview'],['charts','Charts'],['financials','Financials'],['ratios','Ratios'],['transactions','Transactions']]
+        ).map(([id,label])=>(
           <button key={id} className="btn" onClick={()=>setTab(id)}
             style={{fontSize:11,padding:'5px 14px',
               ...(tab===id?{background:'var(--green-dim)',color:'var(--green)',borderColor:'rgba(0,229,160,0.3)'}:{})}}>
@@ -5453,8 +5660,10 @@ function StockDetail({ pos, onBack, transactions }) {
 
         {/* ══ OVERVIEW TAB ══ */}
         {tab==='overview' && (<>
-          {/* ETF: show ETF-specific overview instead of scorecard */}
-          {pos.type === 'etf' ? (
+          {/* Crypto: show market data instead of fundamentals */}
+          {pos.type === 'crypto' ? (
+            <CryptoOverview pos={pos} />
+          ) : pos.type === 'etf' ? (
             <EtfOverview pos={pos} />
           ) : (<>
           {/* ── Possible Deal badge ── */}
@@ -5597,7 +5806,8 @@ function StockDetail({ pos, onBack, transactions }) {
               </div>
             </div>
           )}
-          </>)}  {/* end non-ETF scorecard */}
+          </>)}  {/* end stock scorecard */}
+          )}  {/* end crypto/etf/stock branch */}
         </>)}
 
         {/* ══ CHARTS TAB ══ */}
@@ -7202,15 +7412,15 @@ export default function App() {
       } catch(e){}
 
       // Crypto: CoinGecko
-      const cryptoPos = cur.filter(p=>p.type==='crypto'&&p.coinId);
+      const cryptoPos = cur.filter(p=>p.type==='crypto'&&(p.coinId||p.symbol));
       if(cryptoPos.length){
-        const ids=[...new Set(cryptoPos.map(p=>p.coinId))].join(',');
+        const ids=[...new Set(cryptoPos.map(p=>p.coinId||getCoinId(p.symbol)))].join(',');
         try {
           const cg = await fetch('https://api.coingecko.com/api/v3/simple/price?ids='+ids+'&vs_currencies=eur&include_24hr_change=true').then(r=>r.json());
-          setPositions(prev=>prev.map(p=>p.type==='crypto'&&p.coinId&&cg[p.coinId]?.eur?{
+          setPositions(prev=>prev.map(p=>p.type==='crypto'&&(p.coinId||p.symbol)&&cg[p.coinId||getCoinId(p.symbol)]?.eur?{
             ...p,
-            currentPrice:cg[p.coinId].eur,
-            dailyChange:cg[p.coinId]?.eur_24h_change??null
+            currentPrice:cg[p.coinId||getCoinId(p.symbol)].eur,
+            dailyChange:cg[p.coinId||getCoinId(p.symbol)]?.eur_24h_change??null
           }:p));
         } catch(e){}
       }
@@ -8267,7 +8477,7 @@ export default function App() {
         if(imported?.type==="transactions"){
           const incoming = imported.data;
           const mode = imported.mode || "replace";
-          const txKey = t=>`${(t.date||"").slice(0,10)}|${t.isin||t.symbol||""}|${Math.round((t.amountEur||t.amount||0)*100)}`;
+          const txKey = t=>`${(t.date||"").slice(0,10)}|${t.isin||t.symbol||""}|${Math.round((t.amountEur||t.total||t.amount||0)*100)}`;
           let finalTxs;
           if(mode==="append"){
             const existingKeys = new Set(transactions.map(txKey));
@@ -8277,27 +8487,59 @@ export default function App() {
             finalTxs = incoming;
           }
           setTransactions(finalTxs);
-          // Apply derived positions if provided (transaction-only brokers)
+          // Re-derive positions from the full combined transaction set
           if(imported.derivedPositions?.length > 0){
-            const derived = imported.derivedPositions;
-            if(mode === "append" && positions.length > 0){
-              // Merge: update qty/avgPrice for existing, add new
-              const merged = [...positions];
-              derived.forEach(p => {
-                const sym = (p.symbol||"").toUpperCase();
-                const idx = merged.findIndex(m =>
-                  (p.isin && m.isin === p.isin) ||
-                  (sym && (m.symbol||"").toUpperCase() === sym)
+            // Always recalculate from scratch using ALL transactions
+            // This ensures append mode reflects the true current state
+            const allTxs = finalTxs;
+            const hMap = {};
+            for (const t of allTxs) {
+              const key = t.isin || t.symbol || t.name;
+              if (!key) continue;
+              if (!hMap[key]) hMap[key] = {
+                symbol: t.symbol || key, isin: t.isin || null,
+                name: t.name || t.symbol || key, qty: 0, totalCost: 0,
+                type: t.isin ? 'stock' : 'crypto',
+              };
+              const h = hMap[key];
+              if (t.type === 'buy') {
+                h.totalCost += t.amountEur || t.total || 0;
+                h.qty += t.qty || 0;
+              } else if (t.type === 'sell' && h.qty > 0) {
+                const frac = Math.min(t.qty || 0, h.qty) / h.qty;
+                h.totalCost *= (1 - frac);
+                h.qty = Math.max(0, h.qty - (t.qty || 0));
+              }
+            }
+            // Merge with existing non-crypto positions (keep stocks from Smartbroker etc)
+            const cryptoSymbols = new Set(Object.values(hMap).filter(h=>h.type==='crypto').map(h=>h.symbol));
+            const existingNonCrypto = positions.filter(p => p.type !== 'crypto' && !cryptoSymbols.has(p.symbol));
+            const newDerived = Object.values(hMap)
+              .filter(h => h.qty > 0.000001)
+              .map((h, i) => {
+                // Preserve existing position data (color, coinId etc) if available
+                const existing = positions.find(p =>
+                  (h.isin && p.isin === h.isin) ||
+                  (p.symbol || '').toUpperCase() === (h.symbol || '').toUpperCase()
                 );
-                if(idx >= 0){
-                  merged[idx] = { ...merged[idx], qty: p.qty, avgPrice: p.avgPrice, currentPrice: p.avgPrice };
-                } else {
-                  merged.push(p);
-                }
+                return {
+                  id: existing?.id || Date.now() + i,
+                  symbol: h.symbol,
+                  isin: h.isin || null,
+                  name: existing?.name || h.name,
+                  type: existing?.type || inferType(h.symbol, h.isin, h.name, h.type),
+                  qty: Math.round(h.qty * 1e8) / 1e8,
+                  avgPrice: h.qty > 0 && h.totalCost > 0 ? h.totalCost / h.qty : 0,
+                  currentPrice: existing?.currentPrice || (h.qty > 0 && h.totalCost > 0 ? h.totalCost / h.qty : 0),
+                  broker: existing?.broker || imported.broker || 'Imported',
+                  color: existing?.color || ALLOC_COLORS_EXT[i % ALLOC_COLORS_EXT.length],
+                  coinId: existing?.coinId || (inferType(h.symbol, h.isin, h.name, h.type) === 'crypto' ? getCoinId(h.symbol) : null),
+                };
               });
-              setPositions(merged);
+            if (mode === 'append') {
+              setPositions([...existingNonCrypto, ...newDerived]);
             } else {
-              setPositions(derived);
+              setPositions(newDerived);
             }
             setTimeout(fetchPrices, 100);
           }
