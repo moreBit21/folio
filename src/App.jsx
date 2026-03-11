@@ -2286,6 +2286,29 @@ const PRESETS = [
   { label: 'Low Beta',       icon: '🛡️', filters: { betaMax:'0.8', marketCapMin:'1000000000', sector:'All' } },
 ];
 
+// Deal signal helper — module-level so available to all components
+function isFundamentallyImproving(fund) {
+  try {
+    const yrs = Array.isArray(fund?.byYear) ? fund.byYear : null;
+    if (!yrs || yrs.length < 2) {
+      // Fall back to growth rate fields if byYear unavailable
+      return (fund?.ttmRevGrowth > 0.03 && fund?.ttmEpsGrowth > 0) ||
+             (fund?.fy1RevGrowth > 0.05 && fund?.fy1EpsGrowth > 0.05);
+    }
+    const last = yrs[yrs.length - 1] || {};
+    const prev = yrs[yrs.length - 2] || {};
+    // Revenue must be growing year-over-year
+    const revGrowing = last.revenue && prev.revenue && last.revenue > prev.revenue;
+    // EPS growing, or at least positive with margins not collapsing
+    const epsGrowing = last.eps != null && prev.eps != null && last.eps > prev.eps;
+    const epsPositive = last.eps != null && last.eps > 0;
+    const marginOk = last.netMargin != null && prev.netMargin != null
+      ? last.netMargin >= prev.netMargin * 0.88
+      : true;
+    return !!(revGrowing && (epsGrowing || (epsPositive && marginOk)));
+  } catch { return false; }
+}
+
 function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
   const [filters, setFilters] = React.useState({
     sector: 'All', exchange: 'All',
@@ -2416,34 +2439,6 @@ function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
     } finally {
       setLoadingFund(prev => ({ ...prev, [symbol]: false }));
     }
-  };
-
-
-  // Deal signal: checks last 2-3 years of byYear for genuine upward fundamental trend
-  const isFundamentallyImproving = (fund) => {
-    const yrs = fund?.byYear;
-    if (!yrs || yrs.length < 2) {
-      // Fall back to growth rate fields if byYear unavailable
-      return (fund?.ttmRevGrowth > 0.03 && fund?.ttmEpsGrowth > 0) ||
-             (fund?.fy1RevGrowth > 0.05 && fund?.fy1EpsGrowth > 0.05);
-    }
-    const last = yrs[yrs.length - 1];
-    const prev = yrs[yrs.length - 2];
-    const older = yrs.length >= 3 ? yrs[yrs.length - 3] : null;
-    // Revenue must be growing
-    const revGrowing = last.revenue && prev.revenue && last.revenue > prev.revenue;
-    // EPS or net income trending up (at least last year positive, not collapsing)
-    const epsGrowing = last.eps != null && prev.eps != null && last.eps > prev.eps;
-    const epsPositive = last.eps != null && last.eps > 0;
-    // Net margin: stable or improving (not deteriorating significantly)
-    const marginOk = last.netMargin != null && prev.netMargin != null
-      ? last.netMargin >= prev.netMargin * 0.88  // allow up to 12% margin compression
-      : true; // no data = don't penalise
-    // Bonus: 2-year revenue trend (older → last is up)
-    const revTrend2yr = older?.revenue && last.revenue > older.revenue;
-    // Must have: revenue growing AND (eps growing OR positive eps with stable margin)
-    const fundOk = revGrowing && (epsGrowing || (epsPositive && marginOk));
-    return fundOk;
   };
 
   // Sort + health filter
@@ -5188,6 +5183,19 @@ function EtfOverview({ pos }) {
       </div>
     </div>
   );
+}
+
+class StockDetailBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { err: null }; }
+  static getDerivedStateFromError(e) { return { err: e.message + '\n' + e.stack?.split('\n').slice(0,5).join('\n') }; }
+  render() {
+    if (this.state.err) return (
+      <div style={{padding:24,color:'var(--red)',fontFamily:'monospace',fontSize:11,whiteSpace:'pre-wrap',background:'var(--surface)',borderRadius:8,margin:16}}>
+        <strong>StockDetail crashed:</strong>{'\n'}{this.state.err}
+      </div>
+    );
+    return this.props.children;
+  }
 }
 
 function StockDetail({ pos, onBack, transactions }) {
@@ -8294,12 +8302,12 @@ export default function App() {
             </div>
             {/* StockDetail overlaid when coming from screener */}
             {nav==="stock" && prevNav==="screener" && selectedPos && (
-              <StockDetail pos={selectedPos} onBack={()=>{setNav('screener');setSelectedPos(null);}} transactions={transactions}/>
+              <StockDetailBoundary><StockDetail pos={selectedPos} onBack={()=>{setNav('screener');setSelectedPos(null);}} transactions={transactions}/></StockDetailBoundary>
             )}
           </div>
           {/* StockDetail for all other navigation sources */}
           {nav==="stock" && prevNav!=="screener" && selectedPos && (
-            <StockDetail pos={selectedPos} onBack={()=>{setNav(prevNav||'dashboard');setSelectedPos(null);}} transactions={transactions}/>
+            <StockDetailBoundary><StockDetail pos={selectedPos} onBack={()=>{setNav(prevNav||'dashboard');setSelectedPos(null);}} transactions={transactions}/></StockDetailBoundary>
           )}
           {nav==="compare"&&<CompareView/>}
           {nav==="news"&&<NewsFeed positions={positions}/> }
