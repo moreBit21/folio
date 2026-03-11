@@ -1094,6 +1094,7 @@ function ImportModal({ onClose, onImport, existingPositions = [], existingTransa
   const [dragging, setDragging] = useState(false);
   const [parseMethod, setParseMethod] = useState(""); // "hardcoded"|"learned"|"ai"
   const [aiResult, setAiResult] = useState(null);
+  const [derivedPositions, setDerivedPositions] = useState([]);
   const [importMode, setImportMode] = useState(getStoredImportMode);
   const remaining = getRemainingImports();
   const learnedCount = getLearnedParserCount();
