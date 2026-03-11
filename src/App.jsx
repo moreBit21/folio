@@ -2420,7 +2420,7 @@ function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
   const filtered = results.filter(r => {
     const f = fundCache[r.symbol];
     if (filters.healthMin > 0) {
-      if (f == null) return true; // include if not loaded yet
+      if (f == null) return false; // exclude until loaded — avoids inflated count
       if ((f.score ?? 0) < filters.healthMin) return false;
     }
     if (filters.pegMax) {
@@ -2437,16 +2437,15 @@ function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
     }
     if (filters.dealOnly) {
       const fund = fundCache[r.symbol];
-      if (fund) {
-        const dp = fund.curPrice ?? r.price;
-        const priceTrendDown = dp != null
-          && (fund.priceAvg50 != null && dp < fund.priceAvg50)   // below 50d MA
-          && (fund.yearHigh != null && dp < fund.yearHigh * 0.80); // AND >20% off 52w high
-        const fundStrong = (fund.score ?? 0) >= 55
-          && (fund.ttmRevGrowth > 0 || fund.fy1RevGrowth > 0)
-          && (fund.ttmEpsGrowth > 0 || fund.fy1EpsGrowth > 0);
-        if (!priceTrendDown || !fundStrong) return false;
-      }
+      if (!fund) return false; // exclude until loaded
+      const dp = fund.curPrice ?? r.price;
+      const priceTrendDown = dp != null
+        && (fund.priceAvg50 != null && dp < fund.priceAvg50)   // below 50d MA
+        && (fund.yearHigh != null && dp < fund.yearHigh * 0.80); // AND >20% off 52w high
+      const fundStrong = (fund.score ?? 0) >= 55
+        && (fund.ttmRevGrowth > 0 || fund.fy1RevGrowth > 0)
+        && (fund.ttmEpsGrowth > 0 || fund.fy1EpsGrowth > 0);
+      if (!priceTrendDown || !fundStrong) return false;
     }
     return true;
   });
@@ -5512,6 +5511,38 @@ function StockDetail({ pos, onBack, transactions }) {
           {pos.type === 'etf' ? (
             <EtfOverview pos={pos} />
           ) : (<>
+          {/* ── Possible Deal badge ── */}
+          {(() => {
+            const dp = data?.currentPrice;
+            const avg50 = data?.priceAvg50;
+            const high  = data?.yearHigh;
+            const priceTrendDown = dp != null
+              && (avg50 != null && dp < avg50)
+              && (high  != null && dp < high * 0.80);
+            const fundStrong = overallScore != null && overallScore >= 55
+              && (data?.ttmRevGrowth > 0 || data?.fy1RevGrowth > 0)
+              && (data?.ttmEpsGrowth > 0 || data?.fy1EpsGrowth > 0);
+            if (!priceTrendDown || !fundStrong) return null;
+            return (
+              <div className="card" style={{padding:'14px 18px',marginBottom:12,
+                borderColor:'rgba(0,229,160,0.3)',background:'rgba(0,229,160,0.06)',
+                display:'flex',alignItems:'center',gap:12}}>
+                <span style={{fontSize:22}}>🎯</span>
+                <div>
+                  <div className="mono" style={{fontSize:11,fontWeight:700,color:'var(--green)',
+                    letterSpacing:'0.08em',marginBottom:3}}>POSSIBLE DEAL</div>
+                  <div style={{fontSize:11,color:'var(--text2)',lineHeight:1.5}}>
+                    Fundamentals trending up while the stock is{' '}
+                    <span className="mono" style={{color:'var(--gold)'}}>
+                      {high ? Math.round((1 - dp/high)*100) : '—'}% below its 52w high
+                    </span>
+                    {avg50 ? <> and trading below its 50-day MA (${avg50.toFixed(2)})</> : ''}.
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
           {/* ── Overall Health Score ── */}
           {overallScore != null && (
             <div className="card" style={{padding:'14px 18px',marginBottom:12,
