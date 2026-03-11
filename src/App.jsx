@@ -644,21 +644,64 @@ function isSmartbrokerActivity(headers) {
 const BROKER_FORMATS = {
   bitvavo: {
     name: "Bitvavo", color: "#1a6aff",
-    detect: (headers) => headers.some(h => /market|side|amount|currency/i.test(h)),
+    // Detects "Vollständige Transaktionshistorie" export (Timezone,Date,Time,Type,Currency,Amount,...)
+    detect: (headers) => headers.some(h => /timezone/i.test(h)) && headers.some(h => /^type$/i.test(h)) && headers.some(h => /^currency$/i.test(h)),
+    mode: "transactions",
     parse: (rows, headers) => {
-      const h = k => headers.findIndex(h => new RegExp(k,"i").test(h));
-      const iMarket=h("market"), iSide=h("side|type"), iAmt=h("^amount"), iPrice=h("price"), iDate=h("date|time");
-      return rows.filter(r=>r[iSide]?.toLowerCase()==="buy").reduce((acc,r)=>{
-        const parts = (r[iMarket]||"").split("-");
-        const symbol = parts[0]?.toUpperCase();
-        if (!symbol) return acc;
-        const qty = parseFloat(r[iAmt])||0;
-        const price = parseFloat(r[iPrice])||0;
-        const ex = acc.find(p=>p.symbol===symbol);
-        if (ex) { ex.avgPrice=(ex.avgPrice*ex.qty+price*qty)/(ex.qty+qty); ex.qty+=qty; }
-        else acc.push({symbol,name:symbol,type:"crypto",qty,avgPrice:price,currentPrice:price,broker:"Bitvavo",color:"#1a6aff"});
-        return acc;
-      },[]);
+      const hi = k => headers.findIndex(h => new RegExp(k, "i").test(h));
+      const iDate = hi("^date$");
+      const iType = hi("^type$");
+      const iCurrency = hi("^currency$");
+      const iAmount = hi("^amount$");
+      const iQuotePrice = hi("quote price");
+      const iPaidAmount = hi("received.*paid amount|paid amount");
+      const iStatus = hi("^status$");
+
+      // Types that represent asset acquisition (map to buy)
+      const BUY_TYPES = new Set(["buy","staking","rebate","affiliate","fixed_staking","campaign_new_user_incentive"]);
+      // Types that represent asset disposal (map to sell)
+      const SELL_TYPES = new Set(["sell","withdrawal"]);
+      // Types to skip entirely
+      const SKIP_TYPES = new Set(["deposit","margin_loan_repay","margin_loan_collateral_return","margin_loan_borrow","margin_loan_collateral_deposit","withdrawal_cancelled"]);
+
+      const txs = [];
+      for (const r of rows) {
+        const status = (r[iStatus] || "").trim();
+        if (status !== "Completed" && status !== "Distributed") continue;
+
+        const rawType = (r[iType] || "").toLowerCase().trim();
+        if (SKIP_TYPES.has(rawType)) continue;
+
+        const symbol = (r[iCurrency] || "").toUpperCase().trim();
+        // Skip EUR-only rows (e.g. EUR deposits)
+        if (!symbol || symbol === "EUR") continue;
+
+        const rawAmt = parseFloat(r[iAmount]) || 0;
+        const qty = Math.abs(rawAmt);
+        if (qty < 0.000000001) continue;
+
+        const quotePrice = parseFloat(r[iQuotePrice]) || 0;
+        const paidAmt = Math.abs(parseFloat(r[iPaidAmount]) || 0);
+        const total = paidAmt || (qty * quotePrice);
+
+        let type;
+        if (BUY_TYPES.has(rawType)) type = "buy";
+        else if (SELL_TYPES.has(rawType)) type = "sell";
+        else continue;
+
+        txs.push({
+          date: (r[iDate] || "").slice(0, 10),
+          type,
+          symbol,
+          isin: null,
+          name: symbol,
+          qty,
+          price: quotePrice,
+          amountEur: type === "buy" ? total : -total,
+          total,
+        });
+      }
+      return txs;
     }
   },
   smartbroker: {
@@ -1331,6 +1374,46 @@ function ImportModal({ onClose, onImport, existingPositions = [], existingTransa
         // Other known broker formats
         const detected = detectBroker(headers);
         const fmt = BROKER_FORMATS[detected];
+
+        if (detected !== "generic" && fmt.mode === "transactions") {
+          // Hardcoded transaction-format broker (e.g. Bitvavo history export)
+          const txs = fmt.parse(rows, headers);
+          if (txs.length > 0) {
+            const dates = txs.map(t => t.date).filter(Boolean).sort();
+            const net = txs.reduce((s,t) => s + (t.type==="buy" ? (t.total||0) : -(t.total||0)), 0);
+            setTxData(txs);
+            setTxPreview({ count: txs.length, from: dates[0], to: dates[dates.length-1], net, brokerName: fmt.name });
+            setParseMethod("hardcoded");
+            // Derive positions
+            const holdingMap = {};
+            for (const t of txs) {
+              const key = t.symbol || t.name;
+              if (!key) continue;
+              if (!holdingMap[key]) holdingMap[key] = { symbol: t.symbol||key, isin: t.isin||null, name: t.name||key, qty: 0, totalCost: 0 };
+              const h = holdingMap[key];
+              if (t.type === 'buy') { h.totalCost += t.total||0; h.qty += t.qty||0; }
+              else if (t.type === 'sell') {
+                if (h.qty > 0) {
+                  const frac = Math.min(t.qty||0, h.qty) / h.qty;
+                  h.totalCost *= (1 - frac);
+                  h.qty = Math.max(0, h.qty - (t.qty||0));
+                }
+              }
+            }
+            const dp = Object.values(holdingMap).filter(h=>h.qty>0.000001).map((h,i)=>({
+              id: Date.now()+i, symbol: h.symbol, isin: h.isin, name: h.name,
+              type: inferType(h.symbol, h.isin, h.name, 'crypto'),
+              qty: Math.round(h.qty*1e8)/1e8,
+              avgPrice: h.qty>0&&h.totalCost>0 ? h.totalCost/h.qty : 0,
+              currentPrice: h.qty>0&&h.totalCost>0 ? h.totalCost/h.qty : 0,
+              broker: fmt.name, color: ALLOC_COLORS_EXT[i % ALLOC_COLORS_EXT.length],
+            }));
+            setDerivedPositions(dp);
+            setStep("activity");
+            return;
+          }
+        }
+
         let parsed = fmt.parse(rows, headers).map((p,i) => ({
           ...p, id: Date.now()+i,
           color: ALLOC_COLORS_EXT[i % ALLOC_COLORS_EXT.length]
@@ -1498,9 +1581,12 @@ function ImportModal({ onClose, onImport, existingPositions = [], existingTransa
             h.totalCost += t.amountEur || 0;
             h.qty += t.qty || 0;
           } else if (t.type === 'sell') {
-            // Reduce cost basis proportionally
-            if (h.qty > 0) h.totalCost *= Math.max(0, (h.qty - (t.qty || 0))) / h.qty;
-            h.qty -= t.qty || 0;
+            // Proportional cost basis reduction
+            if (h.qty > 0) {
+              const frac = Math.min(t.qty || 0, h.qty) / h.qty;
+              h.totalCost *= (1 - frac);
+              h.qty = Math.max(0, h.qty - (t.qty || 0));
+            }
           }
         }
         const derivedPositions = Object.values(holdingMap)
