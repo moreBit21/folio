@@ -2279,6 +2279,7 @@ const EXCHANGES = ['All','NASDAQ','NYSE','AMEX'];
 const PRESETS = [
   { label: 'Quality Growth', icon: '🚀', filters: { peMax:'40', marketCapMin:'1000000000', sector:'All', healthMin:60 } },
   { label: 'Value',          icon: '💎', filters: { peMax:'15', marketCapMin:'500000000',  sector:'All', healthMin:40 } },
+  { label: 'Possible Deal',  icon: '🎯', filters: { marketCapMin:'2000000000', sector:'All', healthMin:55, dealOnly:true } },
   { label: 'Large Cap',      icon: '🏛️', filters: { marketCapMin:'10000000000', sector:'All' } },
   { label: 'High Dividend',  icon: '💰', filters: { dividendMin:'1', sector:'All' } },
   { label: 'Small Cap',      icon: '🌱', filters: { marketCapMax:'2000000000', marketCapMin:'100000000', sector:'All' } },
@@ -2297,6 +2298,7 @@ function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
     pegMax: '',
     forwardPEMax: '',
     healthMin: 0,
+    dealOnly: false,
   });
   const [results, setResults]     = React.useState([]);
   const [wlDropdown, setWlDropdown] = React.useState(null); // symbol showing WL dropdown
@@ -2358,7 +2360,14 @@ function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
               const pe = d.peRatio ?? null;
               const peg = d.pegRatio ?? null;
               const fwdPE = d.forwardPE ?? null;
-              setFundCache(prev => ({ ...prev, [sym]: { score, pe, peg, fwdPE } }));
+              const ttmRevGrowth = d.ttmRevGrowth ?? null;
+              const ttmEpsGrowth = d.ttmEpsGrowth ?? null;
+              const fy1RevGrowth = d.fy1RevGrowth ?? null;
+              const fy1EpsGrowth = d.fy1EpsGrowth ?? null;
+              const priceAvg50   = d.priceAvg50   ?? null;
+              const yearHigh     = d.yearHigh     ?? null;
+              const curPrice     = d.currentPrice ?? null;
+              setFundCache(prev => ({ ...prev, [sym]: { score, pe, peg, fwdPE, ttmRevGrowth, ttmEpsGrowth, fy1RevGrowth, fy1EpsGrowth, priceAvg50, yearHigh, curPrice } }));
             })
             .catch(() => setFundCache(prev => ({ ...prev, [sym]: { score: null, pe: null, peg: null, fwdPE: null } })))
             .finally(() => setLoadingFund(prev => ({ ...prev, [sym]: false })));
@@ -2391,7 +2400,14 @@ function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
       const pe = d.peRatio ?? null;
       const peg = d.pegRatio ?? null;
       const fwdPE = d.forwardPE ?? null;
-      setFundCache(prev => ({ ...prev, [symbol]: { score, pe, peg, fwdPE } }));
+      const ttmRevGrowth = d.ttmRevGrowth ?? null;
+      const ttmEpsGrowth = d.ttmEpsGrowth ?? null;
+      const fy1RevGrowth = d.fy1RevGrowth ?? null;
+      const fy1EpsGrowth = d.fy1EpsGrowth ?? null;
+      const priceAvg50   = d.priceAvg50   ?? null;
+      const yearHigh     = d.yearHigh     ?? null;
+      const curPrice     = d.currentPrice ?? null;
+      setFundCache(prev => ({ ...prev, [symbol]: { score, pe, peg, fwdPE, ttmRevGrowth, ttmEpsGrowth, fy1RevGrowth, fy1EpsGrowth, priceAvg50, yearHigh, curPrice } }));
     } catch {
       setFundCache(prev => ({ ...prev, [symbol]: { score: null, pe: null, peg: null, fwdPE: null } }));
     } finally {
@@ -2416,6 +2432,19 @@ function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
       const maxFPE = parseFloat(filters.forwardPEMax);
       if (!isNaN(maxFPE) && f != null && f.fwdPE != null) {
         if (f.fwdPE > maxFPE) return false;
+      }
+    }
+    if (filters.dealOnly) {
+      const fund = fundCache[r.symbol];
+      if (fund) {
+        const dp = fund.curPrice ?? r.price;
+        const priceTrendDown = fund.priceAvg50 != null && dp != null
+          && dp < fund.priceAvg50
+          && fund.yearHigh != null && dp < fund.yearHigh * 0.85;
+        const fundStrong = (fund.score ?? 0) >= 55
+          && (fund.ttmRevGrowth > 0 || fund.fy1RevGrowth > 0)
+          && (fund.ttmEpsGrowth > 0 || fund.fy1EpsGrowth > 0);
+        if (!priceTrendDown || !fundStrong) return false;
       }
     }
     return true;
@@ -2623,6 +2652,15 @@ function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
                     const rowPeg = fund?.peg ?? null;
                     const rowFwdPE = fund?.fwdPE ?? null;
                     const isLoadingScore = loadingFund[row.symbol];
+                    // Possible Deal: price below 50d MA + >15% off 52w high + strong fundamentals
+                    const dp = fund?.curPrice ?? row.price;
+                    const priceTrendDown = fund?.priceAvg50 != null && dp != null
+                      && dp < fund.priceAvg50
+                      && fund?.yearHigh != null && dp < fund.yearHigh * 0.85;
+                    const fundStrong = score != null && score >= 55
+                      && (fund?.ttmRevGrowth > 0 || fund?.fy1RevGrowth > 0)
+                      && (fund?.ttmEpsGrowth > 0 || fund?.fy1EpsGrowth > 0);
+                    const isPossibleDeal = fund != null && priceTrendDown && fundStrong;
                     return (
                       <tr key={row.symbol}
                         onClick={() => {
@@ -2639,6 +2677,15 @@ function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
                         </td>
                         <td style={{padding:'8px 12px',maxWidth:180,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
                           <span style={{color:'var(--text2)',fontSize:11}}>{row.companyName || '—'}</span>
+                          {isPossibleDeal && (
+                            <span title="Strong fundamentals, price pulling back — possible opportunity" style={{
+                              marginLeft:6,fontSize:9,fontFamily:"'IBM Plex Mono',monospace",
+                              fontWeight:700,letterSpacing:'0.05em',padding:'2px 5px',
+                              borderRadius:3,background:'rgba(0,229,160,0.10)',
+                              color:'var(--green)',border:'1px solid rgba(0,229,160,0.22)',
+                              verticalAlign:'middle',whiteSpace:'nowrap',cursor:'default'
+                            }}>🎯 DEAL?</span>
+                          )}
                         </td>
                         <td style={{padding:'8px 12px'}}>
                           <span style={{fontSize:10,color:'var(--text3)'}}>{row.sector?.split(' ')[0] || '—'}</span>
