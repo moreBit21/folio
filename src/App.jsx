@@ -8167,7 +8167,7 @@ export default function App() {
                 const pp  = ((pos.currentPrice-pos.avgPrice)/pos.avgPrice*100);
                 const up  = p>=0;
                 return (
-                  <div key={pos.id} className="trow" style={{cursor:"pointer"}} onClick={()=>{setSelectedPos(pos);setNav("stock")}}>
+                  <div key={pos.id} className="trow" style={{cursor:"pointer"}} onClick={()=>{setPrevNav("dashboard");setSelectedPos(pos);setNav("stock")}}>
                     {/* Asset cell with logo */}
                     <div style={{display:"flex",alignItems:"center",gap:10}}>
                       <AssetLogo pos={pos}/>
