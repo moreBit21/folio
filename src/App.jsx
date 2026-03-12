@@ -2919,7 +2919,7 @@ function TVChart({ ticker, txs = [], currentPrice, compact = false }) {
     return () => {
       if (chartRef.current) { try { chartRef.current.remove(); } catch(e){} chartRef.current = null; }
     };
-  }, [allData, range, mode]);
+  }, [allData, range, mode, txs]);
 
   if (loading) return <div className="card shimmer" style={{height: compact?200:340, marginBottom:16, borderRadius:10}}/>;
   if (error)   return null; // silently skip if no data
@@ -6956,8 +6956,17 @@ function StockDetail({ pos, onBack, transactions, onTransfer }) {
         {/* ══ TRANSACTIONS TAB ══ */}
         {tab==='transactions' && (() => {
           const txs = (transactions||[])
-            .filter(t => t.isin === pos.isin)
-            .sort((a,b) => b.date.localeCompare(a.date));
+            .filter(t => {
+              const sym = (t.symbol||'').toUpperCase();
+              const posSym = (pos.symbol||'').toUpperCase();
+              // For crypto: match by symbol (isin is null for all crypto txs)
+              if (pos.type === 'crypto') return sym === posSym;
+              // For stocks/ETFs: match by isin when available, fall back to symbol
+              if (pos.isin && t.isin) return t.isin === pos.isin;
+              if (pos.isin && !t.isin) return sym === posSym;
+              return sym === posSym;
+            })
+            .sort((a,b) => (b.date||'').localeCompare(a.date||''));
 
           if (!txs.length) return (
             <div className="card" style={{padding:40,textAlign:'center',color:'var(--text3)',fontSize:13}}>
@@ -9195,7 +9204,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v76 · Transfer tx types; grouped chart markers; fee in coin denomination</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v77 · Fix tx filter (crypto by symbol not isin); chart markers include txs in deps</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
