@@ -723,7 +723,7 @@ function ColdWalletModal({ transfers, existingWallets, existingPositions, source
           id: Date.now() + posIdx++,
           symbol: t.symbol, isin: null, name: t.name,
           type: 'crypto', qty: Math.round(qty * 1e8) / 1e8,
-          avgPrice: 0, currentPrice: 0,
+          avgPrice: t.avgPrice || 0, currentPrice: 0,
           broker: wallet.name, walletId: wallet.id,
           color: wallet.color,
           coinId: getCoinId(t.symbol),
@@ -1184,7 +1184,7 @@ function parseBitvavoCSV(rows, headers) {
     'staking': 'reward', 'fixed_staking': 'reward',
     'rebate': 'reward', 'campaign_new_user_incentive': 'reward',
     'affiliate': 'ignore',
-    'margin_loan_borrow': 'buy', 'margin_loan_repay': 'sell', // borrowed coins enter/leave balance
+    'margin_loan_borrow': 'margin_borrow', 'margin_loan_repay': 'margin_repay',
     'margin_loan_collateral_deposit': 'ignore', 'margin_loan_collateral_return': 'ignore',
     'withdrawal_cancelled': 'ignore',
   };
@@ -1242,6 +1242,14 @@ function derivePositionsFromTxs(normalizedTxs, brokerName) {
       }
     } else if (t.type === 'transfer_in' || t.type === 'reward') {
       h.qty += qty; // no cost basis for free/transferred-in coins
+    } else if (t.type === 'margin_borrow') {
+      h.qty += qty; // borrowed coins: add qty, but no EUR cost (avoid avgCost dilution)
+    } else if (t.type === 'margin_repay') {
+      if (h.qty > 0) { // repaid coins: remove qty, proportionally reduce cost basis
+        const frac = Math.min(qty, h.qty) / h.qty;
+        h.totalCost *= (1 - frac);
+        h.qty = Math.max(0, h.qty - qty);
+      }
     }
     // 'ignore' → skip
   }
@@ -1815,7 +1823,10 @@ function ImportModal({ onClose, onImport, existingPositions = [], existingTransa
             ...p, id: Date.now() + i, color: ALLOC_COLORS_EXT[i % ALLOC_COLORS_EXT.length], currentPrice: 0,
           }));
           // Detect cold wallet transfers (broker-agnostic function)
-          const transfers = detectColdWalletTransfers(allTxs);
+          const transfers = detectColdWalletTransfers(allTxs).map(t => ({
+            ...t,
+            avgPrice: positions.find(p => p.symbol === t.symbol)?.avgPrice || 0,
+          }));
           const dates = tradeTxs.map(t => t.date).sort();
           const net = tradeTxs.reduce((s,t) => s + (t.type==='buy' ? t.amountEur : -t.amountEur), 0);
           setTxData(tradeTxs);
@@ -1844,7 +1855,10 @@ function ImportModal({ onClose, onImport, existingPositions = [], existingTransa
                   ...h, id: Date.now()+i, color: ALLOC_COLORS_EXT[i%ALLOC_COLORS_EXT.length], currentPrice: 0,
                 }));
                 setDerivedPositions(dp);
-                const learnedTransfers = detectColdWalletTransfers(txs);
+                const learnedTransfers = detectColdWalletTransfers(txs).map(t => ({
+                  ...t,
+                  avgPrice: dp.find(p => p.symbol === t.symbol)?.avgPrice || 0,
+                }));
                 setPendingTransfers(learnedTransfers.length > 0 ? learnedTransfers : null);
                 setStep("activity");
                 return;
@@ -1964,14 +1978,16 @@ function ImportModal({ onClose, onImport, existingPositions = [], existingTransa
         const isSell = t => t.type === 'sell' || t.type === 'transfer_out';
         const net = txs.reduce((s,t) => s + (isBuy(t) ? t.amountEur : isSell(t) ? -t.amountEur : 0), 0);
         setTxPreview({ count: txs.length, from: dates[0], to: dates[dates.length-1], net, isAI: true });
-        // Broker-agnostic cold wallet detection — works for any broker
-        const aiTransfers = detectColdWalletTransfers(txs);
-        setPendingTransfers(aiTransfers.length > 0 ? aiTransfers : null);
-        // Derive positions from normalized txs
+        // Derive positions first so we can carry avgPrice into cold wallet positions
         const aiDerived = derivePositionsFromTxs(txs, data.broker || 'Imported').map((p, i) => ({
           ...p, id: Date.now() + i, color: ALLOC_COLORS_EXT[i % ALLOC_COLORS_EXT.length], currentPrice: 0,
         }));
         setDerivedPositions(aiDerived);
+        // Broker-agnostic cold wallet detection — works for any broker
+        const aiTransfers = detectColdWalletTransfers(txs).map(t => ({
+          ...t, avgPrice: aiDerived.find(p => p.symbol === t.symbol)?.avgPrice || 0,
+        }));
+        setPendingTransfers(aiTransfers.length > 0 ? aiTransfers : null);
 
         // ── Derive current positions from transaction history ──────────────
         // Group buys/sells by symbol, compute net qty + weighted avg cost
