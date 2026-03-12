@@ -9005,6 +9005,8 @@ export default function App() {
       }));
 
       // ── Benchmark history ──
+      // SPY, QQQ, GBTC are USD-priced — divide by eurUsd to get EUR equivalent.
+      // EWG (DAX proxy) is also USD-listed on NYSE — same conversion applies.
       const BM_FMP = { sp500: 'SPY', nasdaq: 'QQQ', dax: 'EWG', btc: 'GBTC' };
       const bmPrices = {};
       await Promise.all(activeBM.map(async id => {
@@ -9012,7 +9014,8 @@ export default function App() {
           const data = await fmpGet('/historical-price-eod/full?symbol=' + encodeURIComponent(BM_FMP[id]) + '&from=' + fromStr + '&to=' + toStr);
           bmPrices[id] = {};
           const bmHist = Array.isArray(data) ? data : (data?.historical || []);
-          bmHist.forEach(h => { bmPrices[id][h.date] = h.close; });
+          // All benchmark ETFs are USD-listed — convert to EUR for apples-to-apples comparison
+          bmHist.forEach(h => { bmPrices[id][h.date] = h.close / eurUsd; });
         } catch(e) {}
       }));
 
@@ -9040,21 +9043,25 @@ export default function App() {
       }
 
       // ── Benchmark: hypothetical equal-investment comparison ──
-      const sortedBuys = sorted
+      // For each buy transaction, "invest" the same EUR amount into the benchmark instead.
+      // Pre-window buys get assigned to day 0 (they represent capital already deployed).
+      // The rebase step below then aligns day-0 benchmark value to portfolio day-0 value,
+      // so the % shown is purely the performance difference going forward.
+      const allBuys = sorted
         .filter(t => t.type === 'buy' && t.amountEur > 0)
-        .map(t => {
-          const i = Math.max(0, Math.min(totalDays, Math.round((new Date(t.date) - from) / 86400000)));
-          return { i, amount: t.amountEur };
-        });
+        .map(t => ({
+          i: Math.max(0, Math.min(totalDays, Math.round((new Date(t.date) - from) / 86400000))),
+          amount: t.amountEur,
+        }));
 
       const bmUnitsOnDay = {};
       activeBM.forEach(id => {
         bmUnitsOnDay[id] = new Float64Array(totalDays + 1);
         let units = 0, buyIdx = 0;
         for (let i = 0; i <= totalDays; i++) {
-          while (buyIdx < sortedBuys.length && sortedBuys[buyIdx].i <= i) {
-            const bp = bmPriceOnDay[id][sortedBuys[buyIdx].i];
-            if (bp > 0) units += sortedBuys[buyIdx].amount / bp;
+          while (buyIdx < allBuys.length && allBuys[buyIdx].i <= i) {
+            const bp = bmPriceOnDay[id][allBuys[buyIdx].i];
+            if (bp > 0) units += allBuys[buyIdx].amount / bp;
             buyIdx++;
           }
           bmUnitsOnDay[id][i] = units;
@@ -9085,6 +9092,22 @@ export default function App() {
           if (units > 0 && p > 0) row[id] = +(units * p).toFixed(0);
         });
         rows.push(row);
+      }
+
+      // ── Rebase benchmarks to portfolio day-0 value ──
+      // The benchmark starts with portValOnDay0 units×price, but floating-point and
+      // carry-forward gaps can cause a mismatch. Rebase so all lines start at the
+      // same EUR value on row 0 — this makes both the visual and the % stats honest.
+      if (rows.length > 0) {
+        const row0 = rows[0];
+        activeBM.forEach(id => {
+          const bmDay0 = row0[id];
+          const portDay0 = row0.portfolio;
+          if (bmDay0 > 0 && portDay0 > 0 && Math.abs(bmDay0 - portDay0) / portDay0 > 0.001) {
+            const scale = portDay0 / bmDay0;
+            rows.forEach(r => { if (r[id] != null) r[id] = +(r[id] * scale).toFixed(0); });
+          }
+        });
       }
 
       setChartData(rows);
@@ -9298,7 +9321,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v86 · Smartbroker tx-only import: derives positions from history, no depot snapshot needed</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v89 · Fix benchmark: rebase to portfolio day-0 value so % return is honest (SPY should show ~+19% not +43%)</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
