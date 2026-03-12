@@ -2184,7 +2184,7 @@ function ImportModal({ onClose, onImport, existingPositions = [], existingTransa
         // ── Step 2c: Bitvavo (hardcoded — handles all crypto tx types correctly) ──
         if (isBitvavoCSV(headers)) {
           const allTxs = parseBitvavoCSV(rows, headers); // full normalized txs incl. transfer_in/out/reward
-          const tradeTxs = allTxs.filter(t => t.type === 'buy' || t.type === 'sell'); // for tx history display
+          const tradeTxs = allTxs.filter(t => t.type === 'buy' || t.type === 'sell' || t.type === 'transfer_in' || t.type === 'transfer_out' || t.type === 'reward'); // all meaningful tx types for history
           // Derive positions from normalized txs (broker-agnostic function)
           const positions = derivePositionsFromTxs(allTxs, 'Bitvavo').map((p, i) => ({
             ...p, id: Date.now() + i, color: ALLOC_COLORS_EXT[i % ALLOC_COLORS_EXT.length], currentPrice: 0,
@@ -2193,7 +2193,7 @@ function ImportModal({ onClose, onImport, existingPositions = [], existingTransa
           const transfers = detectColdWalletTransfers(allTxs);
           const _xrpAll = allTxs.filter(t=>t.symbol==='XRP');
           const dates = tradeTxs.map(t => t.date).sort();
-          const net = tradeTxs.reduce((s,t) => s + (t.type==='buy' ? t.amountEur : -t.amountEur), 0);
+          const net = tradeTxs.filter(t=>t.type==='buy'||t.type==='sell').reduce((s,t) => s + (t.type==='buy' ? t.amountEur : -t.amountEur), 0);
           setTxData(tradeTxs);
           setTxPreview({ count: tradeTxs.length, from: dates[0], to: dates[dates.length-1], net, brokerName: 'Bitvavo' });
           setParseMethod('hardcoded');
@@ -9204,7 +9204,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v77 · Fix tx filter (crypto by symbol not isin); chart markers include txs in deps</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v78 · Include transfer_in/out/reward in saved tx history (not just buy/sell)</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
