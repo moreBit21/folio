@@ -900,6 +900,184 @@ function ColdWalletModal({ transfers, existingWallets, existingPositions, source
 }
 
 
+// ── TransferModal — record a transfer between broker ↔ cold wallet ──────────
+function TransferModal({ modal, wallets, positions, onClose, onSave }) {
+  const { direction, pos } = modal; // direction: 'to_cold' | 'from_cold'
+  const isToCold   = direction === 'to_cold';
+  const coldWallets = (wallets || []).filter(w => w.type === 'cold_wallet');
+
+  const [qty,      setQty]      = React.useState('');
+  const [fee,      setFee]      = React.useState('');
+  const [targetId, setTargetId] = React.useState(coldWallets[0]?.id || '');
+  const [date,     setDate]     = React.useState(new Date().toISOString().split('T')[0]);
+  const [err,      setErr]      = React.useState('');
+
+  const brokerPositions = positions.filter(p => p.symbol === symbol && !p.walletId);
+  const [destBroker, setDestBroker] = React.useState(brokerPositions[0]?.broker || '');
+
+  const maxQty = pos.qty;
+  const symbol = pos.symbol;
+
+  const labelInput = {
+    background: 'var(--surface2)', border: '1px solid var(--border)',
+    borderRadius: 6, padding: '8px 12px', color: 'var(--text)', fontSize: 13,
+    width: '100%', boxSizing: 'border-box',
+  };
+
+  const handleSave = () => {
+    const qtyNum = parseFloat(qty);
+    const feeNum = parseFloat(fee) || 0;
+    if (!qtyNum || qtyNum <= 0)             { setErr('Enter a valid quantity.'); return; }
+    if (qtyNum > maxQty)                    { setErr(`Max available: ${maxQty}`); return; }
+    if (isToCold && !targetId)              { setErr('Select a cold wallet.'); return; }
+
+    const txId = 'tx_transfer_' + Date.now();
+
+    if (isToCold) {
+      const wallet = wallets.find(w => w.id === targetId);
+      // Reduce source broker position
+      const fromPos = { id: pos.id, newQty: +(maxQty - qtyNum).toFixed(8) };
+
+      // Find existing cold wallet position for same symbol
+      const existingCold = positions.find(p =>
+        p.symbol === symbol && p.walletId === targetId
+      );
+      const toPos = existingCold
+        ? { id: existingCold.id, newQty: +(existingCold.qty + qtyNum).toFixed(8) }
+        : {
+            isNew: true,
+            id: 'pos_cold_' + symbol + '_' + targetId + '_' + Date.now(),
+            symbol, name: pos.name, type: 'crypto',
+            qty: qtyNum,
+            avgPrice: pos.avgPrice,
+            currentPrice: pos.currentPrice,
+            broker: wallet?.name || 'Cold Wallet',
+            walletId: targetId,
+            color: wallet?.color || '#9945ff',
+          };
+
+      const txRecord = {
+        id: txId, date, type: 'transfer_out', symbol,
+        qty: qtyNum, price: pos.currentPrice,
+        fee: feeNum, broker: pos.broker,
+        note: `Transfer to ${wallet?.name || 'cold wallet'}`,
+      };
+      onSave(fromPos, toPos, txRecord);
+
+    } else {
+      // from_cold → exchange: find the broker position to increase
+      // Use broker from source pos (which is the cold wallet pos here)
+      // We need user to pick a destination broker
+      const exchPos = positions.find(p =>
+        p.symbol === symbol && !p.walletId && p.broker !== pos.broker
+      ) || positions.find(p => p.symbol === symbol && !p.walletId);
+
+      const fromPos = { id: pos.id, newQty: +(maxQty - qtyNum).toFixed(8) };
+      const toPos = exchPos
+        ? { id: exchPos.id, newQty: +(exchPos.qty + qtyNum).toFixed(8) }
+        : {
+            isNew: true,
+            id: 'pos_exch_' + symbol + '_' + Date.now(),
+            symbol, name: pos.name, type: 'crypto',
+            qty: qtyNum, avgPrice: pos.avgPrice,
+            currentPrice: pos.currentPrice,
+            broker: destBroker || 'Exchange',
+            color: pos.color,
+          };
+
+      const txRecord = {
+        id: txId, date, type: 'transfer_in', symbol,
+        qty: qtyNum, price: pos.currentPrice,
+        fee: feeNum, broker: pos.broker,
+        note: `Transfer from cold wallet to exchange`,
+      };
+      onSave(fromPos, toPos, txRecord);
+    }
+  };
+
+  return (
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal" style={{ maxWidth: 420 }}>
+        <div className="serif" style={{ fontSize: 20, marginBottom: 4 }}>
+          {isToCold ? '🔒 Transfer to Cold Wallet' : '↩ Transfer to Exchange'}
+        </div>
+        <div className="mono" style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 20 }}>
+          {symbol} · Available: {maxQty % 1 === 0 ? maxQty : maxQty.toFixed(6)}
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+
+          {/* Quantity */}
+          <div>
+            <div className="mono" style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 5, letterSpacing: '0.08em' }}>AMOUNT TO TRANSFER</div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input type="number" min="0" max={maxQty} step="any" value={qty}
+                onChange={e => setQty(e.target.value)} placeholder={`Max ${maxQty}`}
+                style={labelInput} />
+              <button className="btn btn-ghost" style={{ fontSize: 11, whiteSpace: 'nowrap' }}
+                onClick={() => setQty(String(maxQty))}>MAX</button>
+            </div>
+          </div>
+
+          {/* Network fee */}
+          <div>
+            <div className="mono" style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 5, letterSpacing: '0.08em' }}>NETWORK / TX FEE (€)</div>
+            <input type="number" min="0" step="any" value={fee}
+              onChange={e => setFee(e.target.value)} placeholder="0.00"
+              style={labelInput} />
+          </div>
+
+          {/* Cold wallet selector (to_cold only) */}
+          {isToCold && coldWallets.length > 0 && (
+            <div>
+              <div className="mono" style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 5, letterSpacing: '0.08em' }}>DESTINATION COLD WALLET</div>
+              <select value={targetId} onChange={e => setTargetId(e.target.value)} style={labelInput}>
+                {coldWallets.map(w => <option key={w.id} value={w.id}>🔒 {w.name}</option>)}
+              </select>
+            </div>
+          )}
+          {isToCold && coldWallets.length === 0 && (
+            <div className="mono" style={{ fontSize: 11, color: 'var(--red)', padding: '8px 12px', background: 'rgba(255,77,109,0.1)', borderRadius: 6 }}>
+              No cold wallets added yet. Add one first via the + ADD menu.
+            </div>
+          )}
+
+          {/* Broker picker (from_cold) */}
+          {!isToCold && (
+            <div>
+              <div className="mono" style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 5, letterSpacing: '0.08em' }}>DESTINATION EXCHANGE / BROKER</div>
+              {brokerPositions.length > 0
+                ? <select value={destBroker} onChange={e => setDestBroker(e.target.value)} style={labelInput}>
+                    {brokerPositions.map(p => <option key={p.broker} value={p.broker}>{p.broker}</option>)}
+                  </select>
+                : <input value={destBroker} onChange={e => setDestBroker(e.target.value)}
+                    placeholder="e.g. Bitvavo" style={labelInput} />
+              }
+            </div>
+          )}
+
+          {/* Date */}
+          <div>
+            <div className="mono" style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 5, letterSpacing: '0.08em' }}>TRANSFER DATE</div>
+            <input type="date" value={date} onChange={e => setDate(e.target.value)} style={labelInput} />
+          </div>
+
+          {err && <div className="mono" style={{ fontSize: 11, color: 'var(--red)', padding: '6px 10px', background: 'rgba(255,77,109,0.1)', borderRadius: 6 }}>{err}</div>}
+
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 4 }}>
+            <button className="btn btn-ghost" onClick={onClose}>CANCEL</button>
+            <button className="btn btn-primary" onClick={handleSave}
+              disabled={isToCold && coldWallets.length === 0}>
+              CONFIRM TRANSFER
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 function DangerZone({ positions, transactions, wallets, setPositions, setTransactions, setWallets, setNav }) {
   const [deleteSelected, setDeleteSelected] = React.useState(new Set());
   const [deleteMode, setDeleteMode] = React.useState(false);
@@ -5999,7 +6177,7 @@ function CryptoOverview({ pos }) {
   );
 }
 
-function StockDetail({ pos, onBack, transactions }) {
+function StockDetail({ pos, onBack, transactions, onTransfer }) {
   const [data, setData]     = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError]   = useState(null);
@@ -6337,6 +6515,24 @@ function StockDetail({ pos, onBack, transactions }) {
           </div>
         ))}
       </div>
+
+      {/* ── Transfer actions (crypto only) ── */}
+      {pos.type === 'crypto' && onTransfer && (
+        <div style={{display:'flex',gap:8,marginBottom:16}}>
+          {!pos.walletId && (
+            <button className="btn btn-ghost" style={{fontSize:11,padding:'5px 14px'}}
+              onClick={() => onTransfer({ direction: 'to_cold', pos })}>
+              🔒 Transfer to Cold Wallet
+            </button>
+          )}
+          {pos.walletId && (
+            <button className="btn btn-ghost" style={{fontSize:11,padding:'5px 14px'}}
+              onClick={() => onTransfer({ direction: 'from_cold', pos })}>
+              ↩ Transfer to Exchange
+            </button>
+          )}
+        </div>
+      )}
 
       {/* ── Tabs ── */}
       <div style={{display:'flex',gap:6,marginBottom:20}}>
@@ -6874,6 +7070,7 @@ function GroupAllocBadge({ groupVal, positions }) {
 
 function PortfolioPage({ positions, transactions, wallets, onOpenStock, priceLoading, chartData, investedChartData, chartLoading, chartError, chartProgress, activeBM, setActiveBM, range, setRange, BENCHMARKS, perfStats }) {
   const [collapsedGroups, setCollapsedGroups] = useState(new Set(['stock','etf','crypto','derivative'])); // all collapsed by default
+  const [expandedAccounts, setExpandedAccounts] = useState(new Set()); // By Account: empty = all collapsed
   const [tab, setTab] = React.useState('positions'); // positions | analysis
   const [analysisView, setAnalysisView] = React.useState('asset'); // asset|sector|region|cagr|volatility|alloc
   const [drillFilter, setDrillFilter] = React.useState(null); // {type, value} for click-through
@@ -7431,11 +7628,10 @@ function PortfolioPage({ positions, transactions, wallets, onOpenStock, priceLoa
               const groupPnl = groupVal - groupCost;
               const allocPct = grandTotal > 0 ? (groupVal / grandTotal * 100) : 0;
               const walletColor = wallet?.color || (isCold ? '#9945ff' : 'var(--green)');
-              const isExpanded = !collapsedGroups.has('acct_' + brokerName);
-              const toggleAcct = () => setCollapsedGroups(prev => {
+              const isExpanded = expandedAccounts.has(brokerName);
+              const toggleAcct = () => setExpandedAccounts(prev => {
                 const s = new Set(prev);
-                const k = 'acct_' + brokerName;
-                s.has(k) ? s.delete(k) : s.add(k);
+                s.has(brokerName) ? s.delete(brokerName) : s.add(brokerName);
                 return s;
               });
               return (
@@ -8052,6 +8248,7 @@ export default function App() {
   const [screenerTab,  setScreenerTab]  = useState('stock'); // 'stock' | 'etf'
   const [showModal,    setShowModal]    = useState(false); // legacy, keep for compat
   const [txModal,      setTxModal]      = useState(null);  // {mode:'buy'|'sell'|'cash'}
+  const [transferModal, setTransferModal] = useState(null); // {direction:'to_cold'|'from_cold', pos}
   const [showAddMenu,  setShowAddMenu]  = useState(false); // dropdown
   const addMenuRef = React.useRef(null);
   React.useEffect(() => {
@@ -8883,7 +9080,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v72 · By Account (renamed), collapsible broker/wallet rows</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v73 · By Account collapsed by default; Transfer to/from Cold Wallet modal</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
@@ -9246,12 +9443,12 @@ export default function App() {
             </div>
             {/* StockDetail overlaid when coming from screener */}
             {nav==="stock" && prevNav==="screener" && selectedPos && (
-              <StockDetail pos={selectedPos} onBack={()=>{setNav('screener');setSelectedPos(null);}} transactions={transactions}/>
+              <StockDetail pos={selectedPos} onBack={()=>{setNav('screener');setSelectedPos(null);}} transactions={transactions} onTransfer={t=>setTransferModal(t)}/>
             )}
           </div>
           {/* StockDetail for all other navigation sources */}
           {nav==="stock" && prevNav!=="screener" && selectedPos && (
-            <StockDetail pos={selectedPos} onBack={()=>{setNav(prevNav||'dashboard');setSelectedPos(null);}} transactions={transactions}/>
+            <StockDetail pos={selectedPos} onBack={()=>{setNav(prevNav||'dashboard');setSelectedPos(null);}} transactions={transactions} onTransfer={t=>setTransferModal(t)}/>
           )}
           {nav==="compare"&&<CompareView/>}
           {nav==="news"&&<NewsFeed positions={positions}/> }
@@ -9596,6 +9793,27 @@ export default function App() {
           </div>
         );
       })()}
+
+      {/* ══ Transfer to/from Cold Wallet Modal ══ */}
+      {transferModal && <TransferModal modal={transferModal} wallets={wallets} positions={positions}
+        onClose={() => setTransferModal(null)}
+        onSave={(fromPos, toPos, txRecord) => {
+          // Update positions: adjust qty on source and dest
+          setPositions(prev => {
+            let updated = prev.map(p => {
+              if (p.id === fromPos.id) return { ...p, qty: fromPos.newQty };
+              if (p.id === toPos?.id) return { ...p, qty: toPos.newQty };
+              return p;
+            });
+            // If dest is new position (cold wallet target that doesn't exist yet)
+            if (toPos?.isNew) updated = [...updated, toPos];
+            return updated.filter(p => p.qty > 0.000001);
+          });
+          // Record the transfer transaction
+          if (txRecord) setTransactions(prev => [...(prev||[]), txRecord]);
+          setTransferModal(null);
+        }}
+      />}
 
       {showModal&&(
         <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&setShowModal(false)}>
