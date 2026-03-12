@@ -202,10 +202,17 @@ const ACCOUNT_TYPE_MAP = {
   'Ellipal':         { label: 'Cold Wallet', icon: '🔒' },
   'Manual':          { label: 'Manual', icon: '✎' },
 };
+
 const getAccountType = (name, isCold) => {
   if (isCold) return { label: 'Cold Wallet', icon: '🔒' };
-  return ACCOUNT_TYPE_MAP[name] || { label: 'Broker', icon: '◈' };
+  if (!name) return { label: 'Broker', icon: '◈' };
+  const key = Object.keys(ACCOUNT_TYPE_MAP).find(k => k.toLowerCase() === name.toLowerCase());
+  return key ? ACCOUNT_TYPE_MAP[key] : { label: 'Broker', icon: '◈' };
 };
+
+
+
+
 const BENCHMARKS    = [
   {id:"sp500", label:"S&P 500",   color:"#4d9fff"},
   {id:"nasdaq",label:"Nasdaq 100",color:"#f0b429"},
@@ -7780,7 +7787,7 @@ function PortfolioPage({ positions, transactions, wallets, onOpenStock, priceLoa
               </div>
             )}
             {sortedGroups.map(([brokerName, poses]) => {
-              const wallet = allWallets.find(w => w.name === brokerName);
+              const wallet = allWallets.find(w => w.name.toLowerCase() === brokerName.toLowerCase());
               const isCold = wallet?.type === 'cold_wallet';
               const groupVal = poses.reduce((s,p) => s + p.qty * p.currentPrice, 0);
               const groupCost = poses.reduce((s,p) => s + p.qty * p.avgPrice, 0);
@@ -9247,7 +9254,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v81 · Fix back nav portfolio (second render path)</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v82 · Case-insensitive wallet/broker name lookup (tangem = Tangem)</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
