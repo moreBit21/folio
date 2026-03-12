@@ -1271,40 +1271,57 @@ function derivePositionsFromTxs(normalizedTxs, brokerName) {
 // Works on normalized transactions (type: buy|sell|transfer_in|transfer_out|reward|ignore)
 // from ANY broker — Bitvavo hardcoded, Tink, AI-parsed, learned parsers, all feed the same schema.
 function detectColdWalletTransfers(normalizedTxs) {
-  // Track exchange qty AND cold wallet qty separately per symbol.
-  // Key insight: when coins return from cold wallet (transfer_in), they may arrive
-  // slightly less than what was sent due to network fees. Use a 5% fee tolerance
-  // so dust differences don't leave phantom cold wallet balances.
-  // This correctly handles coins that went in/out of cold wallets multiple times
-  // before eventually being sold — they end up with onCold=0.
+  // Track exchange qty, cold wallet qty, AND cost basis per symbol.
+  // avgPrice is tracked throughout so cold wallet positions get correct cost basis
+  // even when the coin was fully withdrawn (qty=0 on exchange) and wouldn't appear
+  // in derivePositionsFromTxs results.
   const FEE_TOLERANCE = 0.05;
-  const onEx = {}, onCold = {};
+  const onEx = {}, onCold = {}, totalCost = {};
   const sorted = [...normalizedTxs].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
   for (const t of sorted) {
     const sym = (t.symbol || '').toUpperCase();
     if (!sym || sym === 'EUR') continue;
     const qty = Math.abs(t.qty || 0);
-    if (!onEx[sym]) onEx[sym] = 0;
-    if (!onCold[sym]) onCold[sym] = 0;
-    if (t.type === 'buy' || t.type === 'reward') {
+    const eur = Math.abs(t.amountEur || 0);
+    if (!onEx[sym]) { onEx[sym] = 0; onCold[sym] = 0; totalCost[sym] = 0; }
+    if (t.type === 'buy' || t.type === 'margin_borrow') {
       onEx[sym] += qty;
-    } else if (t.type === 'sell') {
-      onEx[sym] = Math.max(0, onEx[sym] - qty);
+      totalCost[sym] += eur;
+    } else if (t.type === 'reward') {
+      onEx[sym] += qty; // no cost basis for rewards
+    } else if (t.type === 'sell' || t.type === 'margin_repay') {
+      if (onEx[sym] > 0) {
+        const frac = Math.min(qty, onEx[sym]) / onEx[sym];
+        totalCost[sym] *= (1 - frac);
+        onEx[sym] = Math.max(0, onEx[sym] - qty);
+      }
     } else if (t.type === 'transfer_in') {
-      // Returning from cold wallet. Credit back onCold including fees lost in transit.
-      // e.g. sent 297.44, got back 297.41 — the 0.03 diff is network fee, not "still on cold wallet"
       const returned = Math.min(qty * (1 + FEE_TOLERANCE), onCold[sym]);
       onCold[sym] = Math.max(0, onCold[sym] - returned);
       onEx[sym] += qty;
     } else if (t.type === 'transfer_out') {
       const moved = Math.min(qty, onEx[sym]);
+      // Proportionally move cost basis to cold wallet tracking
+      const coldFrac = onEx[sym] > 0 ? moved / onEx[sym] : 0;
       onEx[sym] = Math.max(0, onEx[sym] - qty);
       onCold[sym] += moved;
+      // totalCost stays attached to remaining exchange qty (FIFO-style proportional)
+      totalCost[sym] *= (1 - coldFrac);
     }
+  }
+  // avgPrice = totalCost / onEx for exchange; for cold wallet use original purchase avg
+  // Re-derive avgPrice from full history per symbol for cold wallet positions
+  const symAvg = {};
+  for (const sym of Object.keys(onCold)) {
+    // Recompute avgPrice over all buys for this symbol regardless of where coins ended up
+    const allBuys = sorted.filter(t => t.symbol?.toUpperCase() === sym && (t.type === 'buy' || t.type === 'margin_borrow'));
+    const totalQty = allBuys.reduce((s, t) => s + Math.abs(t.qty || 0), 0);
+    const totalEur = allBuys.reduce((s, t) => s + Math.abs(t.amountEur || 0), 0);
+    symAvg[sym] = totalQty > 0 && totalEur > 0 ? totalEur / totalQty : 0;
   }
   return Object.entries(onCold)
     .filter(([, q]) => q > 0.001)
-    .map(([sym, qty]) => ({ symbol: sym, name: sym, qty }));
+    .map(([sym, qty]) => ({ symbol: sym, name: sym, qty, avgPrice: symAvg[sym] || 0 }));
 }
 
 
@@ -1823,10 +1840,7 @@ function ImportModal({ onClose, onImport, existingPositions = [], existingTransa
             ...p, id: Date.now() + i, color: ALLOC_COLORS_EXT[i % ALLOC_COLORS_EXT.length], currentPrice: 0,
           }));
           // Detect cold wallet transfers (broker-agnostic function)
-          const transfers = detectColdWalletTransfers(allTxs).map(t => ({
-            ...t,
-            avgPrice: positions.find(p => p.symbol === t.symbol)?.avgPrice || 0,
-          }));
+          const transfers = detectColdWalletTransfers(allTxs);
           const dates = tradeTxs.map(t => t.date).sort();
           const net = tradeTxs.reduce((s,t) => s + (t.type==='buy' ? t.amountEur : -t.amountEur), 0);
           setTxData(tradeTxs);
@@ -1855,10 +1869,7 @@ function ImportModal({ onClose, onImport, existingPositions = [], existingTransa
                   ...h, id: Date.now()+i, color: ALLOC_COLORS_EXT[i%ALLOC_COLORS_EXT.length], currentPrice: 0,
                 }));
                 setDerivedPositions(dp);
-                const learnedTransfers = detectColdWalletTransfers(txs).map(t => ({
-                  ...t,
-                  avgPrice: dp.find(p => p.symbol === t.symbol)?.avgPrice || 0,
-                }));
+                const learnedTransfers = detectColdWalletTransfers(txs);
                 setPendingTransfers(learnedTransfers.length > 0 ? learnedTransfers : null);
                 setStep("activity");
                 return;
@@ -1984,9 +1995,7 @@ function ImportModal({ onClose, onImport, existingPositions = [], existingTransa
         }));
         setDerivedPositions(aiDerived);
         // Broker-agnostic cold wallet detection — works for any broker
-        const aiTransfers = detectColdWalletTransfers(txs).map(t => ({
-          ...t, avgPrice: aiDerived.find(p => p.symbol === t.symbol)?.avgPrice || 0,
-        }));
+        const aiTransfers = detectColdWalletTransfers(txs);
         setPendingTransfers(aiTransfers.length > 0 ? aiTransfers : null);
 
         // ── Derive current positions from transaction history ──────────────
