@@ -7584,7 +7584,7 @@ function PortfolioPage({ positions, transactions, wallets, onOpenStock, priceLoa
             </div>
           ) : (
             <ResponsiveContainer width="100%" height={200}>
-              <ComposedChart data={chartData?.length?chartData:investedChartData} margin={{top:4,right:4,left:0,bottom:0}}>
+              <ComposedChart data={chartData?.some(r => r.portfolio > 0)?chartData:investedChartData} margin={{top:4,right:4,left:0,bottom:0}}>
                 <defs>
                   <linearGradient id="gPort2" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#00e5a0" stopOpacity={0.15}/><stop offset="95%" stopColor="#00e5a0" stopOpacity={0}/>
@@ -9042,16 +9042,51 @@ export default function App() {
         });
       }
 
-      // ── Benchmark: pure lump-sum price return ──
-      // Hold 1 unit of benchmark from day 0 to end. The rebase step below scales
-      // this so day-0 value = portfolio day-0 value.
-      // This answers: "if you put the same opening capital into SPY on day 0, what % return?"
-      // We deliberately do NOT add units for in-window buys — that mixes capital timing
-      // with price performance and inflates the benchmark return artificially.
+      // ── Shadow Portfolio Benchmark ──
+      // For every real buy/sell, mirror the same EUR amount into the benchmark ETF.
+      // buy  → purchase (amountEur / bmPrice) benchmark units
+      // sell → redeem   (amountEur / bmPrice) benchmark units (pro-rata)
+      // Result: "if you had invested every euro into SPY instead, what would it be worth?"
+      // This is the correct cash-flow-adjusted comparison (mirrors Time-Weighted Return logic).
+
+      const bmUnits = {}; // running unit count per benchmark
+      activeBM.forEach(id => { bmUnits[id] = 0; });
+
+      // Pre-sort transactions by date (already sorted, but just in case)
+      const cashFlows = sorted.filter(t => (t.type === 'buy' || t.type === 'sell') && t.amountEur > 0);
+
+      // Build shadow units per day using a running accumulator
+      // For each day, apply any transactions that fell on that day
       const bmUnitsOnDay = {};
-      activeBM.forEach(id => {
-        bmUnitsOnDay[id] = new Float64Array(totalDays + 1).fill(1);
-      });
+      activeBM.forEach(id => { bmUnitsOnDay[id] = new Float64Array(totalDays + 1); });
+
+      let cfIdx = 0;
+      const runningUnits = {};
+      activeBM.forEach(id => { runningUnits[id] = 0; });
+
+      for (let i = 0; i <= totalDays; i++) {
+        const d = new Date(from); d.setDate(d.getDate() + i);
+        const ds = d.toISOString().slice(0, 10);
+
+        // Apply all transactions on this day
+        while (cfIdx < cashFlows.length && cashFlows[cfIdx].date <= ds) {
+          const tx = cashFlows[cfIdx++];
+          // Only apply if the transaction date falls within our chart window
+          if (tx.date < fromStr) continue;
+          activeBM.forEach(id => {
+            const p = bmPriceOnDay[id][Math.round((new Date(tx.date) - from) / 86400000)] || bmPriceOnDay[id][i];
+            if (!p) return;
+            if (tx.type === 'buy') {
+              runningUnits[id] += tx.amountEur / p;
+            } else if (tx.type === 'sell') {
+              // Sell proportionally — reduce units by the same EUR value
+              const unitsToSell = Math.min(runningUnits[id], tx.amountEur / p);
+              runningUnits[id] = Math.max(0, runningUnits[id] - unitsToSell);
+            }
+          });
+        }
+        activeBM.forEach(id => { bmUnitsOnDay[id][i] = runningUnits[id]; });
+      }
 
       // ── Assemble rows ──
       const rows = [];
@@ -9069,7 +9104,7 @@ export default function App() {
         const row = {
           date: baseRow.date || d.toLocaleDateString('de-DE', { day: '2-digit', month: 'short' }),
           invested: baseRow.invested || 0,
-          ...(portVal > 0 ? { portfolio: +portVal.toFixed(2) } : {}),
+          portfolio: +portVal.toFixed(2),
         };
         activeBM.forEach(id => {
           const units = bmUnitsOnDay[id][i];
@@ -9078,23 +9113,8 @@ export default function App() {
         });
         rows.push(row);
       }
-
-      // ── Rebase benchmarks to portfolio day-0 value ──
-      // Scale every benchmark row so its day-0 value exactly matches the portfolio day-0 value.
-      // This ensures perfStats % = pure performance difference, not a capital-size difference.
-      if (rows.length > 0) {
-        const row0 = rows[0];
-        const portDay0 = row0.portfolio;
-        if (portDay0 > 0) {
-          activeBM.forEach(id => {
-            const bmDay0 = row0[id];
-            if (bmDay0 > 0) {
-              const scale = portDay0 / bmDay0;
-              rows.forEach(r => { if (r[id] != null) r[id] = +(r[id] * scale).toFixed(0); });
-            }
-          });
-        }
-      }
+      // No rebase needed — shadow portfolio naturally tracks the same cash flows as the real portfolio,
+      // so both lines start at the same value on day 1 (first buy = same EUR in both).
 
       setChartData(rows);
       if (skippedTickers.length > 0) {
@@ -9108,7 +9128,8 @@ export default function App() {
   useEffect(()=>{ fetchChart(); }, [fetchChart]);
 
   const chartDomain = useMemo(()=>{
-    const data = chartData.length ? chartData : investedChartData;
+    const hasPortfolio = chartData.some(r => r.portfolio > 0);
+    const data = hasPortfolio ? chartData : investedChartData;
     if(!data.length) return ['auto','auto'];
     let mn=Infinity,mx=-Infinity;
     data.forEach(row=>{ ['portfolio',...activeBM].forEach(k=>{ if(row[k]!=null&&row[k]>0){if(row[k]<mn)mn=row[k];if(row[k]>mx)mx=row[k];} }); });
@@ -9118,8 +9139,13 @@ export default function App() {
   },[chartData,investedChartData,activeBM]);
   const perfStats = useMemo(()=>{
     if(!chartData.length) return {};
-    const f=chartData[0],l=chartData[chartData.length-1],st={};
-    ["portfolio",...activeBM].forEach(k=>{ if(f[k]&&l[k]) st[k]=+((l[k]-f[k])/f[k]*100).toFixed(2); });
+    const l = chartData[chartData.length-1];
+    const st = {};
+    ["portfolio",...activeBM].forEach(k=>{
+      // Find first row that has a value for this key (shadow portfolio starts when first buy happens)
+      const firstRow = chartData.find(r => r[k] > 0);
+      if(firstRow && l[k] > 0) st[k] = +((l[k]-firstRow[k])/firstRow[k]*100).toFixed(2);
+    });
     return st;
   },[chartData,activeBM]);
 
@@ -9307,7 +9333,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v91 · Fix benchmark: pure lump-sum price return (was adding new units for every in-window buy, inflating to +43%)</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v93 · Benchmark: Shadow Portfolio method — mirror every buy/sell into SPY (cash-flow adjusted, fair comparison)</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
@@ -9517,7 +9543,7 @@ export default function App() {
                   )}
                   {!chartLoading && transactions.length>0 && (
                     <ResponsiveContainer width="100%" height={240}>
-                      <ComposedChart data={chartData.length ? chartData : investedChartData} margin={{top:4,right:4,left:0,bottom:0}}>
+                      <ComposedChart data={chartData.some(r => r.portfolio > 0) ? chartData : investedChartData} margin={{top:4,right:4,left:0,bottom:0}}>
                         <defs>
                           <linearGradient id="gPort" x1="0" y1="0" x2="0" y2="1">
                             <stop offset="5%" stopColor="#00e5a0" stopOpacity={0.15}/><stop offset="95%" stopColor="#00e5a0" stopOpacity={0}/>
