@@ -630,15 +630,21 @@ function ColdWalletModal({ transfers, existingWallets, existingPositions, source
   // Pre-fill existing cold wallet positions so re-import doesn't lose existing assignments
   const [allocations, setAllocations] = useState(() => {
     const init = {};
+    const coldWallets = existingWallets.filter(w => w.type === 'cold_wallet');
     for (const t of transfers) {
       init[t.symbol] = {};
       // Pre-fill any existing cold wallet positions for this coin
       const existing = (existingPositions || []).filter(p =>
         p.type === 'crypto' && (p.symbol || '').toUpperCase() === t.symbol &&
-        existingWallets.find(w => w.id === p.walletId && w.type === 'cold_wallet')
+        coldWallets.find(w => w.id === p.walletId)
       );
-      for (const pos of existing) {
-        init[t.symbol][pos.walletId] = String(Math.round(Math.min(pos.qty, t.qty) * 1e6) / 1e6);
+      if (existing.length > 0) {
+        for (const pos of existing) {
+          init[t.symbol][pos.walletId] = String(Math.round(Math.min(pos.qty, t.qty) * 1e6) / 1e6);
+        }
+      } else if (coldWallets.length === 1) {
+        // Single cold wallet — auto-fill full detected qty so user doesn't have to click each coin
+        init[t.symbol][coldWallets[0].id] = String(Math.round(t.qty * 1e6) / 1e6);
       }
     }
     return init;
@@ -649,7 +655,25 @@ function ColdWalletModal({ transfers, existingWallets, existingPositions, source
     if (!name) return;
     const id = 'cw_' + Date.now();
     const color = COLD_COLORS[(existingWallets.filter(w=>w.type==='cold_wallet').length + wallets.length) % COLD_COLORS.length];
-    setWallets(w => [...w, { id, name, type: 'cold_wallet', color }]);
+    const newWallet = { id, name, type: 'cold_wallet', color };
+    setWallets(w => {
+      const updated = [...w, newWallet];
+      // If this is the first wallet being added, auto-fill all unassigned coins to it
+      if (updated.length === 1) {
+        setAllocations(prev => {
+          const next = { ...prev };
+          for (const t of transfers) {
+            const sym = t.symbol;
+            const hasAnyAlloc = Object.values(next[sym] || {}).some(v => parseFloat(v) > 0);
+            if (!hasAnyAlloc) {
+              next[sym] = { ...next[sym], [id]: String(Math.round(t.qty * 1e6) / 1e6) };
+            }
+          }
+          return next;
+        });
+      }
+      return updated;
+    });
     setNewWalletName('');
   };
 
@@ -720,7 +744,7 @@ function ColdWalletModal({ transfers, existingWallets, existingPositions, source
           <div>
             <div className="serif" style={{ fontSize: 20 }}>Cold Wallet Transfers Detected</div>
             <div style={{ fontSize: 12, color: 'var(--text2)', marginTop: 3 }}>
-              {transfers.length} coin{transfers.length !== 1 ? 's' : ''} sent to cold wallet. Assign quantities to track them in your portfolio.
+              {transfers.length} coin{transfers.length !== 1 ? 's' : ''} sent to cold wallet. Quantities show what Bitvavo sent — adjust for network fees if needed.
             </div>
           </div>
           <button className="btn btn-ghost" style={{ fontSize: 18, padding: '2px 8px', flexShrink: 0, marginLeft: 12 }} onClick={onClose}>×</button>
