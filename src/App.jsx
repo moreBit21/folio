@@ -8760,7 +8760,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v69 · fix missing .map in detectColdWalletTransfers (deleted by debug cleanup)</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v70 · selective delete: per-broker, per-cold-wallet, or everything</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
@@ -9172,26 +9172,138 @@ export default function App() {
               </div>
 
               {/* Danger zone */}
-              <div className="card" style={{padding:28,borderColor:"rgba(255,77,109,0.2)"}}>
-                <div className="mono" style={{fontSize:10,color:"var(--red)",letterSpacing:"0.12em",marginBottom:18}}>DANGER ZONE</div>
-                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",paddingBottom:16,marginBottom:16,borderBottom:"1px solid var(--border)"}}>
-                  <div>
-                    <div style={{fontSize:13,fontWeight:500,marginBottom:3}}>Delete all portfolio data</div>
-                    <div style={{fontSize:11,color:"var(--text3)"}}>Removes all positions and transactions. Cannot be undone.</div>
+              {(()=>{
+                const [deleteSelected, setDeleteSelected] = React.useState(new Set());
+                const [deleteMode, setDeleteMode] = React.useState(false); // false=hidden, true=shown
+
+                // All deletable sources: brokers with positions + cold wallets
+                const brokersWithData = wallets.filter(w => {
+                  if (w.type === 'cold_wallet') return positions.some(p => p.broker === w.name || p.walletId === w.id);
+                  return positions.some(p => p.broker === w.name) || transactions.some(t => t.broker === w.name);
+                });
+                const hasAnyData = positions.length > 0 || transactions.length > 0;
+
+                const toggleSelect = (id) => setDeleteSelected(prev => {
+                  const next = new Set(prev);
+                  if (next.has(id)) next.delete(id); else next.add(id);
+                  return next;
+                });
+
+                const selectAll = () => setDeleteSelected(new Set(['__all__', ...brokersWithData.map(w=>w.id)]));
+                const selectNone = () => setDeleteSelected(new Set());
+
+                const handleDelete = () => {
+                  const isAll = deleteSelected.has('__all__');
+                  const label = isAll ? 'ALL portfolio data' : [...deleteSelected].map(id => brokersWithData.find(w=>w.id===id)?.name).filter(Boolean).join(', ');
+                  if (!label) return;
+                  if (!window.confirm(`Delete ${label}?\n\nThis cannot be undone.`)) return;
+
+                  if (isAll) {
+                    setPositions([]);
+                    setTransactions([]);
+                    // Remove cold wallets from wallets list
+                    setWallets(prev => prev.filter(w => w.type !== 'cold_wallet'));
+                  } else {
+                    const selectedWallets = brokersWithData.filter(w => deleteSelected.has(w.id));
+                    const selectedNames = new Set(selectedWallets.map(w => w.name));
+                    const selectedIds = new Set(selectedWallets.map(w => w.id));
+                    const coldIds = new Set(selectedWallets.filter(w=>w.type==='cold_wallet').map(w=>w.id));
+
+                    setPositions(prev => prev.filter(p => {
+                      const matchName = selectedNames.has(p.broker);
+                      const matchId = p.walletId && coldIds.has(p.walletId);
+                      return !matchName && !matchId;
+                    }));
+                    setTransactions(prev => prev.filter(t => !selectedNames.has(t.broker)));
+                    // Remove selected cold wallets from wallets list
+                    setWallets(prev => prev.filter(w => !coldIds.has(w.id)));
+                  }
+                  setDeleteMode(false);
+                  setDeleteSelected(new Set());
+                  setNav('dashboard');
+                };
+
+                return (
+                  <div className="card" style={{padding:28,borderColor:"rgba(255,77,109,0.2)"}}>
+                    <div className="mono" style={{fontSize:10,color:"var(--red)",letterSpacing:"0.12em",marginBottom:18}}>DANGER ZONE</div>
+
+                    {!deleteMode ? (
+                      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                        <div>
+                          <div style={{fontSize:13,fontWeight:500,marginBottom:3}}>Delete portfolio data</div>
+                          <div style={{fontSize:11,color:"var(--text3)"}}>Remove positions and transactions by broker or wallet. Cannot be undone.</div>
+                        </div>
+                        <button className="btn" style={{borderColor:"var(--red)",color:"var(--red)",flexShrink:0,marginLeft:16}}
+                          onClick={()=>setDeleteMode(true)} disabled={!hasAnyData}>
+                          🗑 Delete…
+                        </button>
+                      </div>
+                    ) : (
+                      <div>
+                        <div style={{fontSize:13,fontWeight:500,marginBottom:4}}>Select what to delete</div>
+                        <div style={{fontSize:11,color:"var(--text3)",marginBottom:14}}>Choose brokers or wallets to remove, or delete everything.</div>
+
+                        {/* Select all / none */}
+                        <div style={{display:'flex',gap:8,marginBottom:12}}>
+                          <button className="btn btn-ghost" style={{fontSize:11,padding:'3px 10px'}} onClick={selectAll}>Select all</button>
+                          <button className="btn btn-ghost" style={{fontSize:11,padding:'3px 10px'}} onClick={selectNone}>Clear</button>
+                        </div>
+
+                        {/* All data option */}
+                        <label style={{display:'flex',alignItems:'center',gap:10,padding:'10px 12px',borderRadius:8,
+                          background: deleteSelected.has('__all__') ? 'rgba(255,77,109,0.08)' : 'var(--surface2)',
+                          border: `1px solid ${deleteSelected.has('__all__') ? 'var(--red)' : 'var(--border)'}`,
+                          cursor:'pointer',marginBottom:8,userSelect:'none'}}>
+                          <input type="checkbox" checked={deleteSelected.has('__all__')} onChange={()=>toggleSelect('__all__')}
+                            style={{accentColor:'var(--red)',width:14,height:14}} />
+                          <span style={{fontSize:13,fontWeight:600,color:'var(--red)'}}>🗑 Everything</span>
+                          <span style={{fontSize:11,color:'var(--text3)',marginLeft:'auto'}}>All positions, transactions & wallets</span>
+                        </label>
+
+                        {/* Individual broker/wallet options */}
+                        {brokersWithData.length > 0 && (
+                          <div style={{display:'flex',flexDirection:'column',gap:6,marginBottom:16}}>
+                            {brokersWithData.map(w => {
+                              const posCount = positions.filter(p => p.broker === w.name || p.walletId === w.id).length;
+                              const txCount = transactions.filter(t => t.broker === w.name).length;
+                              const checked = deleteSelected.has(w.id) && !deleteSelected.has('__all__');
+                              const disabled = deleteSelected.has('__all__');
+                              return (
+                                <label key={w.id} style={{display:'flex',alignItems:'center',gap:10,padding:'9px 12px',borderRadius:8,
+                                  background: checked ? 'rgba(255,77,109,0.06)' : 'var(--surface2)',
+                                  border:`1px solid ${checked ? 'rgba(255,77,109,0.4)' : 'var(--border)'}`,
+                                  cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.5 : 1, userSelect:'none'}}>
+                                  <input type="checkbox" checked={checked} disabled={disabled}
+                                    onChange={()=>!disabled && toggleSelect(w.id)}
+                                    style={{accentColor:'var(--red)',width:14,height:14}} />
+                                  <div style={{width:8,height:8,borderRadius:'50%',background:w.color,flexShrink:0}} />
+                                  <span style={{fontSize:13,flex:1}}>{w.type==='cold_wallet'?'🔒 ':''}{w.name}</span>
+                                  <span style={{fontSize:11,color:'var(--text3)'}}>
+                                    {posCount} position{posCount!==1?'s':''}{txCount>0?`, ${txCount} tx`:''}
+                                  </span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
+                          <button className="btn btn-ghost" onClick={()=>{setDeleteMode(false);setDeleteSelected(new Set());}}>Cancel</button>
+                          <button className="btn" style={{borderColor:'var(--red)',color:'var(--red)'}}
+                            onClick={handleDelete}
+                            disabled={deleteSelected.size===0}>
+                            🗑 Delete {deleteSelected.has('__all__') ? 'Everything' : deleteSelected.size > 0 ? `${deleteSelected.size} selected` : '…'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    <div style={{borderTop:'1px solid var(--border)',marginTop:20,paddingTop:20}}>
+                      <DevModeToggle />
+                    </div>
                   </div>
-                  <button className="btn" style={{borderColor:"var(--red)",color:"var(--red)",flexShrink:0,marginLeft:16}}
-                    onClick={()=>{
-                      if(window.confirm('Delete ALL portfolio data?\n\nThis removes all positions and transactions and cannot be undone.')) {
-                        setPositions([]);
-                        setTransactions([]);
-                        setNav('dashboard');
-                      }
-                    }}>
-                    🗑 Delete Portfolio
-                  </button>
-                </div>
-                <DevModeToggle />
-              </div>
+                );
+              })()}
             </div>
           )}
 
