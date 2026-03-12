@@ -7747,7 +7747,9 @@ function PortfolioPage({ positions, transactions, wallets, onOpenStock, priceLoa
                           </div>
                           <div style={{ textAlign: 'right' }}>
                             <div className="mono" style={{ fontSize: 13, fontWeight: 600 }}>
-                              {val > 0 ? '€' + val.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : (isCold ? 'on cold wallet' : '—')}
+                              {val > 0
+                                ? '€' + val.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                                : <span className="shimmer" style={{color:'var(--text3)'}}>syncing…</span>}
                             </div>
                             {p.avgPrice > 0 && p.currentPrice > 0 && (
                               <div className="mono" style={{ fontSize: 10, color: pnl >= 0 ? 'var(--green)' : 'var(--red)', marginTop: 1 }}>
@@ -8366,7 +8368,13 @@ export default function App() {
           );
         }
       }
-      const { iv, ct } = await _encryptPayload(_sessionCryptoKey, stateRef.current);
+      // Strip live price fields — always re-fetched on load, never persisted
+      const { positions: rawPos, ...restState } = stateRef.current;
+      const saveState = {
+        ...restState,
+        positions: rawPos.map(({ currentPrice, dailyChange, ...p }) => p),
+      };
+      const { iv, ct } = await _encryptPayload(_sessionCryptoKey, saveState);
       const { error } = await supabase.from('portfolios').upsert(
         { user_id: user.id, salt: _sessionSalt, iv, ciphertext: ct, updated_at: new Date().toISOString() },
         { onConflict: 'user_id' }
@@ -9129,7 +9137,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v74 · Account type map (Crypto Exchange/Broker/Cold Wallet); Transfer crash fix</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v75 · Cold wallet prices: strip currentPrice from Supabase saves, always re-fetch on load</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
