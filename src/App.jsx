@@ -1354,6 +1354,9 @@ const ALLOC_COLORS_EXT = ["#00e5a0","#627eea","#f7931a","#9945ff","#f0b429","#76
 
 // ISIN detection
 const isISIN = s => /^[A-Z]{2}[A-Z0-9]{9}[0-9]$/.test(s);
+// WKN = 6 alphanumeric chars (German stock ID). Real US tickers are 1-5 letters only.
+// Returns true if the symbol looks like a real exchange ticker (not a WKN like "858301", "A2QHKM")
+const isUSOrGlobalTicker = s => s && /^[A-Z]{1,5}(\.[A-Z]+)?$/.test(s) && !/^[A-Z0-9]{6}$/.test(s);
 // If symbol is still a raw ISIN, show first word of name or abbreviated ISIN
 const displayTicker = pos => {
   if (!pos) return '?';
@@ -1456,20 +1459,35 @@ function inferType(ticker, isin, name, rawType) {
 function guessTypeFromISIN(isin, ticker) { return inferType(ticker, isin, '', 'stock'); }
 
 async function resolveISINs(positions) {
-  const toResolve = positions.filter(p => isISIN(p.symbol));
+  // Needs resolution if: symbol is an ISIN, OR symbol is a WKN/non-ticker but p.isin exists and no fmpTicker yet
+  const needsResolution = p => (isISIN(p.symbol) || (p.isin && !p.fmpTicker && !isUSOrGlobalTicker(p.symbol)));
+  const toResolve = positions.filter(needsResolution);
   if (!toResolve.length) return positions;
   const resolved = positions.map(p => {
-    if (!isISIN(p.symbol)) return p;
-    const ticker = ISIN_MAP[p.symbol];
-    if (ticker) {
-      return { ...p, fmpTicker: ticker, symbol: ticker,
-        name: (p.name && p.name !== p.symbol) ? p.name : (TICKER_NAMES[ticker] || ticker),
-        type: (p.type && p.type !== 'stock') ? p.type : guessTypeFromISIN(p.symbol, ticker),
-        isin: p.symbol };
+    // Case 1: symbol IS the ISIN
+    if (isISIN(p.symbol)) {
+      const ticker = ISIN_MAP[p.symbol];
+      if (ticker) {
+        return { ...p, fmpTicker: ticker, symbol: ticker,
+          name: (p.name && p.name !== p.symbol) ? p.name : (TICKER_NAMES[ticker] || ticker),
+          type: (p.type && p.type !== 'stock') ? p.type : guessTypeFromISIN(p.symbol, ticker),
+          isin: p.symbol };
+      }
+      return p;
+    }
+    // Case 2: symbol is WKN/non-ticker but p.isin is a real ISIN — try ISIN_MAP
+    if (p.isin && !p.fmpTicker && !isUSOrGlobalTicker(p.symbol)) {
+      const ticker = ISIN_MAP[p.isin];
+      if (ticker) {
+        return { ...p, fmpTicker: ticker,
+          name: (p.name && p.name !== p.symbol) ? p.name : (TICKER_NAMES[ticker] || ticker),
+          type: (p.type && p.type !== 'stock') ? p.type : guessTypeFromISIN(p.isin, ticker) };
+      }
     }
     return p;
   });
-  const stillISIN = resolved.filter(p => isISIN(p.symbol));
+  // Still needs API resolution: ISIN as symbol not in map, OR WKN with isin not in map
+  const stillISIN = resolved.filter(p => isISIN(p.symbol) || (p.isin && !p.fmpTicker && !isUSOrGlobalTicker(p.symbol)));
   if (stillISIN.length > 0) {
     const pickTicker = (data, isin) => {
       if (!Array.isArray(data) || !data.length) return null;
@@ -1490,18 +1508,22 @@ async function resolveISINs(positions) {
       const batch = stillISIN.slice(i, i + BATCH);
       await Promise.all(batch.map(async p => {
         try {
-          const r = await fetch('/api/fmp?path=' + encodeURIComponent('/search-isin?isin=' + p.symbol));
+          // Use p.isin if available (WKN case), otherwise p.symbol (ISIN case)
+          const isinToSearch = p.isin && isISIN(p.isin) ? p.isin : (isISIN(p.symbol) ? p.symbol : null);
+          if (!isinToSearch) return;
+          const r = await fetch('/api/fmp?path=' + encodeURIComponent('/search-isin?isin=' + isinToSearch));
           if (!r.ok) return;
           const data = await r.json();
-          const pick = pickTicker(data, p.symbol);
+          const pick = pickTicker(data, isinToSearch);
           if (!pick?.symbol) return;
-          const idx = resolved.findIndex(q => q.symbol === p.symbol);
+          // Find by original symbol OR isin
+          const idx = resolved.findIndex(q => q.symbol === p.symbol || (q.isin && q.isin === isinToSearch));
           if (idx >= 0) {
             const orig = resolved[idx];
-            resolved[idx] = { ...orig, fmpTicker: pick.symbol, symbol: pick.symbol,
+            resolved[idx] = { ...orig, fmpTicker: pick.symbol,
               name: (orig.name && orig.name !== orig.symbol) ? orig.name : (pick.name || orig.name),
-              type: (orig.type && orig.type !== 'stock') ? orig.type : guessTypeFromISIN(p.symbol, pick.symbol),
-              isin: p.symbol };
+              type: (orig.type && orig.type !== 'stock') ? orig.type : guessTypeFromISIN(isinToSearch, pick.symbol),
+              isin: isinToSearch };
           }
         } catch(e) {}
       }));
@@ -9143,21 +9165,23 @@ export default function App() {
         rows.push(row);
       }
       // ── Normalize to % return (indexed from 0%) ──
-      // Convert all EUR values to % gain/loss from their first real data point.
-      // This matches the Finanzfluss-style chart: both lines start at 0%, Y-axis shows %.
+      // Both portfolio and all benchmarks are normalized from the SAME anchor: seedDay.
+      // This guarantees both lines start at exactly 0% on the same day.
       const keys = ['portfolio', ...activeBM];
+      const anchorRowIdx = Math.round(seedDay / step); // seedDay in data-row index space
+      const anchorRow = rows[anchorRowIdx] || rows.find(r => r.portfolio > 0);
       const baseVal = {};
-      keys.forEach(k => {
-        const firstRow = rows.find(r => r[k] > 0);
-        if (firstRow) baseVal[k] = firstRow[k];
-      });
-      rows.forEach(r => {
+      keys.forEach(k => { if (anchorRow?.[k] > 0) baseVal[k] = anchorRow[k]; });
+
+      rows.forEach((r, ri) => {
         keys.forEach(k => {
-          if (r[k] > 0 && baseVal[k] > 0) {
-            // Only normalize rows that have real data — leave 0/null rows as null (no line drawn)
+          if (ri < anchorRowIdx) {
+            // Before anchor: no data yet, remove key entirely
+            delete r[k];
+          } else if (r[k] > 0 && baseVal[k] > 0) {
             r[k] = +((r[k] - baseVal[k]) / baseVal[k] * 100).toFixed(2);
           } else {
-            delete r[k]; // remove so Recharts draws no point (connectNulls handles gaps)
+            delete r[k];
           }
         });
       });
@@ -9380,7 +9404,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v97 · Fix ALL chart: seed on first day with real portfolio+benchmark prices, null gaps instead of -100%</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v98 · Fix ALL chart %: normalize from seedDay anchor (same 0% start for all lines) + fix WKN ticker resolution</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
