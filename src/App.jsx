@@ -639,8 +639,12 @@ function ColdWalletModal({ transfers, existingWallets, existingPositions, source
         coldWallets.find(w => w.id === p.walletId)
       );
       if (existing.length > 0) {
+        // Always use the freshly detected t.qty — existing pos qty may be stale from a previous import
+        // Distribute detected qty proportionally if split across multiple wallets, otherwise assign all to first
+        const totalExisting = existing.reduce((s, p) => s + p.qty, 0);
         for (const pos of existing) {
-          init[t.symbol][pos.walletId] = String(Math.round(Math.min(pos.qty, t.qty) * 1e6) / 1e6);
+          const frac = totalExisting > 0 ? pos.qty / totalExisting : 1;
+          init[t.symbol][pos.walletId] = String(Math.round(t.qty * frac * 1e6) / 1e6);
         }
       } else if (coldWallets.length === 1) {
         // Single cold wallet — auto-fill full detected qty so user doesn't have to click each coin
