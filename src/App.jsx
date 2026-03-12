@@ -8544,7 +8544,7 @@ export default function App() {
         if (error && error.code !== 'PGRST116') throw error;
         if (data && data.ciphertext && data.ciphertext.length > 0 && _sessionCryptoKey) {
           const plain = await _decryptPayload(_sessionCryptoKey, data.iv, data.ciphertext);
-          if (plain.positions    && plain.positions.length)    setPositions(plain.positions);
+          if (plain.positions    && plain.positions.length)    setPositions(plain.positions.map(p => ({ currentPrice: 0, ...p })));
           if (plain.transactions && plain.transactions.length) setTransactions(plain.transactions);
           if (plain.watchlists   && plain.watchlists.length)   setWatchlists(plain.watchlists);
           if (plain.coldWallets  && plain.coldWallets.length)  setWallets(prev => {
@@ -8737,7 +8737,7 @@ export default function App() {
         const t = resolvedTicker || p.fmpTicker || getT(p);
         // Try full ticker, base ticker, raw symbol
         const q = qmap[t] || qmap[t?.split('.')[0]] || qmap[p.symbol];
-        if(!q?.price) return p;
+        if(!q?.price) return { currentPrice: p.currentPrice ?? 0, ...p };
         const rawPrice = (p.isin?.startsWith('US') || (!t?.includes('.') && p.type!=='etf'))
           ? q.price / eurUsd  // USD stocks → EUR
           : (q.exchange === 'NYSE' || q.exchange === 'NASDAQ' || q.exchange === 'AMEX')
@@ -9095,19 +9095,20 @@ export default function App() {
       }
 
       // ── Rebase benchmarks to portfolio day-0 value ──
-      // The benchmark starts with portValOnDay0 units×price, but floating-point and
-      // carry-forward gaps can cause a mismatch. Rebase so all lines start at the
-      // same EUR value on row 0 — this makes both the visual and the % stats honest.
+      // Scale every benchmark row so its day-0 value exactly matches the portfolio day-0 value.
+      // This ensures perfStats % = pure performance difference, not a capital-size difference.
       if (rows.length > 0) {
         const row0 = rows[0];
-        activeBM.forEach(id => {
-          const bmDay0 = row0[id];
-          const portDay0 = row0.portfolio;
-          if (bmDay0 > 0 && portDay0 > 0 && Math.abs(bmDay0 - portDay0) / portDay0 > 0.001) {
-            const scale = portDay0 / bmDay0;
-            rows.forEach(r => { if (r[id] != null) r[id] = +(r[id] * scale).toFixed(0); });
-          }
-        });
+        const portDay0 = row0.portfolio;
+        if (portDay0 > 0) {
+          activeBM.forEach(id => {
+            const bmDay0 = row0[id];
+            if (bmDay0 > 0) {
+              const scale = portDay0 / bmDay0;
+              rows.forEach(r => { if (r[id] != null) r[id] = +(r[id] * scale).toFixed(0); });
+            }
+          });
+        }
       }
 
       setChartData(rows);
@@ -9321,7 +9322,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v89 · Fix benchmark: rebase to portfolio day-0 value so % return is honest (SPY should show ~+19% not +43%)</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v90 · Fix NaN P&L (currentPrice undefined on load) + benchmark rebase always applied</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
