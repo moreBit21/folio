@@ -486,7 +486,7 @@ function ChartTip({active,payload,label}) {
             <span style={{display:"inline-block",width:6,height:6,borderRadius:2,background:p.color}}/>
             {p.name}
           </span>
-          <span style={{color:"var(--text)",fontWeight:600}}>€{Number(p.value).toLocaleString("de-DE",{maximumFractionDigits:0})}</span>
+          <span style={{color:p.value>=0?"var(--green)":"var(--red)",fontWeight:600}}>{p.value>=0?"+":""}{Number(p.value).toFixed(2)}%</span>
         </div>
       ))}
     </div>
@@ -9139,8 +9139,23 @@ export default function App() {
         });
         rows.push(row);
       }
-      // Seed ensures both lines open at the same EUR value on day 0.
-      // In-window cash flows keep them in sync. No additional rebase needed.
+      // ── Normalize to % return (indexed from 0%) ──
+      // Convert all EUR values to % gain/loss from their first real data point.
+      // This matches the Finanzfluss-style chart: both lines start at 0%, Y-axis shows %.
+      const keys = ['portfolio', ...activeBM];
+      const baseVal = {}; // first real value per key
+      keys.forEach(k => {
+        const firstRow = rows.find(r => r[k] > 0);
+        if (firstRow) baseVal[k] = firstRow[k];
+      });
+      rows.forEach(r => {
+        keys.forEach(k => {
+          if (r[k] != null && baseVal[k] > 0) {
+            r[k] = +((r[k] - baseVal[k]) / baseVal[k] * 100).toFixed(2);
+          }
+        });
+        // invested stays in EUR — we'll keep it but won't show on same axis
+      });
 
       setChartData(rows);
       if (skippedTickers.length > 0) {
@@ -9154,23 +9169,24 @@ export default function App() {
   useEffect(()=>{ fetchChart(); }, [fetchChart]);
 
   const chartDomain = useMemo(()=>{
-    const hasPortfolio = chartData.some(r => r.portfolio > 0);
-    const data = hasPortfolio ? chartData : investedChartData;
-    if(!data.length) return ['auto','auto'];
-    let mn=Infinity,mx=-Infinity;
-    data.forEach(row=>{ ['portfolio',...activeBM].forEach(k=>{ if(row[k]!=null&&row[k]>0){if(row[k]<mn)mn=row[k];if(row[k]>mx)mx=row[k];} }); });
+    if(!chartData.some(r => r.portfolio != null)) return ['auto','auto'];
+    let mn=Infinity, mx=-Infinity;
+    chartData.forEach(row=>{
+      ['portfolio',...activeBM].forEach(k=>{
+        if(row[k]!=null){ if(row[k]<mn)mn=row[k]; if(row[k]>mx)mx=row[k]; }
+      });
+    });
     if(!isFinite(mn)) return ['auto','auto'];
-    const pad=(mx-mn)*0.12;
-    return [Math.floor(mn-pad),Math.ceil(mx+pad)];
-  },[chartData,investedChartData,activeBM]);
+    const pad = Math.max((mx-mn)*0.12, 3);
+    return [Math.floor(mn-pad), Math.ceil(mx+pad)];
+  },[chartData,activeBM]);
   const perfStats = useMemo(()=>{
     if(!chartData.length) return {};
+    // chartData values are already % returns — last row value IS the total return
     const l = chartData[chartData.length-1];
     const st = {};
     ["portfolio",...activeBM].forEach(k=>{
-      // Find first row that has a value for this key (shadow portfolio starts when first buy happens)
-      const firstRow = chartData.find(r => r[k] > 0);
-      if(firstRow && l[k] > 0) st[k] = +((l[k]-firstRow[k])/firstRow[k]*100).toFixed(2);
+      if(l[k] != null) st[k] = l[k]; // already a % number
     });
     return st;
   },[chartData,activeBM]);
@@ -9359,7 +9375,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v95 · Benchmark: seed on first real data day (not day 0), cash flows mirrored post-seed</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v96 · Performance chart: % return from 0 (indexed), shadow portfolio + Y-axis shows % like Finanzfluss</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
@@ -9569,7 +9585,7 @@ export default function App() {
                   )}
                   {!chartLoading && transactions.length>0 && (
                     <ResponsiveContainer width="100%" height={240}>
-                      <ComposedChart data={chartData.some(r => r.portfolio > 0) ? chartData : investedChartData} margin={{top:4,right:4,left:0,bottom:0}}>
+                      <ComposedChart data={chartData.length ? chartData : investedChartData} margin={{top:4,right:4,left:0,bottom:0}}>
                         <defs>
                           <linearGradient id="gPort" x1="0" y1="0" x2="0" y2="1">
                             <stop offset="5%" stopColor="#00e5a0" stopOpacity={0.15}/><stop offset="95%" stopColor="#00e5a0" stopOpacity={0}/>
@@ -9582,7 +9598,7 @@ export default function App() {
                         </defs>
                         <CartesianGrid strokeDasharray="3 3" stroke="#1c2730" vertical={false}/>
                         <XAxis dataKey="date" tick={{fontFamily:"IBM Plex Mono",fontSize:9,fill:"#3d4f5e"}} axisLine={false} tickLine={false} interval="preserveStartEnd"/>
-                        <YAxis tick={{fontFamily:"IBM Plex Mono",fontSize:9,fill:"#3d4f5e"}} axisLine={false} tickLine={false} tickFormatter={v=>"€"+(v/1000).toFixed(0)+"k"} width={44} domain={chartDomain}/>
+                        <YAxis tick={{fontFamily:"IBM Plex Mono",fontSize:9,fill:"#3d4f5e"}} axisLine={false} tickLine={false} tickFormatter={v=>v.toFixed(0)+"%"} width={38} domain={chartDomain}/>
                         <Tooltip content={<ChartTip/>}/>
                         {activeBM.map(id=>{
                           const b=BENCHMARKS.find(x=>x.id===id);
@@ -9593,7 +9609,7 @@ export default function App() {
                     </ResponsiveContainer>
                   )}
                   <div className="mono" style={{fontSize:9,color:"var(--text3)",marginTop:4,textAlign:"right"}}>
-                    {chartData.length ? "● REAL DATA — FMP" : transactions.length ? "● invested line only — prices loading" : ""}
+                    {chartData.length ? "● REAL DATA — FMP" : transactions.length ? "● loading price history…" : ""}
                   </div>
                 </div>
 
