@@ -1086,36 +1086,40 @@ function parseBitvavoCSV(rows, headers) {
 }
 
 function getBitvavoTransferOuts(rows, headers) {
-  // Returns coins sent to cold wallet (net withdrawal qty per symbol)
+  // Track exchange qty AND cold wallet qty separately.
+  // withdrawal → exchange→cold; deposit → cold→exchange; sell after deposit → coins gone.
   const col = h => headers.indexOf(h.toLowerCase());
   const iType = col('type'), iCurrency = col('currency'), iAmount = col('amount');
-  const acc = {};
+  const onEx = {}, onCold = {};
   const chronoRows = [...rows].reverse();
-  // Track qty to distinguish fully-sold vs transferred
-  const qty = {};
   for (const row of chronoRows) {
     const type = (row[iType] || '').toLowerCase().trim();
     const sym = (row[iCurrency] || '').trim();
     if (!sym || sym === 'EUR') continue;
     const amount = Math.abs(parseFloat(row[iAmount]) || 0);
-    if (!qty[sym]) qty[sym] = 0;
-    if (type === 'buy') qty[sym] += amount;
-    else if (type === 'sell') qty[sym] = Math.max(0, qty[sym] - amount);
-    else if (type === 'deposit') qty[sym] += amount;
-    else if (type === 'staking' || type === 'fixed_staking' || type === 'rebate' || type === 'campaign_new_user_incentive') qty[sym] += amount;
-    else if (type === 'withdrawal') {
-      // Only count as cold wallet transfer if we had qty at the time (not a sell-then-withdraw pattern)
-      if (qty[sym] > 0) {
-        if (!acc[sym]) acc[sym] = { symbol: sym, name: sym, qty: 0 };
-        const withdrawn = Math.min(amount, qty[sym]);
-        acc[sym].qty += withdrawn;
-        qty[sym] = Math.max(0, qty[sym] - amount);
-      }
+    if (!onEx[sym]) onEx[sym] = 0;
+    if (!onCold[sym]) onCold[sym] = 0;
+    if (type === 'buy') {
+      onEx[sym] += amount;
+    } else if (type === 'sell') {
+      onEx[sym] = Math.max(0, onEx[sym] - amount);
+    } else if (type === 'staking' || type === 'fixed_staking' || type === 'rebate' || type === 'campaign_new_user_incentive') {
+      onEx[sym] += amount;
+    } else if (type === 'deposit') {
+      const movedBack = Math.min(amount, onCold[sym]);
+      onCold[sym] = Math.max(0, onCold[sym] - movedBack);
+      onEx[sym] += amount;
+    } else if (type === 'withdrawal') {
+      const moved = Math.min(amount, onEx[sym]);
+      onEx[sym] = Math.max(0, onEx[sym] - amount);
+      onCold[sym] += moved;
     } else if (type === 'margin_loan_repay') {
-      qty[sym] = Math.max(0, qty[sym] - amount);
+      onEx[sym] = Math.max(0, onEx[sym] - amount);
     }
   }
-  return Object.values(acc).filter(t => t.qty > 0.01);
+  return Object.entries(onCold)
+    .filter(([, q]) => q > 0.001)
+    .map(([sym, qty]) => ({ symbol: sym, name: sym, qty }));
 }
 
 function deriveBitvavoPositions(rows, headers) {
