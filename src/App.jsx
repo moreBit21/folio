@@ -1216,7 +1216,7 @@ function parseBitvavoCSV(rows, headers) {
 // Works on any normalized transactions (6-type schema).
 // Called by: Bitvavo hardcoded parser, AI path, learned parsers, future Tink integration.
 function derivePositionsFromTxs(normalizedTxs, brokerName) {
-  const sorted = [...normalizedTxs].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+  const sorted = [...normalizedTxs].sort((a, b) => (a.date || '') < (b.date || '') ? -1 : (a.date || '') > (b.date || '') ? 1 : 0);
   const hMap = {};
   for (const t of sorted) {
     const sym = (t.symbol || '').toUpperCase();
@@ -1270,7 +1270,7 @@ function detectColdWalletTransfers(normalizedTxs) {
   // in derivePositionsFromTxs results.
   const FEE_TOLERANCE = 0.05;
   const onEx = {}, onCold = {}, totalCost = {};
-  const sorted = [...normalizedTxs].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+  const sorted = [...normalizedTxs].sort((a, b) => (a.date || '') < (b.date || '') ? -1 : (a.date || '') > (b.date || '') ? 1 : 0);
   for (const t of sorted) {
     const sym = (t.symbol || '').toUpperCase();
     if (!sym || sym === 'EUR') continue;
@@ -1834,6 +1834,8 @@ function ImportModal({ onClose, onImport, existingPositions = [], existingTransa
           }));
           // Detect cold wallet transfers (broker-agnostic function)
           const transfers = detectColdWalletTransfers(allTxs);
+          console.log('[folio debug] detectColdWalletTransfers result:', JSON.stringify(transfers.map(t=>({sym:t.symbol,qty:t.qty}))));
+          console.log('[folio debug] allTxs XRP count:', allTxs.filter(t=>t.symbol==='XRP').length, 'sample dates:', allTxs.filter(t=>t.symbol==='XRP').map(t=>t.date).slice(0,5));
           const dates = tradeTxs.map(t => t.date).sort();
           const net = tradeTxs.reduce((s,t) => s + (t.type==='buy' ? t.amountEur : -t.amountEur), 0);
           setTxData(tradeTxs);
@@ -8743,7 +8745,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v61 · DAY% sort fix, chart progress, EU ETF price fix, crash fix</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v62 · cold wallet qty debug logging</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
