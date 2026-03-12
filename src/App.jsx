@@ -9042,30 +9042,15 @@ export default function App() {
         });
       }
 
-      // ── Benchmark: hypothetical equal-investment comparison ──
-      // For each buy transaction, "invest" the same EUR amount into the benchmark instead.
-      // Pre-window buys get assigned to day 0 (they represent capital already deployed).
-      // The rebase step below then aligns day-0 benchmark value to portfolio day-0 value,
-      // so the % shown is purely the performance difference going forward.
-      const allBuys = sorted
-        .filter(t => t.type === 'buy' && t.amountEur > 0)
-        .map(t => ({
-          i: Math.max(0, Math.min(totalDays, Math.round((new Date(t.date) - from) / 86400000))),
-          amount: t.amountEur,
-        }));
-
+      // ── Benchmark: pure lump-sum price return ──
+      // Hold 1 unit of benchmark from day 0 to end. The rebase step below scales
+      // this so day-0 value = portfolio day-0 value.
+      // This answers: "if you put the same opening capital into SPY on day 0, what % return?"
+      // We deliberately do NOT add units for in-window buys — that mixes capital timing
+      // with price performance and inflates the benchmark return artificially.
       const bmUnitsOnDay = {};
       activeBM.forEach(id => {
-        bmUnitsOnDay[id] = new Float64Array(totalDays + 1);
-        let units = 0, buyIdx = 0;
-        for (let i = 0; i <= totalDays; i++) {
-          while (buyIdx < allBuys.length && allBuys[buyIdx].i <= i) {
-            const bp = bmPriceOnDay[id][allBuys[buyIdx].i];
-            if (bp > 0) units += allBuys[buyIdx].amount / bp;
-            buyIdx++;
-          }
-          bmUnitsOnDay[id][i] = units;
-        }
+        bmUnitsOnDay[id] = new Float64Array(totalDays + 1).fill(1);
       });
 
       // ── Assemble rows ──
@@ -9322,7 +9307,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v90 · Fix NaN P&L (currentPrice undefined on load) + benchmark rebase always applied</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v91 · Fix benchmark: pure lump-sum price return (was adding new units for every in-window buy, inflating to +43%)</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
