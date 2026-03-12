@@ -8788,9 +8788,9 @@ export default function App() {
   const investedChartData = useMemo(()=>{
     if(!transactions.length) return [];
     const months = RANGE_MONTHS[range] ?? 12;
-    const now    = new Date(2026,2,7);
+    const now    = new Date(); now.setHours(0,0,0,0);
     const sorted0 = [...transactions].sort((a,b)=>a.date.localeCompare(b.date));
-    const requestedFrom = new Date(now); requestedFrom.setMonth(requestedFrom.getMonth()-months);
+    const requestedFrom = new Date(now); requestedFrom.setMonth(requestedFrom.getMonth()-Math.min(months,120));
     const firstTx = sorted0[0]?.date;
     const from = (firstTx && new Date(firstTx) > requestedFrom) ? new Date(firstTx) : requestedFrom;
     const fromStr = from.toISOString().slice(0,10);
@@ -8798,12 +8798,15 @@ export default function App() {
     const totalDays = Math.round((now-from)/86400000);
     const sorted = sorted0;
 
-    // Cumulative buys = total capital ever deployed (always positive)
-    let cumBuys = 0;
-    sorted.filter(t=>t.date<fromStr&&t.type==='buy').forEach(t=>{ cumBuys+=t.amountEur; });
+    // Cumulative net invested = buys - sells (net cash deployed)
+    let cumInvested = 0;
+    sorted.filter(t=>t.date<fromStr).forEach(t=>{
+      if(t.type==='buy') cumInvested+=t.amountEur;
+      else if(t.type==='sell') cumInvested-=t.amountEur;
+    });
 
     const inWindow = sorted.filter(t=>t.date>=fromStr&&t.date<=toStr);
-    const step = Math.max(1, Math.floor(totalDays/180));
+    const step = Math.max(1, Math.floor(totalDays/200));
     const rows = [];
     let ti=0;
     for(let i=0;i<=totalDays;i+=step){
@@ -8811,11 +8814,12 @@ export default function App() {
       const ds = d.toISOString().slice(0,10);
       while(ti<inWindow.length && inWindow[ti].date<=ds){
         const t=inWindow[ti++];
-        if(t.type==='buy') cumBuys+=t.amountEur;
+        if(t.type==='buy') cumInvested+=t.amountEur;
+        else if(t.type==='sell') cumInvested-=t.amountEur;
       }
       rows.push({
         date: d.toLocaleDateString('de-DE',{day:'2-digit',month:'short'}),
-        invested: +cumBuys.toFixed(0),
+        invested: +Math.max(0,cumInvested).toFixed(0),
       });
     }
     return rows;
@@ -8826,250 +8830,256 @@ export default function App() {
     setChartLoading(true); setChartError(null); setChartProgress(null);
     try {
       const months = RANGE_MONTHS[range] ?? 12;
-      const now    = new Date(2026,2,7);
+      const now    = new Date(); now.setHours(0,0,0,0);
       const toStr  = now.toISOString().slice(0,10);
 
-      // ── Sort transactions first (needed to clamp window start) ──
+      // ── Sort ALL transactions ──
       const sorted = [...transactions].sort((a,b)=>a.date.localeCompare(b.date));
 
       // Clamp window start to first transaction date
-      const requestedFrom = new Date(now); requestedFrom.setMonth(requestedFrom.getMonth()-months);
+      const requestedFrom = new Date(now);
+      requestedFrom.setMonth(requestedFrom.getMonth() - Math.min(months, 120));
       const firstTxDate = sorted[0]?.date;
       const from = firstTxDate && new Date(firstTxDate) > requestedFrom
-        ? new Date(firstTxDate)
-        : requestedFrom;
+        ? new Date(firstTxDate) : requestedFrom;
       const fromStr = from.toISOString().slice(0,10);
-      const totalDays = Math.round((now-from)/86400000);
-      const step = Math.max(1, Math.floor(totalDays/180));
+      const totalDays = Math.round((now - from) / 86400000);
+      const step = Math.max(1, Math.floor(totalDays / 200));
 
-      // ── Ticker resolver ──
-      const getT = p => {
-        if(p.fmpTicker) return p.fmpTicker;
-        if(!p.isin) return p.symbol;
-        if(p.isin.startsWith('DE')||p.isin.startsWith('LU')) return p.symbol+'.DE';
-        if(p.isin.startsWith('IE')) return p.symbol+'.AS';
-        if(p.isin.startsWith('GB')) return p.symbol+'.L';
-        return p.symbol;
+      // ── Build a unified key per position: isin for stocks, SYMBOL for crypto ──
+      // This makes the chart work regardless of import method
+      const posKey = p => {
+        if (p.type === 'crypto') return 'CRYPTO:' + (p.symbol||'').toUpperCase();
+        return p.isin || ('SYM:' + (p.symbol||'').toUpperCase());
+      };
+      const txKey = t => {
+        if (t.type === 'crypto' || (!t.isin && positions.find(p=>p.symbol===t.symbol&&p.type==='crypto')))
+          return 'CRYPTO:' + (t.symbol||'').toUpperCase();
+        return t.isin || ('SYM:' + (t.symbol||'').toUpperCase());
       };
 
-      // ── Reconstruct exact qty per ISIN per day ──
-      const allIsins = [...new Set(sorted.map(t=>t.isin).filter(Boolean))];
+      // ── All unique keys across positions + transactions ──
+      const allKeys = [...new Set([
+        ...positions.map(posKey),
+        ...sorted.map(t => {
+          const isCrypto = positions.find(p => (p.symbol||'').toUpperCase() === (t.symbol||'').toUpperCase() && p.type === 'crypto');
+          if (isCrypto || (t.isin == null && t.symbol)) return 'CRYPTO:' + (t.symbol||'').toUpperCase();
+          return t.isin || ('SYM:' + (t.symbol||'').toUpperCase());
+        }).filter(Boolean),
+      ])].filter(Boolean);
 
-      // ── Qty reconstruction ──
-      // Strategy: use current depot qty as ground truth, work backwards using ALL transactions
-      // This correctly handles positions bought before transaction history starts
+      // ── Qty reconstruction per key per day ──
+      // Ground truth = current position qty, work backwards using transactions
       const depotQty = {};
-      positions.forEach(p=>{ if(p.isin) depotQty[p.isin] = p.qty||0; });
+      positions.forEach(p => { depotQty[posKey(p)] = p.qty || 0; });
 
-      // For each ISIN: qty on day D = depotQty - sum(buys after D) + sum(sells after D)
       const qtyByDay = {};
-      allIsins.forEach(isin=>{
-        const txs = sorted.filter(t=>t.isin===isin);
-        qtyByDay[isin] = new Float64Array(totalDays+1);
-        for(let i=0;i<=totalDays;i++){
-          const d=new Date(from); d.setDate(d.getDate()+i);
-          const ds=d.toISOString().slice(0,10);
-          // qty at ds = current qty minus all buys after ds + all sells after ds
-          let qty = depotQty[isin]||0;
-          txs.filter(t=>t.date>ds).forEach(t=>{
-            qty -= t.type==='buy' ? t.qty : -t.qty;
+      allKeys.forEach(key => {
+        const txs = sorted.filter(t => {
+          const isCrypto = positions.find(p => (p.symbol||'').toUpperCase() === (t.symbol||'').toUpperCase() && p.type === 'crypto');
+          const k = (isCrypto || (t.isin == null && t.symbol)) 
+            ? 'CRYPTO:' + (t.symbol||'').toUpperCase()
+            : (t.isin || ('SYM:' + (t.symbol||'').toUpperCase()));
+          return k === key;
+        });
+        qtyByDay[key] = new Float64Array(totalDays + 1);
+        for (let i = 0; i <= totalDays; i++) {
+          const d = new Date(from); d.setDate(d.getDate() + i);
+          const ds = d.toISOString().slice(0, 10);
+          let qty = depotQty[key] || 0;
+          txs.filter(t => t.date > ds).forEach(t => {
+            if (t.type === 'buy' || t.type === 'transfer_in' || t.type === 'reward') qty -= (t.qty || 0);
+            else if (t.type === 'sell' || t.type === 'transfer_out') qty += (t.qty || 0);
           });
-          qtyByDay[isin][i] = Math.max(0, qty);
+          qtyByDay[key][i] = Math.max(0, qty);
         }
       });
 
-      // qtyByDay built above
+      // ── EUR/USD rate ──
+      let eurUsd = 1.085;
+      try {
+        const fx = await fetch('https://api.frankfurter.app/latest?from=USD&to=EUR').then(r=>r.json());
+        eurUsd = 1 / (fx?.rates?.EUR || 0.92);
+      } catch(e) {}
 
-      // ── EUR/USD ──
-      let eurUsd=1.085;
-      try{ const fx=await fetch('https://api.frankfurter.app/latest?from=USD&to=EUR').then(r=>r.json()); eurUsd=1/(fx?.rates?.EUR||0.92); }catch(e){}
+      // ── Price history map: key → { date → price in EUR } ──
+      const priceByKey = {};
+      const skippedTickers = [];
 
-      // ── Resolve ISIN → FMP ticker ──
-      const isinToTicker={};
+      // ── Stocks/ETFs via FMP ──
+      const stockKeys = allKeys.filter(k => !k.startsWith('CRYPTO:'));
+      
+      // Resolve ISIN → FMP ticker
+      const keyToTicker = {};
       const pickTicker = (results, isin) => {
-        if(!Array.isArray(results)||!results.length) return null;
-        // US ISINs: prefer clean US ticker (no suffix) — APC.DE/NVD.DE are wrong German mappings
-        if(isin?.startsWith('US')) {
-          return (results.find(r=>!r.symbol?.includes('.'))
-            || results.find(r=>r.marketCap>0)
+        if (!Array.isArray(results) || !results.length) return null;
+        if (isin?.startsWith('US')) {
+          return (results.find(r => !r.symbol?.includes('.'))
+            || results.find(r => r.marketCap > 0)
             || results[0])?.symbol || null;
         }
-        // EU ISINs: prefer home exchange
-        return (results.find(r=>r.symbol?.endsWith('.DE'))
-          || results.find(r=>r.symbol?.endsWith('.F'))
-          || results.find(r=>r.symbol?.endsWith('.AS')||r.symbol?.endsWith('.PA'))
-          || results.find(r=>r.marketCap>0)
+        return (results.find(r => r.symbol?.endsWith('.DE'))
+          || results.find(r => r.symbol?.endsWith('.F'))
+          || results.find(r => r.symbol?.endsWith('.AS') || r.symbol?.endsWith('.PA'))
+          || results.find(r => r.marketCap > 0)
           || results[0])?.symbol || null;
       };
 
-      // Step 1: use fmpTicker if already resolved, or ISIN_MAP
-      positions.forEach(p=>{
-        if(!p.isin||p.type==='crypto'||p.type==='derivative') return;
-        if(p.fmpTicker) { isinToTicker[p.isin]=p.fmpTicker; return; }
-        if(ISIN_MAP[p.isin]) { isinToTicker[p.isin]=ISIN_MAP[p.isin]; return; }
+      // Use already-resolved fmpTicker from positions
+      positions.forEach(p => {
+        if (p.type === 'crypto') return;
+        const k = posKey(p);
+        if (p.fmpTicker) { keyToTicker[k] = p.fmpTicker; return; }
+        if (p.isin && ISIN_MAP[p.isin]) { keyToTicker[k] = ISIN_MAP[p.isin]; return; }
       });
 
-      // Step 2: search FMP for all remaining ISINs (current + sold positions)
-      const needsSearch = allIsins.filter(isin=>{
-        const pos = positions.find(p=>p.isin===isin);
-        if(pos?.type==='crypto'||pos?.type==='derivative') return false;
-        return !isinToTicker[isin];
-      });
-      console.log('Searching FMP for', needsSearch.length, 'ISINs, already resolved:', Object.keys(isinToTicker).length);
-      await Promise.all(needsSearch.slice(0,30).map(async isin=>{
-        try{
-          const res = await fmpGet('/search-isin?isin='+isin);
-          const t = pickTicker(res, isin);
-          if(t) { isinToTicker[isin]=t; console.log(isin,'->',t); }
-          else console.warn('no ticker for', isin);
-        }catch(e){ console.warn('search fail', isin, e.message); }
-      }));
-      console.log('Total resolved:', Object.keys(isinToTicker).length, '/', allIsins.length);
-      console.log('Sample tickers:', Object.values(isinToTicker).slice(0,10));
-
-      // ── Price history per ticker ──
-      const priceByIsin={};
-      const skippedTickers=[];
-      const uniqueTickers = [...new Set(Object.values(isinToTicker))];
-      // Sequential batches (FMP free plan rate-limits concurrent requests)
-      const CHART_CONCURRENCY = 3;
-      let chartDoneCount = 0;
-      for (let ci = 0; ci < uniqueTickers.length; ci += CHART_CONCURRENCY) {
-        const batch = uniqueTickers.slice(ci, ci + CHART_CONCURRENCY);
-        setChartProgress(`Loading ${batch.join(', ')} (${ci+1}–${Math.min(ci+CHART_CONCURRENCY, uniqueTickers.length)} of ${uniqueTickers.length})…`);
-        await Promise.all(batch.map(async ticker=>{
-        try{
-          const data = await fmpGet('/historical-price-eod/full?symbol='+ticker+'&from='+fromStr+'&to='+toStr);
-          // premium check now handled in fmpGet via throw
-          // Stable API returns flat array, not {historical:[]}
-          const hist = Array.isArray(data) ? data : (data?.historical||[]);
-          if(!hist.length){ skippedTickers.push(ticker+'(no data)'); return; }
-          const isins = Object.entries(isinToTicker).filter(([,t])=>t===ticker).map(([i])=>i);
-          const isUsd = !ticker.endsWith('.DE')&&!ticker.endsWith('.F')&&!ticker.endsWith('.AS')&&!ticker.endsWith('.PA')&&!ticker.endsWith('.L');
-          isins.forEach(isin=>{
-            priceByIsin[isin]={};
-            hist.forEach(h=>{ priceByIsin[isin][h.date]=isUsd?h.close/eurUsd:h.close; });
-          });
-        }catch(e){ if(e.message==='Premium') skippedTickers.push(ticker+'(premium)'); else { skippedTickers.push(ticker+'(err)'); console.warn('hist fail:',ticker,e.message); } }
+      // Search FMP for unresolved ISINs
+      const needsSearch = stockKeys.filter(k => !keyToTicker[k] && k.length > 4 && !k.startsWith('SYM:'));
+      if (needsSearch.length > 0) {
+        setChartProgress(`Resolving ${needsSearch.length} ticker(s)…`);
+        await Promise.all(needsSearch.slice(0, 30).map(async isin => {
+          try {
+            const res = await fmpGet('/search-isin?isin=' + isin);
+            const t = pickTicker(res, isin);
+            if (t) keyToTicker[isin] = t;
+          } catch(e) {}
         }));
-      } // end batch loop
+      }
 
-      // ── Crypto via CoinGecko ──
-      const cryptoPos = positions.filter(p=>p.type==='crypto'&&p.coinId&&p.qty>0);
-      await Promise.all(cryptoPos.map(async p=>{
-        if(!p.isin) return;
-        try{
-          const cg=await fetch('https://api.coingecko.com/api/v3/coins/'+p.coinId+'/market_chart?vs_currency=eur&days='+(months*30+5)).then(r=>r.json());
-          priceByIsin[p.isin]={};
-          (cg.prices||[]).forEach(([ts,pr])=>{ priceByIsin[p.isin][new Date(ts).toISOString().slice(0,10)]=pr; });
-        }catch(e){}
+      // Fetch historical prices for stocks
+      const uniqueTickers = [...new Set(Object.values(keyToTicker))];
+      const CONCURRENCY = 3;
+      for (let ci = 0; ci < uniqueTickers.length; ci += CONCURRENCY) {
+        const batch = uniqueTickers.slice(ci, ci + CONCURRENCY);
+        setChartProgress(`Loading ${batch.join(', ')} (${ci+1}–${Math.min(ci+CONCURRENCY, uniqueTickers.length)} of ${uniqueTickers.length})…`);
+        await Promise.all(batch.map(async ticker => {
+          try {
+            const data = await fmpGet('/historical-price-eod/full?symbol=' + ticker + '&from=' + fromStr + '&to=' + toStr);
+            const hist = Array.isArray(data) ? data : (data?.historical || []);
+            if (!hist.length) { skippedTickers.push(ticker + '(no data)'); return; }
+            const keys = Object.entries(keyToTicker).filter(([,t]) => t === ticker).map(([k]) => k);
+            const isUsd = !ticker.endsWith('.DE') && !ticker.endsWith('.F') && !ticker.endsWith('.AS') && !ticker.endsWith('.PA') && !ticker.endsWith('.L');
+            keys.forEach(k => {
+              priceByKey[k] = {};
+              hist.forEach(h => { priceByKey[k][h.date] = isUsd ? h.close / eurUsd : h.close; });
+            });
+          } catch(e) {
+            if (e.message === 'Premium') skippedTickers.push(ticker + '(premium)');
+            else skippedTickers.push(ticker + '(err)');
+          }
+        }));
+      }
+
+      // ── Crypto via CoinGecko (by symbol, no ISIN needed) ──
+      const cryptoKeys = allKeys.filter(k => k.startsWith('CRYPTO:'));
+      const cryptoPositions = positions.filter(p => p.type === 'crypto' && p.qty > 0);
+      setChartProgress(`Loading ${cryptoKeys.length} crypto price histories…`);
+      await Promise.all(cryptoPositions.map(async p => {
+        const key = posKey(p);
+        const coinId = p.coinId || getCoinId(p.symbol);
+        if (!coinId) return;
+        try {
+          const days = Math.min(365, months * 30 + 5);
+          const cg = await fetch(
+            'https://api.coingecko.com/api/v3/coins/' + coinId + '/market_chart?vs_currency=eur&days=' + days
+          ).then(r => r.json());
+          priceByKey[key] = {};
+          (cg.prices || []).forEach(([ts, pr]) => {
+            priceByKey[key][new Date(ts).toISOString().slice(0, 10)] = pr;
+          });
+        } catch(e) { skippedTickers.push(p.symbol + '(cg-err)'); }
       }));
 
       // ── Benchmark history ──
-      const BM_FMP={sp500:'SPY',nasdaq:'QQQ',dax:'EWG',btc:'GBTC'};
-      const bmPrices={};
-      await Promise.all(activeBM.map(async id=>{
-        try{
-          const data=await fmpGet('/historical-price-eod/full?symbol='+encodeURIComponent(BM_FMP[id])+'&from='+fromStr+'&to='+toStr);
-          // premium check now handled in fmpGet via throw
-          bmPrices[id]={};
-          const bmHist = Array.isArray(data) ? data : (data?.historical||[]);
-          bmHist.forEach(h=>{ bmPrices[id][h.date]=h.close; });
-        }catch(e){}
+      const BM_FMP = { sp500: 'SPY', nasdaq: 'QQQ', dax: 'EWG', btc: 'GBTC' };
+      const bmPrices = {};
+      await Promise.all(activeBM.map(async id => {
+        try {
+          const data = await fmpGet('/historical-price-eod/full?symbol=' + encodeURIComponent(BM_FMP[id]) + '&from=' + fromStr + '&to=' + toStr);
+          bmPrices[id] = {};
+          const bmHist = Array.isArray(data) ? data : (data?.historical || []);
+          bmHist.forEach(h => { bmPrices[id][h.date] = h.close; });
+        } catch(e) {}
       }));
 
-      // ── Build carry-forward price maps (every day, no step) ──
-      const lastPrice={};
-      const lastBmPrice={};
-      // priceOnDay[isin][i] = price at day i (carry-forward filled)
-      const priceOnDay={};
-      allIsins.forEach(isin=>{ priceOnDay[isin]=new Float64Array(totalDays+1); });
-      for(let i=0;i<=totalDays;i++){
-        const d=new Date(from); d.setDate(d.getDate()+i);
-        const ds=d.toISOString().slice(0,10);
-        allIsins.forEach(isin=>{
-          const p=priceByIsin[isin]?.[ds];
-          if(p!=null) lastPrice[isin]=p;
-          priceOnDay[isin][i]=lastPrice[isin]||0;
-        });
-        activeBM.forEach(id=>{ if(bmPrices[id]?.[ds]) lastBmPrice[id]=bmPrices[id][ds]; });
-      }
-      // bmPriceOnDay[id][i] = benchmark price at day i (carry-forward filled)
-      const bmPriceOnDay={};
-      activeBM.forEach(id=>{
-        bmPriceOnDay[id]=new Float64Array(totalDays+1);
-        Object.keys(lastBmPrice).forEach(k=>delete lastBmPrice[k]);
-        for(let i=0;i<=totalDays;i++){
-          const d=new Date(from); d.setDate(d.getDate()+i);
-          const ds=d.toISOString().slice(0,10);
-          if(bmPrices[id]?.[ds]) lastBmPrice[id]=bmPrices[id][ds];
-          bmPriceOnDay[id][i]=lastBmPrice[id]||0;
-        }
-      });
+      // ── Build carry-forward price maps ──
+      const lastPrice = {};
+      const priceOnDay = {};
+      allKeys.forEach(k => { priceOnDay[k] = new Float64Array(totalDays + 1); });
 
-      // ── Benchmark = hypothetical portfolio that invested same cash flows into benchmark ──
-      // On each buy transaction, "buy" equivalent benchmark units at that day's price.
-      // This makes the comparison fair regardless of when capital was deployed.
-      const bmUnits={};  // benchmark units accumulated per id
-      activeBM.forEach(id=>{ bmUnits[id]=0; });
-      // Sort all buy transactions by date index
-      const sortedBuys = sorted
-        .filter(t=>t.type==='buy' && t.amountEur>0)
-        .map(t=>{
-          const txD = new Date(t.date);
-          const i = Math.max(0, Math.round((txD-from)/86400000));
-          return {i: Math.min(i, totalDays), amount: t.amountEur};
+      const lastBmPrice = {};
+      const bmPriceOnDay = {};
+      activeBM.forEach(id => { bmPriceOnDay[id] = new Float64Array(totalDays + 1); });
+
+      for (let i = 0; i <= totalDays; i++) {
+        const d = new Date(from); d.setDate(d.getDate() + i);
+        const ds = d.toISOString().slice(0, 10);
+        allKeys.forEach(k => {
+          const p = priceByKey[k]?.[ds];
+          if (p != null) lastPrice[k] = p;
+          priceOnDay[k][i] = lastPrice[k] || 0;
         });
-      // Accumulate benchmark units as capital is deployed
-      // bmUnits[id] after all buys = total units if you'd invested all buys into benchmark
-      const bmUnitsOnDay={};
-      activeBM.forEach(id=>{
-        bmUnitsOnDay[id]=new Float64Array(totalDays+1);
-        let units=0;
-        let buyIdx=0;
-        for(let i=0;i<=totalDays;i++){
-          while(buyIdx<sortedBuys.length && sortedBuys[buyIdx].i<=i){
-            const bp=bmPriceOnDay[id][sortedBuys[buyIdx].i];
-            if(bp>0) units+=sortedBuys[buyIdx].amount/bp;
+        activeBM.forEach(id => {
+          if (bmPrices[id]?.[ds]) lastBmPrice[id] = bmPrices[id][ds];
+          bmPriceOnDay[id][i] = lastBmPrice[id] || 0;
+        });
+      }
+
+      // ── Benchmark: hypothetical equal-investment comparison ──
+      const sortedBuys = sorted
+        .filter(t => t.type === 'buy' && t.amountEur > 0)
+        .map(t => {
+          const i = Math.max(0, Math.min(totalDays, Math.round((new Date(t.date) - from) / 86400000)));
+          return { i, amount: t.amountEur };
+        });
+
+      const bmUnitsOnDay = {};
+      activeBM.forEach(id => {
+        bmUnitsOnDay[id] = new Float64Array(totalDays + 1);
+        let units = 0, buyIdx = 0;
+        for (let i = 0; i <= totalDays; i++) {
+          while (buyIdx < sortedBuys.length && sortedBuys[buyIdx].i <= i) {
+            const bp = bmPriceOnDay[id][sortedBuys[buyIdx].i];
+            if (bp > 0) units += sortedBuys[buyIdx].amount / bp;
             buyIdx++;
           }
-          bmUnitsOnDay[id][i]=units;
+          bmUnitsOnDay[id][i] = units;
         }
       });
 
       // ── Assemble rows ──
-      const rows=[];
-      for(let i=0;i<=totalDays;i+=step){
-        const d=new Date(from); d.setDate(d.getDate()+i);
-        const baseRow=investedChartData[Math.round(i/step)]||{};
+      const rows = [];
+      for (let i = 0; i <= totalDays; i += step) {
+        const d = new Date(from); d.setDate(d.getDate() + i);
+        const baseRow = investedChartData[Math.round(i / step)] || {};
 
-        let portVal=0;
-        allIsins.forEach(isin=>{
-          const qty=qtyByDay[isin]?.[i]||0; if(qty<=0) return;
-          const p=priceOnDay[isin][i]; if(!p) return;
-          portVal+=qty*p;
+        let portVal = 0;
+        allKeys.forEach(k => {
+          const qty = qtyByDay[k]?.[i] || 0; if (qty <= 0) return;
+          const p = priceOnDay[k][i]; if (!p) return;
+          portVal += qty * p;
         });
 
-        const row={
-          date:baseRow.date||d.toLocaleDateString('de-DE',{day:'2-digit',month:'short'}),
-          invested:baseRow.invested||0,
-          ...(portVal>0?{portfolio:+portVal.toFixed(2)}:{}),
+        const row = {
+          date: baseRow.date || d.toLocaleDateString('de-DE', { day: '2-digit', month: 'short' }),
+          invested: baseRow.invested || 0,
+          ...(portVal > 0 ? { portfolio: +portVal.toFixed(2) } : {}),
         };
-        activeBM.forEach(id=>{
-          const units=bmUnitsOnDay[id][i];
-          const p=bmPriceOnDay[id][i];
-          if(units>0&&p>0) row[id]=+(units*p).toFixed(0);
+        activeBM.forEach(id => {
+          const units = bmUnitsOnDay[id][i];
+          const p = bmPriceOnDay[id][i];
+          if (units > 0 && p > 0) row[id] = +(units * p).toFixed(0);
         });
         rows.push(row);
       }
 
       setChartData(rows);
-      if(skippedTickers.length>0){
-        const covered = uniqueTickers.length - skippedTickers.length;
-        setChartError(`Partial data — ${covered}/${uniqueTickers.length} positions loaded. Missing: ${skippedTickers.join(', ')}`);
+      if (skippedTickers.length > 0) {
+        const covered = allKeys.length - skippedTickers.length;
+        setChartError(`Partial data — ${covered}/${allKeys.length} positions loaded. Missing: ${skippedTickers.join(', ')}`);
       }
-    }catch(e){ console.error('fetchChart:',e); setChartError(e.message); }
-    finally{ setChartLoading(false); }
+    } catch(e) { console.error('fetchChart:', e); setChartError(e.message); }
+    finally { setChartLoading(false); setChartProgress(null); }
   }, [transactions, positions, range, activeBM, fmpGet, investedChartData]);
 
   useEffect(()=>{ fetchChart(); }, [fetchChart]);
@@ -9274,7 +9284,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v84 · Dev mode password-gated via VITE_DEV_PASSWORD env var</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v85 · Real portfolio chart: symbol-agnostic qty reconstruction (works for crypto, stocks, any import)</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
