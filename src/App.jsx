@@ -1172,7 +1172,7 @@ function parseBitvavoCSV(rows, headers) {
   // Emits ALL transaction types in the normalized 6-type schema so that
   // broker-agnostic cold wallet detection and position derivation work uniformly.
   const col = h => headers.indexOf(h.toLowerCase());
-  const iDate = col('date'), iType = col('type');
+  const iDate = col('date'), iTime = col('time'), iType = col('type');
   const iCurrency = col('currency'), iAmount = col('amount');
   const iQuotePrice = col('quote price');
   const iRecvCurrency = col('received / paid currency');
@@ -1206,7 +1206,7 @@ function parseBitvavoCSV(rows, headers) {
     const eurAmount = recvCurrency === 'EUR' ? Math.abs(recvAmount) : qty * quotePrice;
 
     txs.push({
-      date: (row[iDate] || '').slice(0, 10),
+      date: ((row[iDate] || '').slice(0, 10) + ' ' + (iTime >= 0 ? (row[iTime] || '') : '')).trim(),
       type: normalizedType,
       symbol: currency,
       isin: null,
