@@ -617,6 +617,24 @@ Return 6-8 items total. Prioritize market-moving news. RETURN ONLY THE JSON ARRA
 // ── ColdWalletModal ────────────────────────────────────────────────────────────
 // Shows after import when transfer_out transactions are detected.
 // Lets user create cold wallets and assign transferred coins to them.
+class ColdWalletErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(e) { return { error: e }; }
+  componentDidCatch(e, info) { console.error('[ColdWallet crash]', e, info?.componentStack); }
+  render() {
+    if (this.state.error) return (
+      <div className="modal-overlay">
+        <div className="modal" style={{padding:24,maxWidth:500}}>
+          <div style={{color:'var(--red)',fontWeight:600,marginBottom:8}}>Cold Wallet Modal Error</div>
+          <pre style={{fontSize:11,color:'var(--text2)',whiteSpace:'pre-wrap',wordBreak:'break-all'}}>{this.state.error?.message}{'\n'}{this.state.error?.stack?.slice(0,600)}</pre>
+          <button className="btn btn-ghost" onClick={this.props.onClose} style={{marginTop:12}}>Close</button>
+        </div>
+      </div>
+    );
+    return this.props.children;
+  }
+}
+
 function ColdWalletModal({ transfers, existingWallets, existingPositions, sourceBroker, onSave, onClose }) {
   const COLD_COLORS = ['#9945ff','#f7931a','#627eea','#e84142','#00d395','#2775ca','#ff6b35','#c3a634'];
 
@@ -8741,7 +8759,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v67 · fix crash: setState inside setState updater in addWallet</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v68 · error boundary on cold wallet modal to surface crash cause</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
@@ -9268,6 +9286,7 @@ export default function App() {
       }}/>}
 
       {showColdWalletModal && (
+        <ColdWalletErrorBoundary onClose={() => setShowColdWalletModal(null)}>
         <ColdWalletModal
           transfers={showColdWalletModal.transfers}
           existingWallets={wallets}
@@ -9303,6 +9322,7 @@ export default function App() {
             setTimeout(fetchPrices, 200);
           }}
         />
+        </ColdWalletErrorBoundary>
       )}
 
       {/* ── Buy / Sell / Cash modals ── */}}
