@@ -617,7 +617,7 @@ Return 6-8 items total. Prioritize market-moving news. RETURN ONLY THE JSON ARRA
 // ── ColdWalletModal ────────────────────────────────────────────────────────────
 // Shows after import when transfer_out transactions are detected.
 // Lets user create cold wallets and assign transferred coins to them.
-function ColdWalletModal({ transfers, existingWallets, existingPositions, onSave, onClose }) {
+function ColdWalletModal({ transfers, existingWallets, existingPositions, sourceBroker, onSave, onClose }) {
   const COLD_COLORS = ['#9945ff','#f7931a','#627eea','#e84142','#00d395','#2775ca','#ff6b35','#c3a634'];
 
   // Wallets: start with ALL existing cold wallets pre-populated
@@ -706,7 +706,7 @@ function ColdWalletModal({ transfers, existingWallets, existingPositions, onSave
         });
       }
     }
-    onSave({ newWallets: wallets, newPositions });
+    onSave({ newWallets: wallets, newPositions, sourceBroker });
   };
 
   const hasExistingWallets = wallets.length > 0;
@@ -9172,26 +9172,32 @@ export default function App() {
           // Apply derived crypto positions (from hardcoded parser or AI)
           if (imported.derivedPositions?.length > 0) {
             const incoming = imported.derivedPositions;
-            // Keep all existing non-crypto positions intact (Smartbroker+ stocks etc)
-            const existingNonCrypto = positions.filter(p => p.type !== 'crypto');
-            // Merge with existing crypto (preserve currentPrice, color, coinId)
+            const brokerName = incoming[0]?.broker || 'Bitvavo';
+            // Keep: non-crypto positions (stocks/ETFs) + crypto on OTHER brokers/cold wallets
+            // Replace: only crypto positions tagged to this broker
+            const existingToKeep = positions.filter(p =>
+              p.type !== 'crypto' || p.broker !== brokerName
+            );
+            // Merge incoming with existing to preserve currentPrice, color, coinId
             const newCrypto = incoming.map((p, i) => {
               const existing = positions.find(q => q.type === 'crypto' &&
+                q.broker === brokerName &&
                 (q.symbol||'').toUpperCase() === (p.symbol||'').toUpperCase());
               return {
                 ...p,
                 id: existing?.id || Date.now() + i,
                 currentPrice: existing?.currentPrice || p.currentPrice || 0,
-                color: existing?.color || p.color || ALLOC_COLORS_EXT[(existingNonCrypto.length + i) % ALLOC_COLORS_EXT.length],
+                color: existing?.color || p.color || ALLOC_COLORS_EXT[(existingToKeep.length + i) % ALLOC_COLORS_EXT.length],
                 coinId: existing?.coinId || p.coinId || getCoinId(p.symbol),
               };
             });
-            setPositions([...existingNonCrypto, ...newCrypto]);
+            setPositions([...existingToKeep, ...newCrypto]);
             setTimeout(fetchPrices, 100);
 
             // Trigger cold wallet assignment modal if transfers were detected during parse
             if (imported.pendingTransfers?.length > 0) {
-              setTimeout(() => setShowColdWalletModal({ transfers: imported.pendingTransfers }), 400);
+              const brokerName = imported.derivedPositions?.[0]?.broker || 'Bitvavo';
+              setTimeout(() => setShowColdWalletModal({ transfers: imported.pendingTransfers, sourceBroker: brokerName }), 400);
             }
           }
         } else {
@@ -9226,17 +9232,40 @@ export default function App() {
           transfers={showColdWalletModal.transfers}
           existingWallets={wallets}
           existingPositions={positions}
+          sourceBroker={showColdWalletModal.sourceBroker}
           onClose={() => setShowColdWalletModal(null)}
-          onSave={({ newWallets, newPositions }) => {
+          onSave={({ newWallets, newPositions, sourceBroker }) => {
             // Merge new cold wallets into wallets list
             setWallets(prev => {
               const existingIds = new Set(prev.map(w => w.id));
               const toAdd = newWallets.filter(w => !existingIds.has(w.id));
               return [...prev, ...toAdd];
             });
-            // Add cold wallet positions (merge if already exists)
             setPositions(prev => {
-              const merged = [...prev];
+              let merged = [...prev];
+
+              // For each coin being assigned to a cold wallet:
+              // 1. Subtract that qty from the source broker position (or remove if fully assigned)
+              // 2. Add/merge the cold wallet position
+              // This prevents phantom broker positions when user assigns all qty to cold wallet.
+              const assignedBySymbol = {};
+              newPositions.forEach(p => {
+                const sym = (p.symbol||'').toUpperCase();
+                assignedBySymbol[sym] = (assignedBySymbol[sym] || 0) + p.qty;
+              });
+
+              // Reduce source broker positions by assigned qty
+              if (sourceBroker) {
+                merged = merged.map(m => {
+                  const sym = (m.symbol||'').toUpperCase();
+                  const assigned = assignedBySymbol[sym];
+                  if (!assigned || m.broker !== sourceBroker || m.type !== 'crypto') return m;
+                  const newQty = Math.max(0, m.qty - assigned);
+                  return { ...m, qty: newQty };
+                }).filter(m => m.qty > 0 || m.type !== 'crypto');
+              }
+
+              // Add/merge cold wallet positions
               newPositions.forEach(p => {
                 const idx = merged.findIndex(m =>
                   (m.symbol||'').toUpperCase() === (p.symbol||'').toUpperCase() &&
