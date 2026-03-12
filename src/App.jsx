@@ -9284,31 +9284,9 @@ export default function App() {
               return [...prev, ...toAdd];
             });
             setPositions(prev => {
-              let merged = [...prev];
-
-              // For each coin being assigned to a cold wallet:
-              // 1. Subtract that qty from the source broker position (or remove if fully assigned)
-              // 2. Add/merge the cold wallet position
-              // This prevents phantom broker positions when user assigns all qty to cold wallet.
-              const assignedBySymbol = {};
-              newPositions.forEach(p => {
-                const sym = (p.symbol||'').toUpperCase();
-                assignedBySymbol[sym] = (assignedBySymbol[sym] || 0) + p.qty;
-              });
-
-              // Reduce source broker positions by assigned qty
-              if (sourceBroker) {
-                merged = merged.map(m => {
-                  const sym = (m.symbol||'').toUpperCase();
-                  const assigned = assignedBySymbol[sym];
-                  if (!assigned || m.broker !== sourceBroker || m.type !== 'crypto') return m;
-                  const newQty = Math.max(0, m.qty - assigned);
-                  return { ...m, qty: newQty };
-                }).filter(m => m.qty > 0 || m.type !== 'crypto');
-              }
-
-              // Add/merge cold wallet positions
-              // Match by symbol + broker name (wallet name) — walletId changes each import
+              const merged = [...prev];
+              // derivePositionsFromTxs already accounts for transfer_out — exchange positions
+              // are already correct (no cold wallet coins in them). Just add/replace cold wallet positions.
               newPositions.forEach(p => {
                 const idx = merged.findIndex(m =>
                   (m.symbol||'').toUpperCase() === (p.symbol||'').toUpperCase() &&
@@ -9316,7 +9294,6 @@ export default function App() {
                   m.type === 'crypto'
                 );
                 if (idx >= 0) {
-                  // Replace entirely — qty and avgPrice are always fresh from transaction history
                   merged[idx] = { ...merged[idx], qty: p.qty, avgPrice: p.avgPrice, walletId: p.walletId };
                 } else {
                   merged.push(p);
