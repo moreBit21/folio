@@ -1085,6 +1085,39 @@ function parseBitvavoCSV(rows, headers) {
   return txs;
 }
 
+function getBitvavoTransferOuts(rows, headers) {
+  // Returns coins sent to cold wallet (net withdrawal qty per symbol)
+  const col = h => headers.indexOf(h.toLowerCase());
+  const iType = col('type'), iCurrency = col('currency'), iAmount = col('amount');
+  const acc = {};
+  const chronoRows = [...rows].reverse();
+  // Track qty to distinguish fully-sold vs transferred
+  const qty = {};
+  for (const row of chronoRows) {
+    const type = (row[iType] || '').toLowerCase().trim();
+    const sym = (row[iCurrency] || '').trim();
+    if (!sym || sym === 'EUR') continue;
+    const amount = Math.abs(parseFloat(row[iAmount]) || 0);
+    if (!qty[sym]) qty[sym] = 0;
+    if (type === 'buy') qty[sym] += amount;
+    else if (type === 'sell') qty[sym] = Math.max(0, qty[sym] - amount);
+    else if (type === 'deposit') qty[sym] += amount;
+    else if (type === 'staking' || type === 'fixed_staking' || type === 'rebate' || type === 'campaign_new_user_incentive') qty[sym] += amount;
+    else if (type === 'withdrawal') {
+      // Only count as cold wallet transfer if we had qty at the time (not a sell-then-withdraw pattern)
+      if (qty[sym] > 0) {
+        if (!acc[sym]) acc[sym] = { symbol: sym, name: sym, qty: 0 };
+        const withdrawn = Math.min(amount, qty[sym]);
+        acc[sym].qty += withdrawn;
+        qty[sym] = Math.max(0, qty[sym] - amount);
+      }
+    } else if (type === 'margin_loan_repay') {
+      qty[sym] = Math.max(0, qty[sym] - amount);
+    }
+  }
+  return Object.values(acc).filter(t => t.qty > 0.01);
+}
+
 function deriveBitvavoPositions(rows, headers) {
   const col = h => headers.indexOf(h.toLowerCase());
   const iDate = col('date'), iType = col('type');
@@ -1522,6 +1555,7 @@ function ImportModal({ onClose, onImport, existingPositions = [], existingTransa
   const [parseMethod, setParseMethod] = useState(""); // "hardcoded"|"learned"|"ai"
   const [aiResult, setAiResult] = useState(null);
   const [derivedPositions, setDerivedPositions] = useState([]);
+  const [pendingTransfers, setPendingTransfers] = useState(null);
   const [importMode, setImportMode] = useState(getStoredImportMode);
   const remaining = getRemainingImports();
   const learnedCount = getLearnedParserCount();
@@ -1606,6 +1640,9 @@ function ImportModal({ onClose, onImport, existingPositions = [], existingTransa
           setParseMethod('hardcoded');
           // Store derived positions so onImport can apply them
           setDerivedPositions(positions);
+          // Detect cold wallet transfers for post-import prompt
+          const transfers = getBitvavoTransferOuts(rows, headers);
+          setPendingTransfers(transfers.length > 0 ? transfers : null);
           setStep('activity');
           return;
         }
@@ -2109,7 +2146,7 @@ function ImportModal({ onClose, onImport, existingPositions = [], existingTransa
             existingCount={existingTransactions.length}
             incomingCount={txPreview?.count || 0}
             label="transaction"
-            onImport={(m)=>onImport({ type: "transactions", data: txData, mode: m, derivedPositions: derivedPositions.length > 0 ? derivedPositions : null })}
+            onImport={(m)=>onImport({ type: "transactions", data: txData, mode: m, derivedPositions: derivedPositions.length > 0 ? derivedPositions : null, pendingTransfers })}
             onBack={()=>setStep("upload")}
           />
         </>)}
@@ -9003,18 +9040,9 @@ export default function App() {
             setPositions([...existingNonCrypto, ...newCrypto]);
             setTimeout(fetchPrices, 100);
 
-            // Detect transferred-out coins and prompt user to assign to cold wallet
-            const transferOuts = {};
-            for (const t of finalTxs) {
-              if (t.type !== 'transfer_out') continue;
-              const sym = (t.symbol || '').toUpperCase();
-              if (!sym || sym === 'EUR') continue;
-              if (!transferOuts[sym]) transferOuts[sym] = { symbol: sym, name: t.name || sym, qty: 0 };
-              transferOuts[sym].qty += Math.abs(t.qty || 0);
-            }
-            const transferList = Object.values(transferOuts).filter(t => t.qty > 0.000001);
-            if (transferList.length > 0) {
-              setTimeout(() => setShowColdWalletModal({ transfers: transferList }), 400);
+            // Trigger cold wallet assignment modal if transfers were detected during parse
+            if (imported.pendingTransfers?.length > 0) {
+              setTimeout(() => setShowColdWalletModal({ transfers: imported.pendingTransfers }), 400);
             }
           }
         } else {
