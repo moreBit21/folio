@@ -2099,8 +2099,23 @@ function setStoredImportMode(mode) {
   try { localStorage.setItem(IMPORT_MODE_KEY, mode); } catch {}
 }
 
+const KNOWN_BROKERS = [
+  { id: "bitvavo",        label: "Bitvavo",         color: "#1a6aff", flag: "🇳🇱", type: "crypto" },
+  { id: "smartbroker",   label: "Smartbroker+",    color: "#00a4ef", flag: "🇩🇪", type: "broker" },
+  { id: "trade_republic",label: "Trade Republic",  color: "#e63b2e", flag: "🇩🇪", type: "broker" },
+  { id: "scalable",      label: "Scalable Capital",color: "#00e5a0", flag: "🇩🇪", type: "broker" },
+  { id: "degiro",        label: "DEGIRO",          color: "#ff6b00", flag: "🇳🇱", type: "broker" },
+  { id: "flatex",        label: "Flatex",          color: "#004b8d", flag: "🇩🇪", type: "broker" },
+  { id: "interactive_brokers", label: "Interactive Brokers", color: "#e31837", flag: "🌍", type: "broker" },
+  { id: "coinbase",      label: "Coinbase",        color: "#0052ff", flag: "🇺🇸", type: "crypto" },
+  { id: "binance",       label: "Binance",         color: "#f0b90b", flag: "🌍", type: "crypto" },
+  { id: "kraken",        label: "Kraken",          color: "#5741d9", flag: "🇺🇸", type: "crypto" },
+  { id: "other",         label: "Other / Unknown", color: "#7a8a98", flag: "🏦", type: "other" },
+];
+
 function ImportModal({ onClose, onImport, existingPositions = [], existingTransactions = [] }) {
-  const [step, setStep] = useState("upload");
+  const [step, setStep] = useState("broker");
+  const [selectedBroker, setSelectedBroker] = useState(null);
   const [broker, setBroker] = useState(null);
   const [preview, setPreview] = useState([]);
   const [txPreview, setTxPreview] = useState(null);
@@ -2278,7 +2293,7 @@ function ImportModal({ onClose, onImport, existingPositions = [], existingTransa
         response = await fetch("/api/ai-import", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ content, fileType: fType, fileName: file.name }),
+          body: JSON.stringify({ content, fileType: fType, fileName: file.name, brokerHint: selectedBroker?.id || null, brokerLabel: selectedBroker?.label || null }),
         });
       } catch(fetchErr) {
         throw new Error(`Network error — could not reach /api/ai-import: ${fetchErr.message}`);
@@ -2461,19 +2476,47 @@ function ImportModal({ onClose, onImport, existingPositions = [], existingTransa
         </div>
 
         {/* ── UPLOAD ─────────────────────────────────────────────────────── */}
+        {step === "broker" && (
+          <div>
+            <div style={{ marginBottom: 18 }}>
+              <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text)", marginBottom: 4 }}>Where is your file from?</div>
+              <div style={{ fontSize: 12, color: "var(--text3)" }}>Helps the AI recognise the exact export format — even for unknown brokers</div>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 20 }}>
+              {KNOWN_BROKERS.map(b => (
+                <button key={b.id} onClick={() => { setSelectedBroker(b); setStep("upload"); }}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 10, padding: "12px 14px",
+                    borderRadius: 8, cursor: "pointer", textAlign: "left",
+                    border: `1px solid ${b.color}44`, background: `${b.color}0d`,
+                    color: "var(--text)", transition: "all 0.15s",
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.background = `${b.color}22`}
+                  onMouseLeave={e => e.currentTarget.style.background = `${b.color}0d`}
+                >
+                  <span style={{ fontSize: 18 }}>{b.flag}</span>
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: b.color }}>{b.label}</div>
+                    <div style={{ fontSize: 10, color: "var(--text3)", marginTop: 1 }}>{b.type === "crypto" ? "Crypto exchange" : b.type === "broker" ? "Stock broker" : "Any format"}</div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         {step === "upload" && (<>
 
-          <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
-            {[
-              { label: "Smartbroker+", color: "#00a4ef" },
-              { label: "Bitvavo",       color: "#1a6aff" },
-              { label: "Trade Republic",color: "#e63b2e" },
-              { label: "Scalable",      color: "#00e5a0" },
-              { label: "+ Any broker",  color: "#7a8a98" },
-            ].map(b => (
-              <div key={b.label} style={{ padding: "4px 10px", borderRadius: 4, background: `${b.color}18`, border: `1px solid ${b.color}33`, fontSize: 11, color: b.color, fontFamily: "IBM Plex Mono,monospace" }}>{b.label}</div>
-            ))}
-          </div>
+          {/* Selected broker header */}
+          {selectedBroker && (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, padding: "8px 12px", borderRadius: 6, background: `${selectedBroker.color}12`, border: `1px solid ${selectedBroker.color}33` }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 16 }}>{selectedBroker.flag}</span>
+                <span style={{ fontSize: 12, fontWeight: 600, color: selectedBroker.color }}>{selectedBroker.label}</span>
+              </div>
+              <button onClick={() => setStep("broker")} style={{ fontSize: 10, color: "var(--text3)", background: "none", border: "none", cursor: "pointer", padding: "2px 6px" }}>change ↩</button>
+            </div>
+          )}
 
           <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
             {[
@@ -9204,7 +9247,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v79 · Fix back nav from stock detail → portfolio</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v80 · Broker picker at import; broker hint + web search in AI parser</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
