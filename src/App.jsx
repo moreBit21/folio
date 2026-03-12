@@ -9043,45 +9043,55 @@ export default function App() {
       }
 
       // ── Shadow Portfolio Benchmark ──
-      // For every real buy/sell, mirror the same EUR amount into the benchmark ETF.
-      // buy  → purchase (amountEur / bmPrice) benchmark units
-      // sell → redeem   (amountEur / bmPrice) benchmark units (pro-rata)
-      // Result: "if you had invested every euro into SPY instead, what would it be worth?"
-      // This is the correct cash-flow-adjusted comparison (mirrors Time-Weighted Return logic).
+      // Strategy: seed with the portfolio's opening value on day 0, then mirror
+      // every in-window buy/sell as a cash flow adjustment.
+      //
+      // Seed (day 0):   buy (portVal_day0 / bmPrice_day0) units  → benchmark starts at same EUR value
+      // In-window buy:  buy  (amountEur / bmPrice_that_day) more units
+      // In-window sell: sell (amountEur / bmPrice_that_day) units (proportional reduction)
+      //
+      // This correctly answers: "if you had put the same money into SPY — both the opening
+      // balance AND every subsequent deposit/withdrawal — what would it be worth?"
 
-      const bmUnits = {}; // running unit count per benchmark
-      activeBM.forEach(id => { bmUnits[id] = 0; });
+      // Step 1: compute portfolio value on day 0 (needed for seed)
+      let portValDay0 = 0;
+      allKeys.forEach(k => {
+        const qty = qtyByDay[k]?.[0] || 0; if (qty <= 0) return;
+        const p = priceOnDay[k][0]; if (!p) return;
+        portValDay0 += qty * p;
+      });
 
-      // Pre-sort transactions by date (already sorted, but just in case)
-      const cashFlows = sorted.filter(t => (t.type === 'buy' || t.type === 'sell') && t.amountEur > 0);
+      // Step 2: in-window cash flows only (transactions on/after fromStr)
+      const cashFlows = sorted.filter(t =>
+        (t.type === 'buy' || t.type === 'sell') && t.amountEur > 0 && t.date >= fromStr
+      );
 
-      // Build shadow units per day using a running accumulator
-      // For each day, apply any transactions that fell on that day
+      // Step 3: build shadow units day by day
       const bmUnitsOnDay = {};
       activeBM.forEach(id => { bmUnitsOnDay[id] = new Float64Array(totalDays + 1); });
 
-      let cfIdx = 0;
       const runningUnits = {};
-      activeBM.forEach(id => { runningUnits[id] = 0; });
+      activeBM.forEach(id => {
+        // Seed: buy portValDay0 worth of benchmark at day-0 price
+        const p0 = bmPriceOnDay[id][0];
+        runningUnits[id] = p0 > 0 ? portValDay0 / p0 : 0;
+      });
 
+      let cfIdx = 0;
       for (let i = 0; i <= totalDays; i++) {
         const d = new Date(from); d.setDate(d.getDate() + i);
         const ds = d.toISOString().slice(0, 10);
 
-        // Apply all transactions on this day
+        // Apply cash flows that land on this day
         while (cfIdx < cashFlows.length && cashFlows[cfIdx].date <= ds) {
           const tx = cashFlows[cfIdx++];
-          // Only apply if the transaction date falls within our chart window
-          if (tx.date < fromStr) continue;
           activeBM.forEach(id => {
-            const p = bmPriceOnDay[id][Math.round((new Date(tx.date) - from) / 86400000)] || bmPriceOnDay[id][i];
+            const p = bmPriceOnDay[id][i];
             if (!p) return;
             if (tx.type === 'buy') {
               runningUnits[id] += tx.amountEur / p;
-            } else if (tx.type === 'sell') {
-              // Sell proportionally — reduce units by the same EUR value
-              const unitsToSell = Math.min(runningUnits[id], tx.amountEur / p);
-              runningUnits[id] = Math.max(0, runningUnits[id] - unitsToSell);
+            } else {
+              runningUnits[id] = Math.max(0, runningUnits[id] - tx.amountEur / p);
             }
           });
         }
@@ -9113,8 +9123,8 @@ export default function App() {
         });
         rows.push(row);
       }
-      // No rebase needed — shadow portfolio naturally tracks the same cash flows as the real portfolio,
-      // so both lines start at the same value on day 1 (first buy = same EUR in both).
+      // Seed ensures both lines open at the same EUR value on day 0.
+      // In-window cash flows keep them in sync. No additional rebase needed.
 
       setChartData(rows);
       if (skippedTickers.length > 0) {
@@ -9333,7 +9343,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v93 · Benchmark: Shadow Portfolio method — mirror every buy/sell into SPY (cash-flow adjusted, fair comparison)</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v94 · Benchmark: shadow portfolio seeded at portfolio day-0 value + in-window cash flows mirrored</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
