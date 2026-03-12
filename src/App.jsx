@@ -7217,7 +7217,7 @@ function PortfolioPage({ positions, transactions, wallets, onOpenStock, priceLoa
 
       {/* ── Tabs ── */}
       <div style={{display:'flex',gap:8,marginBottom:16}}>
-        {[['positions','Positions'],['wallets','By Wallet'],['analysis','Analysis']].map(([id,label])=>(
+        {[['positions','Positions'],['wallets','By Account'],['analysis','Analysis']].map(([id,label])=>(
           <button key={id} onClick={()=>{setTab(id);setDrillFilter(null);}} className="mono"
             style={{padding:'7px 16px',borderRadius:6,cursor:'pointer',fontSize:11,letterSpacing:'0.06em',
               border:'1px solid',transition:'all 0.15s',
@@ -7431,13 +7431,25 @@ function PortfolioPage({ positions, transactions, wallets, onOpenStock, priceLoa
               const groupPnl = groupVal - groupCost;
               const allocPct = grandTotal > 0 ? (groupVal / grandTotal * 100) : 0;
               const walletColor = wallet?.color || (isCold ? '#9945ff' : 'var(--green)');
+              const isExpanded = !collapsedGroups.has('acct_' + brokerName);
+              const toggleAcct = () => setCollapsedGroups(prev => {
+                const s = new Set(prev);
+                const k = 'acct_' + brokerName;
+                s.has(k) ? s.delete(k) : s.add(k);
+                return s;
+              });
               return (
                 <div key={brokerName} className="card" style={{ padding: 0, overflow: 'hidden',
                   borderColor: walletColor + '30' }}>
-                  {/* Wallet header */}
-                  <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)',
-                    background: walletColor + '08', display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <div style={{ width: 10, height: 10, borderRadius: '50%', background: walletColor, flexShrink: 0 }} />
+                  {/* Wallet header — clickable to expand/collapse */}
+                  <div onClick={toggleAcct}
+                    style={{ padding: '14px 20px', borderBottom: isExpanded ? '1px solid var(--border)' : 'none',
+                    background: walletColor + '08', display: 'flex', alignItems: 'center', gap: 12,
+                    cursor: 'pointer', userSelect: 'none', transition: 'background 0.15s' }}
+                    onMouseEnter={e => e.currentTarget.style.background = walletColor + '14'}
+                    onMouseLeave={e => e.currentTarget.style.background = walletColor + '08'}>
+                    <span style={{ fontSize: 10, color: walletColor, transition: 'transform 0.15s',
+                      transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)', display: 'inline-block' }}>▶</span>
                     <div style={{ flex: 1 }}>
                       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
                         <span style={{ fontSize: 15, fontWeight: 600 }}>
@@ -7446,6 +7458,9 @@ function PortfolioPage({ positions, transactions, wallets, onOpenStock, priceLoa
                         <span className="mono" style={{ fontSize: 9, color: 'var(--text3)', padding: '1px 6px',
                           background: 'var(--surface2)', borderRadius: 3, letterSpacing: '0.08em' }}>
                           {isCold ? 'COLD WALLET' : 'BROKER'}
+                        </span>
+                        <span className="mono" style={{ fontSize: 10, color: 'var(--text3)' }}>
+                          {poses.length} position{poses.length !== 1 ? 's' : ''}
                         </span>
                       </div>
                     </div>
@@ -7461,7 +7476,8 @@ function PortfolioPage({ positions, transactions, wallets, onOpenStock, priceLoa
                       </div>
                     </div>
                   </div>
-                  {/* Positions list */}
+                  {/* Positions list — only shown when expanded */}
+                  {isExpanded && (
                   <div>
                     {poses.sort((a,b) => b.qty*b.currentPrice - a.qty*a.currentPrice).map((p, i) => {
                       const val = p.qty * p.currentPrice;
@@ -7498,6 +7514,7 @@ function PortfolioPage({ positions, transactions, wallets, onOpenStock, priceLoa
                       );
                     })}
                   </div>
+                  )}
                 </div>
               );
             })}
@@ -8866,7 +8883,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v71 · fix crash: DangerZone extracted to proper component (hooks can't be in IIFE)</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v72 · By Account (renamed), collapsible broker/wallet rows</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
