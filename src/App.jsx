@@ -627,27 +627,16 @@ function ColdWalletModal({ transfers, existingWallets, existingPositions, source
   const [newWalletName, setNewWalletName] = useState('');
 
   // allocations: { symbol: { walletId: qtyString } }
-  // Pre-fill existing cold wallet positions so re-import doesn't lose existing assignments
   const [allocations, setAllocations] = useState(() => {
     const init = {};
     const coldWallets = existingWallets.filter(w => w.type === 'cold_wallet');
     for (const t of transfers) {
       init[t.symbol] = {};
-      // Pre-fill any existing cold wallet positions for this coin
-      const existing = (existingPositions || []).filter(p =>
-        p.type === 'crypto' && (p.symbol || '').toUpperCase() === t.symbol &&
-        coldWallets.find(w => w.id === p.walletId)
-      );
-      if (existing.length > 0) {
-        // Always use the freshly detected t.qty — existing pos qty may be stale from a previous import
-        // Distribute detected qty proportionally if split across multiple wallets, otherwise assign all to first
-        const totalExisting = existing.reduce((s, p) => s + p.qty, 0);
-        for (const pos of existing) {
-          const frac = totalExisting > 0 ? pos.qty / totalExisting : 1;
-          init[t.symbol][pos.walletId] = String(Math.round(t.qty * frac * 1e6) / 1e6);
-        }
-      } else if (coldWallets.length === 1) {
-        // Single cold wallet — auto-fill full detected qty so user doesn't have to click each coin
+      if (coldWallets.length === 1) {
+        // Single cold wallet — always assign full detected qty (source of truth is transaction history)
+        init[t.symbol][coldWallets[0].id] = String(Math.round(t.qty * 1e6) / 1e6);
+      } else if (coldWallets.length > 1) {
+        // Multiple wallets — assign all to first by default, user can redistribute
         init[t.symbol][coldWallets[0].id] = String(Math.round(t.qty * 1e6) / 1e6);
       }
     }
@@ -9319,14 +9308,16 @@ export default function App() {
               }
 
               // Add/merge cold wallet positions
+              // Match by symbol + broker name (wallet name) — walletId changes each import
               newPositions.forEach(p => {
                 const idx = merged.findIndex(m =>
                   (m.symbol||'').toUpperCase() === (p.symbol||'').toUpperCase() &&
-                  m.walletId === p.walletId
+                  m.broker === p.broker &&
+                  m.type === 'crypto'
                 );
                 if (idx >= 0) {
-                  // Replace qty and avgPrice entirely on re-import — never add onto stale avgPrice=0
-                  merged[idx] = { ...merged[idx], qty: p.qty, avgPrice: p.avgPrice || merged[idx].avgPrice };
+                  // Replace entirely — qty and avgPrice are always fresh from transaction history
+                  merged[idx] = { ...merged[idx], qty: p.qty, avgPrice: p.avgPrice, walletId: p.walletId };
                 } else {
                   merged.push(p);
                 }
