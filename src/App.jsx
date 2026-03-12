@@ -1292,6 +1292,7 @@ function parseSmartbrokerActivity(rows, headers) {
   const iType=hi('transaktionstyp'), iISIN=hi('isin'), iName=hi('name 1|name1');
   const iQty=hi('stücke|stucke'), iAmount=hi('anlagebetrag in kontow');
   const iDate=hi('valutadatum'), iStatus=hi('status');
+  const iKuerzel=hi('kürzel|kurzel|wkn');
   const pd = s => parseFloat(String(s||'').trim().replace(/\./g,'').replace(',','.')) || 0;
   return rows
     .filter(r => {
@@ -1299,14 +1300,22 @@ function parseSmartbrokerActivity(rows, headers) {
       const type=(r[iType]||'').trim().toUpperCase();
       return status==='CONFIRMED'&&(type==='BUY'||type==='SELL'||type==='BUY_SAVINGSPLAN');
     })
-    .map(r => ({
-      date: (r[iDate]||'').trim(),
-      type: (r[iType]||'').toUpperCase().includes('SELL')?'sell':'buy',
-      amountEur: Math.abs(pd(r[iAmount])),
-      isin: (r[iISIN]||'').trim(),
-      name: (r[iName]||'').trim(),
-      qty: pd(r[iQty]),
-    }))
+    .map(r => {
+      const isin = (r[iISIN]||'').trim();
+      const kuerzel = iKuerzel>=0 ? (r[iKuerzel]||'').trim() : '';
+      // symbol: use Kürzel if available and not an ISIN, else ISIN_MAP lookup, else isin itself
+      const symbol = (kuerzel && !isISIN(kuerzel)) ? kuerzel.toUpperCase()
+        : (ISIN_MAP[isin] || isin);
+      return {
+        date: (r[iDate]||'').trim(),
+        type: (r[iType]||'').toUpperCase().includes('SELL')?'sell':'buy',
+        amountEur: Math.abs(pd(r[iAmount])),
+        isin,
+        symbol,
+        name: (r[iName]||'').trim(),
+        qty: pd(r[iQty]),
+      };
+    })
     .filter(t=>t.date&&t.amountEur>0);
 }
 function isSmartbrokerActivity(headers) {
@@ -1631,7 +1640,7 @@ function derivePositionsFromTxs(normalizedTxs, brokerName) {
       name: h.name,
       qty: Math.round(h.qty * 1e8) / 1e8,
       avgPrice: h.qty > 0 && h.totalCost > 0 ? h.totalCost / h.qty : 0,
-      type: inferType(h.symbol, h.isin, h.name, 'crypto'),
+      type: inferType(h.symbol, h.isin, h.name, h.isin ? 'stock' : 'crypto'),
       broker: brokerName || 'Imported',
       coinId: getCoinId(h.symbol),
     }));
@@ -2187,14 +2196,19 @@ function ImportModal({ onClose, onImport, existingPositions = [], existingTransa
         const { headers, rows } = parseCSV(textContent);
 
         // Smartbroker+ activity (transaction history)
+        // Smartbroker+ activity CSV — fully self-sufficient, derives positions from tx history
         if (isSmartbrokerActivity(headers)) {
           const txs = parseSmartbrokerActivity(rows, headers);
           if (txs.length) {
             const dates = txs.map(t => t.date).sort();
             const net = txs.reduce((s,t) => s + (t.type==="buy" ? t.amountEur : -t.amountEur), 0);
+            const derived = derivePositionsFromTxs(txs, 'Smartbroker+').map((p, i) => ({
+              ...p, id: Date.now()+i, color: ALLOC_COLORS_EXT[i % ALLOC_COLORS_EXT.length], currentPrice: 0,
+            }));
             setTxData(txs);
             setTxPreview({ count: txs.length, from: dates[0], to: dates[dates.length-1], net, brokerName: "Smartbroker+" });
             setParseMethod("hardcoded");
+            setDerivedPositions(derived);
             setStep("activity");
             return;
           }
@@ -9284,7 +9298,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v85 · Real portfolio chart: symbol-agnostic qty reconstruction (works for crypto, stocks, any import)</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v86 · Smartbroker tx-only import: derives positions from history, no depot snapshot needed</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
@@ -9670,7 +9684,7 @@ export default function App() {
                 <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10}}>
                   {[
                     {broker:"Bitvavo",   steps:"Account → Transaction History → Export → Full History (CSV)",   native:true},
-                    {broker:"Smartbroker+", steps:"Depot → Transaktionen → Export → CSV",                       native:true},
+                    {broker:"Smartbroker+", steps:"Konto → Transaktionen → Export → CSV",                       native:true},
                     {broker:"Trade Republic", steps:"Use TR Exporter browser extension, then import CSV here",  native:false},
                   ].map(b=>(
                     <div key={b.broker} style={{background:"var(--surface2)",borderRadius:8,padding:"14px 16px",border:"1px solid var(--border)"}}>
