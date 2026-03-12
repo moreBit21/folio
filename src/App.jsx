@@ -8453,10 +8453,13 @@ export default function App() {
   // Single ref that always holds latest state — updated in one effect after ALL state is declared.
   // This avoids Vite TDZ crashes from individual per-state ref effects.
   const positionsRef = React.useRef([]);
-  const stateRef = React.useRef({ positions: [], transactions: [], watchlists: [] });
+  const stateRef = React.useRef({ positions: [], transactions: [], watchlists: [], coldWallets: [] });
   React.useEffect(() => {
     positionsRef.current = positions;
-    stateRef.current = { positions, transactions, watchlists };
+    stateRef.current = {
+      positions, transactions, watchlists,
+      coldWallets: wallets.filter(w => w.type === 'cold_wallet'),
+    };
   }); // no dependency array — runs after every render, always current
 
   // ─────────────────────────────────────────────
@@ -8517,6 +8520,10 @@ export default function App() {
           if (plain.positions    && plain.positions.length)    setPositions(plain.positions);
           if (plain.transactions && plain.transactions.length) setTransactions(plain.transactions);
           if (plain.watchlists   && plain.watchlists.length)   setWatchlists(plain.watchlists);
+          if (plain.coldWallets  && plain.coldWallets.length)  setWallets(prev => {
+            const defaultBrokers = prev.filter(w => w.type !== 'cold_wallet');
+            return [...defaultBrokers, ...plain.coldWallets];
+          });
         }
       } catch (e) { console.warn('Cloud load error:', e.message); }
       finally { setCloudLoading(false); loadedRef.current = true; }
@@ -8529,7 +8536,7 @@ export default function App() {
     clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(triggerSave, 1500);
     return () => clearTimeout(saveTimerRef.current);
-  }, [positions, transactions, watchlists, triggerSave]);
+  }, [positions, transactions, watchlists, wallets, triggerSave]);
 
   // Keep Portfolio watchlist in sync with positions
   React.useEffect(() => {
@@ -9254,7 +9261,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v82 · Case-insensitive wallet/broker name lookup (tangem = Tangem)</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v83 · Persist cold wallets to Supabase; Settings cold wallet manager; restore lock+purple styling</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
@@ -9663,6 +9670,41 @@ export default function App() {
                   </div>
                 ))}
                 <div style={{marginTop:14}}><button className="btn btn-ghost">+ Connect new broker</button></div>
+              </div>
+
+              {/* Cold Wallets */}
+              <div className="card" style={{padding:28}}>
+                <div className="mono" style={{fontSize:10,color:"var(--text3)",letterSpacing:"0.12em",marginBottom:18}}>COLD WALLETS</div>
+                {wallets.filter(w=>w.type==='cold_wallet').length === 0 && (
+                  <div style={{fontSize:12,color:"var(--text3)",marginBottom:14}}>No cold wallets added yet. Import a crypto CSV to detect them automatically.</div>
+                )}
+                {wallets.filter(w=>w.type==='cold_wallet').map(w=>(
+                  <div key={w.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"13px 0",borderBottom:"1px solid var(--border)"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:10}}>
+                      <span style={{fontSize:18}}>🔒</span>
+                      <div>
+                        <div style={{fontWeight:600,fontSize:13}}>{w.name}</div>
+                        <div className="mono" style={{fontSize:9,color:"var(--text3)",marginTop:2}}>COLD WALLET · {positions.filter(p=>p.broker===w.name||p.walletId===w.id).length} positions</div>
+                      </div>
+                    </div>
+                    <button onClick={()=>{
+                      const newName = prompt(`Rename "${w.name}" to:`, w.name);
+                      if (!newName || newName.trim()===w.name) return;
+                      const trimmed = newName.trim();
+                      setWallets(prev=>prev.map(x=>x.id===w.id?{...x,name:trimmed}:x));
+                      setPositions(prev=>prev.map(p=>(p.broker===w.name||p.walletId===w.id)?{...p,broker:trimmed}:p));
+                    }} style={{background:"none",border:"1px solid var(--border)",borderRadius:4,color:"var(--text3)",fontSize:10,padding:"3px 10px",cursor:"pointer",fontFamily:"IBM Plex Mono,monospace"}}>rename</button>
+                  </div>
+                ))}
+                <div style={{marginTop:14}}>
+                  <button className="btn btn-ghost" onClick={()=>{
+                    const name = prompt("Cold wallet name (e.g. Ledger, Trezor, Tangem):");
+                    if (!name?.trim()) return;
+                    const COLD_COLORS = ['#9945ff','#f7931a','#627eea','#e84142','#00d395','#2775ca'];
+                    const idx = wallets.filter(w=>w.type==='cold_wallet').length;
+                    setWallets(prev=>[...prev,{id:`cold_${Date.now()}`,name:name.trim(),type:'cold_wallet',color:COLD_COLORS[idx%COLD_COLORS.length]}]);
+                  }}>+ Add cold wallet</button>
+                </div>
               </div>
 
               {/* Danger zone */}
