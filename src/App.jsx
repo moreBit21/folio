@@ -1272,6 +1272,17 @@ function detectColdWalletTransfers(normalizedTxs) {
   const onEx = {}, onCold = {}, totalCost = {};
   const sorted = [...normalizedTxs].sort((a, b) => (a.date || '') < (b.date || '') ? -1 : (a.date || '') > (b.date || '') ? 1 : 0);
   console.log('[folio debug] sorted XRP txs:', JSON.stringify(sorted.filter(t=>t.symbol==='XRP').map(t=>({date:t.date,type:t.type,qty:t.qty}))));
+  // Trace XRP onEx step by step
+  let _xrpDebug = 0;
+  for (const t of sorted) {
+    const _sym = (t.symbol || '').toUpperCase();
+    if (_sym === 'XRP') {
+      const _before = _xrpDebug;
+      if (t.type === 'buy') _xrpDebug += Math.abs(t.qty||0);
+      else if (t.type === 'sell') _xrpDebug = Math.max(0, _xrpDebug - Math.abs(t.qty||0));
+      else if (t.type === 'transfer_out') { const _m = Math.min(Math.abs(t.qty||0), _xrpDebug); _xrpDebug = Math.max(0, _xrpDebug - Math.abs(t.qty||0)); console.log(`[folio debug] XRP transfer_out qty=${Math.abs(t.qty||0).toFixed(4)} onEx_before=${_before.toFixed(4)} moved=${_m.toFixed(4)} onEx_after=${_xrpDebug.toFixed(4)} rawSymbol=${JSON.stringify(t.symbol)}`); }
+    }
+  }
   for (const t of sorted) {
     const sym = (t.symbol || '').toUpperCase();
     if (!sym || sym === 'EUR') continue;
@@ -1281,6 +1292,7 @@ function detectColdWalletTransfers(normalizedTxs) {
     if (t.type === 'buy' || t.type === 'margin_borrow') {
       onEx[sym] += qty;
       totalCost[sym] += eur;
+      if (sym === 'XRP') console.log(`[folio debug] ACTUAL LOOP XRP buy date=${t.date} qty=${qty.toFixed(4)} onEx_now=${onEx[sym].toFixed(4)}`);
     } else if (t.type === 'reward') {
       onEx[sym] += qty; // no cost basis for rewards
     } else if (t.type === 'sell' || t.type === 'margin_repay') {
@@ -1297,6 +1309,7 @@ function detectColdWalletTransfers(normalizedTxs) {
       const moved = Math.min(qty, onEx[sym]);
       // Proportionally move cost basis to cold wallet tracking
       const coldFrac = onEx[sym] > 0 ? moved / onEx[sym] : 0;
+      if (sym === 'XRP') console.log(`[folio debug] ACTUAL LOOP XRP transfer_out date=${t.date} qty=${qty.toFixed(4)} onEx_before=${onEx[sym].toFixed(4)} moved=${moved.toFixed(4)}`);
       onEx[sym] = Math.max(0, onEx[sym] - qty);
       onCold[sym] += moved;
       // totalCost stays attached to remaining exchange qty (FIFO-style proportional)
@@ -1836,7 +1849,8 @@ function ImportModal({ onClose, onImport, existingPositions = [], existingTransa
           // Detect cold wallet transfers (broker-agnostic function)
           const transfers = detectColdWalletTransfers(allTxs);
           console.log('[folio debug] detectColdWalletTransfers result:', JSON.stringify(transfers.map(t=>({sym:t.symbol,qty:t.qty}))));
-          console.log('[folio debug] allTxs XRP count:', allTxs.filter(t=>t.symbol==='XRP').length, 'sample dates:', allTxs.filter(t=>t.symbol==='XRP').map(t=>t.date).slice(0,5));
+          const _xrpAll = allTxs.filter(t=>t.symbol==='XRP');
+          console.log('[folio debug] allTxs XRP breakdown:', JSON.stringify(_xrpAll.reduce((a,t)=>{a[t.type]=(a[t.type]||0)+1;return a},{})), 'total:', _xrpAll.length);
           const dates = tradeTxs.map(t => t.date).sort();
           const net = tradeTxs.reduce((s,t) => s + (t.type==='buy' ? t.amountEur : -t.amountEur), 0);
           setTxData(tradeTxs);
@@ -8746,7 +8760,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v63 · cold wallet sort debug</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v64 · production loop XRP trace</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
