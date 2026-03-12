@@ -1249,13 +1249,26 @@ function DangerZone({ positions, transactions, wallets, setPositions, setTransac
 }
 
 function DevModeToggle() {
+  const DEV_PASSWORD = import.meta.env.VITE_DEV_PASSWORD || '';
   const [devMode, setDevMode] = React.useState(() => {
     try { return localStorage.getItem('folio_dev_mode') === 'true'; } catch(e) { return false; }
   });
   const toggle = () => {
-    const next = !devMode;
-    try { localStorage.setItem('folio_dev_mode', String(next)); } catch(e) {}
-    setDevMode(next);
+    if (devMode) {
+      // turning off — no password needed
+      try { localStorage.setItem('folio_dev_mode', 'false'); } catch(e) {}
+      setDevMode(false);
+      return;
+    }
+    if (DEV_PASSWORD) {
+      const entered = prompt('Enter developer password:');
+      if (!entered || entered !== DEV_PASSWORD) {
+        alert('Incorrect password.');
+        return;
+      }
+    }
+    try { localStorage.setItem('folio_dev_mode', 'true'); } catch(e) {}
+    setDevMode(true);
   };
   return (
     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
@@ -9261,7 +9274,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v83 · Persist cold wallets to Supabase; Settings cold wallet manager; restore lock+purple styling</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v84 · Dev mode password-gated via VITE_DEV_PASSWORD env var</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
