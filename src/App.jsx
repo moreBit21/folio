@@ -1305,6 +1305,7 @@ function detectColdWalletTransfers(normalizedTxs) {
       const returned = Math.min(qty * (1 + FEE_TOLERANCE), onCold[sym]);
       onCold[sym] = Math.max(0, onCold[sym] - returned);
       onEx[sym] += qty;
+      if (sym === 'XRP') console.log(`[folio debug] ACTUAL LOOP XRP transfer_in date=${t.date} returned=${returned.toFixed(4)} onCold_after=${onCold[sym].toFixed(4)}`);
     } else if (t.type === 'transfer_out') {
       const moved = Math.min(qty, onEx[sym]);
       // Proportionally move cost basis to cold wallet tracking
@@ -1314,6 +1315,7 @@ function detectColdWalletTransfers(normalizedTxs) {
       onCold[sym] += moved;
       // totalCost stays attached to remaining exchange qty (FIFO-style proportional)
       totalCost[sym] *= (1 - coldFrac);
+      if (sym === 'XRP') console.log(`[folio debug] ACTUAL LOOP XRP after transfer_out onCold=${onCold[sym].toFixed(4)}`);
     }
   }
   // avgPrice = totalCost / onEx for exchange; for cold wallet use original purchase avg
@@ -1328,7 +1330,7 @@ function detectColdWalletTransfers(normalizedTxs) {
   }
   return Object.entries(onCold)
     .filter(([, q]) => q > 0.001)
-    .map(([sym, qty]) => ({ symbol: sym, name: sym, qty, avgPrice: symAvg[sym] || 0 }));
+    .map(([sym, qty]) => { if(sym==='XRP') console.log(`[folio debug] RETURN onCold XRP=${qty}`); return { symbol: sym, name: sym, qty, avgPrice: symAvg[sym] || 0 }; });
 }
 
 
@@ -8760,7 +8762,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v64 · production loop XRP trace</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v65 · trace onCold XRP every step</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
