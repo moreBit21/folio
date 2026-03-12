@@ -649,24 +649,22 @@ function ColdWalletModal({ transfers, existingWallets, existingPositions, source
     const id = 'cw_' + Date.now();
     const color = COLD_COLORS[(existingWallets.filter(w=>w.type==='cold_wallet').length + wallets.length) % COLD_COLORS.length];
     const newWallet = { id, name, type: 'cold_wallet', color };
-    setWallets(w => {
-      const updated = [...w, newWallet];
-      // If this is the first wallet being added, auto-fill all unassigned coins to it
-      if (updated.length === 1) {
-        setAllocations(prev => {
-          const next = { ...prev };
-          for (const t of transfers) {
-            const sym = t.symbol;
-            const hasAnyAlloc = Object.values(next[sym] || {}).some(v => parseFloat(v) > 0);
-            if (!hasAnyAlloc) {
-              next[sym] = { ...next[sym], [id]: String(Math.round(t.qty * 1e6) / 1e6) };
-            }
+    const isFirst = wallets.length === 0;
+    setWallets(w => [...w, newWallet]);
+    // If this is the first wallet being added, auto-fill all unassigned coins to it
+    if (isFirst) {
+      setAllocations(prev => {
+        const next = { ...prev };
+        for (const t of transfers) {
+          const sym = t.symbol;
+          const hasAnyAlloc = Object.values(next[sym] || {}).some(v => parseFloat(v) > 0);
+          if (!hasAnyAlloc) {
+            next[sym] = { ...next[sym], [id]: String(Math.round(t.qty * 1e6) / 1e6) };
           }
-          return next;
-        });
-      }
-      return updated;
-    });
+        }
+        return next;
+      });
+    }
     setNewWalletName('');
   };
 
@@ -8743,7 +8741,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v66 · fix cold wallet qty: init guard was resetting onCold when onEx=0</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v67 · fix crash: setState inside setState updater in addWallet</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
