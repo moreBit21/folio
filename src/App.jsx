@@ -1330,6 +1330,7 @@ function detectColdWalletTransfers(normalizedTxs) {
   }
   return Object.entries(onCold)
     .filter(([, q]) => q > 0.001)
+    .map(([sym, qty]) => ({ symbol: sym, name: sym, qty: qty || 0, avgPrice: symAvg[sym] || 0 }));
 }
 
 
@@ -8759,7 +8760,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v68 · error boundary on cold wallet modal to surface crash cause</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v69 · fix missing .map in detectColdWalletTransfers (deleted by debug cleanup)</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
