@@ -9053,17 +9053,25 @@ export default function App() {
       // This correctly answers: "if you had put the same money into SPY — both the opening
       // balance AND every subsequent deposit/withdrawal — what would it be worth?"
 
-      // Step 1: compute portfolio value on day 0 (needed for seed)
-      let portValDay0 = 0;
-      allKeys.forEach(k => {
-        const qty = qtyByDay[k]?.[0] || 0; if (qty <= 0) return;
-        const p = priceOnDay[k][0]; if (!p) return;
-        portValDay0 += qty * p;
-      });
+      // Step 1: find the first day where portfolio has a real value — this is our seed day.
+      // Day 0 may be zero (e.g. market closed, no prices yet), so we scan forward.
+      let seedDay = 0;
+      let portValSeed = 0;
+      for (let i = 0; i <= totalDays; i++) {
+        let v = 0;
+        allKeys.forEach(k => {
+          const qty = qtyByDay[k]?.[i] || 0; if (qty <= 0) return;
+          const p = priceOnDay[k][i]; if (!p) return;
+          v += qty * p;
+        });
+        if (v > 0) { seedDay = i; portValSeed = v; break; }
+      }
 
-      // Step 2: in-window cash flows only (transactions on/after fromStr)
+      // Step 2: in-window cash flows AFTER the seed day (seed already reflects those buys)
+      const seedDate = new Date(from); seedDate.setDate(seedDate.getDate() + seedDay);
+      const seedDateStr = seedDate.toISOString().slice(0, 10);
       const cashFlows = sorted.filter(t =>
-        (t.type === 'buy' || t.type === 'sell') && t.amountEur > 0 && t.date >= fromStr
+        (t.type === 'buy' || t.type === 'sell') && t.amountEur > 0 && t.date > seedDateStr
       );
 
       // Step 3: build shadow units day by day
@@ -9072,9 +9080,9 @@ export default function App() {
 
       const runningUnits = {};
       activeBM.forEach(id => {
-        // Seed: buy portValDay0 worth of benchmark at day-0 price
-        const p0 = bmPriceOnDay[id][0];
-        runningUnits[id] = p0 > 0 ? portValDay0 / p0 : 0;
+        // Seed on seedDay: buy portValSeed worth of benchmark at that day's price
+        const pSeed = bmPriceOnDay[id][seedDay];
+        runningUnits[id] = pSeed > 0 ? portValSeed / pSeed : 0;
       });
 
       let cfIdx = 0;
@@ -9082,18 +9090,26 @@ export default function App() {
         const d = new Date(from); d.setDate(d.getDate() + i);
         const ds = d.toISOString().slice(0, 10);
 
-        // Apply cash flows that land on this day
-        while (cfIdx < cashFlows.length && cashFlows[cfIdx].date <= ds) {
-          const tx = cashFlows[cfIdx++];
-          activeBM.forEach(id => {
-            const p = bmPriceOnDay[id][i];
-            if (!p) return;
-            if (tx.type === 'buy') {
-              runningUnits[id] += tx.amountEur / p;
-            } else {
-              runningUnits[id] = Math.max(0, runningUnits[id] - tx.amountEur / p);
-            }
-          });
+        if (i === seedDay) {
+          // Seed already applied above — just store and continue
+          activeBM.forEach(id => { bmUnitsOnDay[id][i] = runningUnits[id]; });
+          continue;
+        }
+
+        // Apply cash flows that land on this day (only post-seed)
+        if (i > seedDay) {
+          while (cfIdx < cashFlows.length && cashFlows[cfIdx].date <= ds) {
+            const tx = cashFlows[cfIdx++];
+            activeBM.forEach(id => {
+              const p = bmPriceOnDay[id][i];
+              if (!p) return;
+              if (tx.type === 'buy') {
+                runningUnits[id] += tx.amountEur / p;
+              } else {
+                runningUnits[id] = Math.max(0, runningUnits[id] - tx.amountEur / p);
+              }
+            });
+          }
         }
         activeBM.forEach(id => { bmUnitsOnDay[id][i] = runningUnits[id]; });
       }
@@ -9343,7 +9359,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v94 · Benchmark: shadow portfolio seeded at portfolio day-0 value + in-window cash flows mirrored</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v95 · Benchmark: seed on first real data day (not day 0), cash flows mirrored post-seed</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
