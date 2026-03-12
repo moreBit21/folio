@@ -617,156 +617,255 @@ Return 6-8 items total. Prioritize market-moving news. RETURN ONLY THE JSON ARRA
 // ── ColdWalletModal ────────────────────────────────────────────────────────────
 // Shows after import when transfer_out transactions are detected.
 // Lets user create cold wallets and assign transferred coins to them.
-function ColdWalletModal({ transfers, existingWallets, onSave, onClose }) {
+function ColdWalletModal({ transfers, existingWallets, existingPositions, onSave, onClose }) {
   const COLD_COLORS = ['#9945ff','#f7931a','#627eea','#e84142','#00d395','#2775ca','#ff6b35','#c3a634'];
-  const [wallets, setWallets] = useState(
+
+  // Wallets: start with ALL existing cold wallets pre-populated
+  const [wallets, setWallets] = useState(() =>
     existingWallets.filter(w => w.type === 'cold_wallet')
   );
   const [newWalletName, setNewWalletName] = useState('');
-  const [assignments, setAssignments] = useState({}); // symbol → walletId
-  const [step, setStep] = useState('assign'); // 'assign' | 'done'
+
+  // allocations: { symbol: { walletId: qtyString } }
+  // Pre-fill existing cold wallet positions so re-import doesn't lose existing assignments
+  const [allocations, setAllocations] = useState(() => {
+    const init = {};
+    for (const t of transfers) {
+      init[t.symbol] = {};
+      // Pre-fill any existing cold wallet positions for this coin
+      const existing = (existingPositions || []).filter(p =>
+        p.type === 'crypto' && (p.symbol || '').toUpperCase() === t.symbol &&
+        existingWallets.find(w => w.id === p.walletId && w.type === 'cold_wallet')
+      );
+      for (const pos of existing) {
+        init[t.symbol][pos.walletId] = String(Math.round(Math.min(pos.qty, t.qty) * 1e6) / 1e6);
+      }
+    }
+    return init;
+  });
 
   const addWallet = () => {
     const name = newWalletName.trim();
     if (!name) return;
     const id = 'cw_' + Date.now();
-    const color = COLD_COLORS[wallets.length % COLD_COLORS.length];
+    const color = COLD_COLORS[(existingWallets.filter(w=>w.type==='cold_wallet').length + wallets.length) % COLD_COLORS.length];
     setWallets(w => [...w, { id, name, type: 'cold_wallet', color }]);
     setNewWalletName('');
   };
 
-  const assign = (symbol, walletId) => {
-    setAssignments(a => ({ ...a, [symbol]: walletId }));
+  const setAlloc = (symbol, walletId, val) => {
+    setAllocations(a => ({
+      ...a,
+      [symbol]: { ...a[symbol], [walletId]: val }
+    }));
   };
 
-  const assigned = transfers.filter(t => assignments[t.symbol]);
-  const unassigned = transfers.filter(t => !assignments[t.symbol]);
+  // For a given symbol, parse all allocations and compute totals
+  const getSymbolStats = (t) => {
+    const alloc = allocations[t.symbol] || {};
+    const entries = Object.entries(alloc)
+      .map(([wid, v]) => ({ walletId: wid, qty: parseFloat(v) || 0 }))
+      .filter(e => e.qty > 0);
+    const totalAllocated = entries.reduce((s, e) => s + e.qty, 0);
+    const remaining = Math.round((t.qty - totalAllocated) * 1e8) / 1e8;
+    const isOverAllocated = totalAllocated > t.qty * 1.001;
+    return { entries, totalAllocated, remaining, isOverAllocated };
+  };
+
+  const fillRemaining = (symbol, walletId, remaining) => {
+    if (remaining <= 0) return;
+    setAllocations(a => {
+      const current = parseFloat((a[symbol] || {})[walletId]) || 0;
+      return { ...a, [symbol]: { ...a[symbol], [walletId]: String(Math.round((current + remaining) * 1e8) / 1e8) } };
+    });
+  };
+
+  // Count how many coins have at least one valid allocation
+  const coinsWithAlloc = transfers.filter(t => {
+    const { entries, isOverAllocated } = getSymbolStats(t);
+    return entries.length > 0 && !isOverAllocated;
+  });
 
   const handleSave = () => {
-    // Build new positions for assigned coins
-    const newPositions = assigned.map((t, i) => {
-      const wallet = wallets.find(w => w.id === assignments[t.symbol]);
-      return {
-        id: Date.now() + i,
-        symbol: t.symbol,
-        isin: null,
-        name: t.name,
-        type: 'crypto',
-        qty: Math.round(t.qty * 1e8) / 1e8,
-        avgPrice: 0,
-        currentPrice: 0,
-        broker: wallet.name,
-        walletId: wallet.id,
-        color: wallet.color,
-        coinId: getCoinId(t.symbol),
-      };
-    });
+    const newPositions = [];
+    let posIdx = 0;
+    for (const t of transfers) {
+      const { entries, isOverAllocated } = getSymbolStats(t);
+      if (isOverAllocated) continue;
+      for (const { walletId, qty } of entries) {
+        const wallet = wallets.find(w => w.id === walletId);
+        if (!wallet || qty <= 0) continue;
+        newPositions.push({
+          id: Date.now() + posIdx++,
+          symbol: t.symbol, isin: null, name: t.name,
+          type: 'crypto', qty: Math.round(qty * 1e8) / 1e8,
+          avgPrice: 0, currentPrice: 0,
+          broker: wallet.name, walletId: wallet.id,
+          color: wallet.color,
+          coinId: getCoinId(t.symbol),
+        });
+      }
+    }
     onSave({ newWallets: wallets, newPositions });
   };
 
+  const hasExistingWallets = wallets.length > 0;
+
   return (
     <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="modal" style={{ width: 560, maxHeight: '88vh', overflowY: 'auto' }}>
+      <div className="modal" style={{ width: 600, maxHeight: '90vh', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+
         {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 18 }}>
           <div>
             <div className="serif" style={{ fontSize: 20 }}>Cold Wallet Transfers Detected</div>
             <div style={{ fontSize: 12, color: 'var(--text2)', marginTop: 3 }}>
-              {transfers.length} coin{transfers.length !== 1 ? 's' : ''} were withdrawn from this broker. Assign them to a cold wallet to keep tracking them.
+              {transfers.length} coin{transfers.length !== 1 ? 's' : ''} sent to cold wallet. Assign quantities to track them in your portfolio.
             </div>
           </div>
-          <button className="btn btn-ghost" style={{ fontSize: 18, padding: '2px 8px' }} onClick={onClose}>×</button>
+          <button className="btn btn-ghost" style={{ fontSize: 18, padding: '2px 8px', flexShrink: 0, marginLeft: 12 }} onClick={onClose}>×</button>
         </div>
 
-        {/* Create cold wallet */}
-        <div style={{ background: 'var(--surface2)', borderRadius: 8, padding: '14px 16px', marginBottom: 16, border: '1px solid var(--border)' }}>
-          <div className="mono" style={{ fontSize: 9, color: 'var(--text3)', letterSpacing: '0.12em', marginBottom: 10 }}>CREATE COLD WALLET</div>
+        {/* Create wallet row */}
+        <div style={{ background: 'var(--surface2)', borderRadius: 8, padding: '12px 14px', marginBottom: 16, border: '1px solid var(--border)' }}>
+          <div className="mono" style={{ fontSize: 9, color: 'var(--text3)', letterSpacing: '0.12em', marginBottom: 8 }}>
+            {hasExistingWallets ? 'ADD ANOTHER COLD WALLET' : 'CREATE COLD WALLET'}
+          </div>
           <div style={{ display: 'flex', gap: 8 }}>
-            <input
-              value={newWalletName}
-              onChange={e => setNewWalletName(e.target.value)}
+            <input value={newWalletName} onChange={e => setNewWalletName(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && addWallet()}
-              placeholder="e.g. Ledger Nano, MetaMask, Cold Storage…"
+              placeholder="e.g. Ledger Nano, MetaMask, Trezor…"
               style={{ flex: 1, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 6,
-                padding: '8px 12px', fontSize: 13, color: 'var(--text)', outline: 'none' }}
-            />
-            <button className="btn btn-primary" onClick={addWallet} disabled={!newWalletName.trim()}>+ Add</button>
+                padding: '7px 12px', fontSize: 13, color: 'var(--text)', outline: 'none' }} />
+            <button className="btn btn-primary" onClick={addWallet} disabled={!newWalletName.trim()} style={{ flexShrink: 0 }}>+ Add</button>
           </div>
           {wallets.length > 0 && (
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
               {wallets.map(w => (
-                <div key={w.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 10px',
+                <div key={w.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 10px',
                   borderRadius: 20, background: w.color + '18', border: `1px solid ${w.color}50` }}>
-                  <div style={{ width: 8, height: 8, borderRadius: '50%', background: w.color }} />
-                  <span style={{ fontSize: 12, color: w.color, fontWeight: 500 }}>🔒 {w.name}</span>
+                  <div style={{ width: 7, height: 7, borderRadius: '50%', background: w.color }} />
+                  <span style={{ fontSize: 11, color: w.color, fontWeight: 500 }}>🔒 {w.name}</span>
                   <button onClick={() => {
                     setWallets(ws => ws.filter(x => x.id !== w.id));
-                    setAssignments(a => { const n = {...a}; Object.keys(n).forEach(k => { if (n[k] === w.id) delete n[k]; }); return n; });
-                  }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text3)', fontSize: 14, padding: 0, lineHeight: 1 }}>×</button>
+                    setAllocations(a => {
+                      const n = {};
+                      for (const sym of Object.keys(a)) {
+                        n[sym] = { ...a[sym] };
+                        delete n[sym][w.id];
+                      }
+                      return n;
+                    });
+                  }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text3)', fontSize: 13, padding: 0, lineHeight: 1 }}>×</button>
                 </div>
               ))}
             </div>
           )}
         </div>
 
-        {/* Assign coins */}
-        <div className="mono" style={{ fontSize: 9, color: 'var(--text3)', letterSpacing: '0.12em', marginBottom: 10 }}>
-          ASSIGN TRANSFERRED COINS {assigned.length > 0 && `· ${assigned.length}/${transfers.length} assigned`}
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 20 }}>
-          {transfers.map(t => {
-            const assignedWallet = wallets.find(w => w.id === assignments[t.symbol]);
-            return (
-              <div key={t.symbol} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px',
-                borderRadius: 8, background: assignedWallet ? assignedWallet.color + '0d' : 'var(--surface2)',
-                border: `1px solid ${assignedWallet ? assignedWallet.color + '40' : 'var(--border)'}`,
-                transition: 'all 0.2s' }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-                    <span style={{ fontWeight: 600, fontSize: 14 }}>{t.symbol}</span>
-                    <span style={{ fontSize: 12, color: 'var(--text3)' }}>{t.name}</span>
+        {/* Coin allocation table */}
+        {wallets.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '24px 0', color: 'var(--text3)', fontSize: 13, fontStyle: 'italic' }}>
+            Create at least one cold wallet above to start assigning coins
+          </div>
+        ) : (
+          <>
+            <div className="mono" style={{ fontSize: 9, color: 'var(--text3)', letterSpacing: '0.12em', marginBottom: 10 }}>
+              ASSIGN QUANTITIES · split across multiple wallets or leave blank to skip
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 18 }}>
+              {transfers.map(t => {
+                const { entries, totalAllocated, remaining, isOverAllocated } = getSymbolStats(t);
+                const decimals = t.qty < 1 ? 6 : 4;
+                return (
+                  <div key={t.symbol} style={{ borderRadius: 8, border: `1px solid ${isOverAllocated ? 'var(--red)' : entries.length > 0 ? 'var(--border-active, #2a3a4a)' : 'var(--border)'}`,
+                    background: isOverAllocated ? 'rgba(255,77,109,0.05)' : 'var(--surface2)', overflow: 'hidden' }}>
+
+                    {/* Coin header */}
+                    <div style={{ display: 'flex', alignItems: 'center', padding: '8px 14px', gap: 10, borderBottom: '1px solid var(--border)' }}>
+                      <AssetLogo pos={{ symbol: t.symbol, type: 'crypto', name: t.name }} size={22} />
+                      <div style={{ flex: 1 }}>
+                        <span style={{ fontWeight: 600, fontSize: 13 }}>{t.symbol}</span>
+                        <span style={{ fontSize: 11, color: 'var(--text3)', marginLeft: 6 }}>{t.name}</span>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <div className="mono" style={{ fontSize: 11, color: 'var(--text2)' }}>
+                          {t.qty.toFixed(decimals)} available
+                        </div>
+                        {totalAllocated > 0 && (
+                          <div className="mono" style={{ fontSize: 10, color: isOverAllocated ? 'var(--red)' : remaining > 0.000001 ? 'var(--text3)' : 'var(--green)', marginTop: 1 }}>
+                            {isOverAllocated
+                              ? `⚠ over by ${(totalAllocated - t.qty).toFixed(decimals)}`
+                              : remaining > 0.000001
+                                ? `${remaining.toFixed(decimals)} unassigned`
+                                : '✓ fully assigned'}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Per-wallet qty inputs */}
+                    <div style={{ padding: '8px 14px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {wallets.map(w => {
+                        const val = (allocations[t.symbol] || {})[w.id] || '';
+                        const parsedVal = parseFloat(val) || 0;
+                        return (
+                          <div key={w.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <div style={{ width: 7, height: 7, borderRadius: '50%', background: w.color, flexShrink: 0 }} />
+                            <span style={{ fontSize: 12, color: 'var(--text2)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {w.name}
+                            </span>
+                            <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                              {/* Quick-fill remaining button */}
+                              {remaining > 0.000001 && (
+                                <button onClick={() => fillRemaining(t.symbol, w.id, remaining)}
+                                  style={{ fontSize: 10, padding: '2px 8px', borderRadius: 4, cursor: 'pointer',
+                                    background: w.color + '15', border: `1px solid ${w.color}40`,
+                                    color: w.color, whiteSpace: 'nowrap' }}>
+                                  +{remaining.toFixed(decimals > 4 ? 4 : decimals)}
+                                </button>
+                              )}
+                              <input
+                                type="number" step="any" min="0" max={t.qty}
+                                value={val}
+                                onChange={e => setAlloc(t.symbol, w.id, e.target.value)}
+                                placeholder="0"
+                                style={{ width: 110, textAlign: 'right', background: 'var(--surface)',
+                                  border: `1px solid ${parsedVal > 0 ? w.color + '60' : 'var(--border)'}`,
+                                  borderRadius: 5, padding: '4px 8px', fontSize: 12, color: 'var(--text)', outline: 'none' }}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
-                  <div className="mono" style={{ fontSize: 11, color: 'var(--text2)', marginTop: 2 }}>
-                    {t.qty.toFixed(t.qty < 1 ? 6 : 4)} transferred out
-                  </div>
-                </div>
-                {wallets.length === 0 ? (
-                  <span style={{ fontSize: 11, color: 'var(--text3)', fontStyle: 'italic' }}>Create a wallet first</span>
-                ) : (
-                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                    {wallets.map(w => (
-                      <button key={w.id} onClick={() => assign(t.symbol, assignments[t.symbol] === w.id ? null : w.id)}
-                        style={{ fontSize: 11, padding: '4px 10px', borderRadius: 12, cursor: 'pointer',
-                          border: `1px solid ${assignments[t.symbol] === w.id ? w.color : 'var(--border)'}`,
-                          background: assignments[t.symbol] === w.id ? w.color + '20' : 'var(--surface)',
-                          color: assignments[t.symbol] === w.id ? w.color : 'var(--text2)',
-                          fontWeight: assignments[t.symbol] === w.id ? 600 : 400, transition: 'all 0.15s' }}>
-                        {assignments[t.symbol] === w.id ? '✓ ' : ''}{w.name}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
+                );
+              })}
+            </div>
+          </>
+        )}
 
         {/* Footer */}
-        <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16, display: 'flex', gap: 10, justifyContent: 'flex-end', alignItems: 'center' }}>
-          {unassigned.length > 0 && assigned.length > 0 && (
+        <div style={{ borderTop: '1px solid var(--border)', paddingTop: 14, display: 'flex', gap: 10, justifyContent: 'flex-end', alignItems: 'center' }}>
+          {coinsWithAlloc.length > 0 && (
             <span style={{ fontSize: 11, color: 'var(--text3)', marginRight: 'auto' }}>
-              {unassigned.length} coin{unassigned.length !== 1 ? 's' : ''} not assigned — won't be added
+              {coinsWithAlloc.length} coin{coinsWithAlloc.length !== 1 ? 's' : ''} will be added ·{' '}
+              {transfers.length - coinsWithAlloc.length > 0 && `${transfers.length - coinsWithAlloc.length} skipped`}
             </span>
           )}
           <button className="btn btn-ghost" onClick={onClose}>Skip</button>
-          <button className="btn btn-primary" onClick={handleSave} disabled={assigned.length === 0 || wallets.length === 0}>
-            Add {assigned.length > 0 ? assigned.length : ''} Position{assigned.length !== 1 ? 's' : ''} to Portfolio
+          <button className="btn btn-primary" onClick={handleSave}
+            disabled={coinsWithAlloc.length === 0 || wallets.length === 0}>
+            Add to Portfolio
           </button>
         </div>
       </div>
     </div>
   );
 }
+
 
 function DevModeToggle() {
   const [devMode, setDevMode] = React.useState(() => {
@@ -1046,34 +1145,45 @@ function isBitvavoCSV(headers) {
 }
 
 function parseBitvavoCSV(rows, headers) {
+  // Emits ALL transaction types in the normalized 6-type schema so that
+  // broker-agnostic cold wallet detection and position derivation work uniformly.
   const col = h => headers.indexOf(h.toLowerCase());
-  const iDate = col('date'), iTime = col('time'), iType = col('type');
+  const iDate = col('date'), iType = col('type');
   const iCurrency = col('currency'), iAmount = col('amount');
   const iQuotePrice = col('quote price');
   const iRecvCurrency = col('received / paid currency');
   const iRecvAmount = col('received / paid amount');
 
-  // We only emit buy/sell rows as transactions (for transaction history display)
-  // Position derivation is done separately in deriveBitvavoPositions
+  const BITVAVO_TYPE_MAP = {
+    'buy':  'buy', 'sell': 'sell',
+    'deposit': 'transfer_in', 'withdrawal': 'transfer_out',
+    'staking': 'reward', 'fixed_staking': 'reward',
+    'rebate': 'reward', 'campaign_new_user_incentive': 'reward',
+    'affiliate': 'ignore',
+    'margin_loan_borrow': 'ignore', 'margin_loan_repay': 'ignore',
+    'margin_loan_collateral_deposit': 'ignore', 'margin_loan_collateral_return': 'ignore',
+    'withdrawal_cancelled': 'ignore',
+  };
+
   const txs = [];
   for (const row of rows) {
-    const type = (row[iType] || '').toLowerCase().trim();
+    const rawType = (row[iType] || '').toLowerCase().trim();
+    const normalizedType = BITVAVO_TYPE_MAP[rawType] || 'ignore';
+    if (normalizedType === 'ignore') continue;
+
     const currency = (row[iCurrency] || '').trim();
+    if (!currency || currency === 'EUR') continue;
+
     const amount = parseFloat(row[iAmount]) || 0;
     const quotePrice = parseFloat(row[iQuotePrice]) || 0;
     const recvCurrency = (row[iRecvCurrency] || '').trim();
     const recvAmount = parseFloat(row[iRecvAmount]) || 0;
-    const date = (row[iDate] || '').slice(0, 10);
-
-    if (type !== 'buy' && type !== 'sell') continue;
-    if (currency === 'EUR') continue;
-
     const qty = Math.abs(amount);
     const eurAmount = recvCurrency === 'EUR' ? Math.abs(recvAmount) : qty * quotePrice;
 
     txs.push({
-      date,
-      type: type === 'buy' ? 'buy' : 'sell',
+      date: (row[iDate] || '').slice(0, 10),
+      type: normalizedType,
       symbol: currency,
       isin: null,
       name: currency,
@@ -1085,42 +1195,86 @@ function parseBitvavoCSV(rows, headers) {
   return txs;
 }
 
-function getBitvavoTransferOuts(rows, headers) {
-  // Track exchange qty AND cold wallet qty separately.
-  // withdrawal → exchange→cold; deposit → cold→exchange; sell after deposit → coins gone.
-  const col = h => headers.indexOf(h.toLowerCase());
-  const iType = col('type'), iCurrency = col('currency'), iAmount = col('amount');
-  const onEx = {}, onCold = {};
-  const chronoRows = [...rows].reverse();
-  for (const row of chronoRows) {
-    const type = (row[iType] || '').toLowerCase().trim();
-    const sym = (row[iCurrency] || '').trim();
+// ── Broker-agnostic position deriver ─────────────────────────────────────────
+// Works on any normalized transactions (6-type schema).
+// Called by: Bitvavo hardcoded parser, AI path, learned parsers, future Tink integration.
+function derivePositionsFromTxs(normalizedTxs, brokerName) {
+  const sorted = [...normalizedTxs].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+  const hMap = {};
+  for (const t of sorted) {
+    const sym = (t.symbol || '').toUpperCase();
     if (!sym || sym === 'EUR') continue;
-    const amount = Math.abs(parseFloat(row[iAmount]) || 0);
+    if (!hMap[sym]) hMap[sym] = { symbol: sym, isin: t.isin || null, name: t.name || sym, qty: 0, totalCost: 0 };
+    const h = hMap[sym];
+    const qty = Math.abs(t.qty || 0);
+    const cost = Math.abs(t.amountEur || 0);
+    if (t.type === 'buy') {
+      h.qty += qty; h.totalCost += cost;
+    } else if (t.type === 'sell' || t.type === 'transfer_out') {
+      if (h.qty > 0) {
+        const frac = Math.min(qty, h.qty) / h.qty;
+        h.totalCost *= (1 - frac);
+        h.qty = Math.max(0, h.qty - qty);
+      }
+    } else if (t.type === 'transfer_in' || t.type === 'reward') {
+      h.qty += qty; // no cost basis for free/transferred-in coins
+    }
+    // 'ignore' → skip
+  }
+  return Object.values(hMap)
+    .filter(h => h.qty > 0.01)
+    .map(h => ({
+      symbol: h.symbol,
+      isin: h.isin,
+      name: h.name,
+      qty: Math.round(h.qty * 1e8) / 1e8,
+      avgPrice: h.qty > 0 && h.totalCost > 0 ? h.totalCost / h.qty : 0,
+      type: inferType(h.symbol, h.isin, h.name, 'crypto'),
+      broker: brokerName || 'Imported',
+      coinId: getCoinId(h.symbol),
+    }));
+}
+
+// ── Broker-agnostic cold wallet transfer detection ────────────────────────────
+// Works on normalized transactions (type: buy|sell|transfer_in|transfer_out|reward|ignore)
+// from ANY broker — Bitvavo hardcoded, Tink, AI-parsed, learned parsers, all feed the same schema.
+function detectColdWalletTransfers(normalizedTxs) {
+  // Track exchange qty AND cold wallet qty separately per symbol.
+  // Key insight: when coins return from cold wallet (transfer_in), they may arrive
+  // slightly less than what was sent due to network fees. Use a 5% fee tolerance
+  // so dust differences don't leave phantom cold wallet balances.
+  // This correctly handles coins that went in/out of cold wallets multiple times
+  // before eventually being sold — they end up with onCold=0.
+  const FEE_TOLERANCE = 0.05;
+  const onEx = {}, onCold = {};
+  const sorted = [...normalizedTxs].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+  for (const t of sorted) {
+    const sym = (t.symbol || '').toUpperCase();
+    if (!sym || sym === 'EUR') continue;
+    const qty = Math.abs(t.qty || 0);
     if (!onEx[sym]) onEx[sym] = 0;
     if (!onCold[sym]) onCold[sym] = 0;
-    if (type === 'buy') {
-      onEx[sym] += amount;
-    } else if (type === 'sell') {
-      onEx[sym] = Math.max(0, onEx[sym] - amount);
-    } else if (type === 'staking' || type === 'fixed_staking' || type === 'rebate' || type === 'campaign_new_user_incentive') {
-      onEx[sym] += amount;
-    } else if (type === 'deposit') {
-      const movedBack = Math.min(amount, onCold[sym]);
-      onCold[sym] = Math.max(0, onCold[sym] - movedBack);
-      onEx[sym] += amount;
-    } else if (type === 'withdrawal') {
-      const moved = Math.min(amount, onEx[sym]);
-      onEx[sym] = Math.max(0, onEx[sym] - amount);
+    if (t.type === 'buy' || t.type === 'reward') {
+      onEx[sym] += qty;
+    } else if (t.type === 'sell') {
+      onEx[sym] = Math.max(0, onEx[sym] - qty);
+    } else if (t.type === 'transfer_in') {
+      // Returning from cold wallet. Credit back onCold including fees lost in transit.
+      // e.g. sent 297.44, got back 297.41 — the 0.03 diff is network fee, not "still on cold wallet"
+      const returned = Math.min(qty * (1 + FEE_TOLERANCE), onCold[sym]);
+      onCold[sym] = Math.max(0, onCold[sym] - returned);
+      onEx[sym] += qty;
+    } else if (t.type === 'transfer_out') {
+      const moved = Math.min(qty, onEx[sym]);
+      onEx[sym] = Math.max(0, onEx[sym] - qty);
       onCold[sym] += moved;
-    } else if (type === 'margin_loan_repay') {
-      onEx[sym] = Math.max(0, onEx[sym] - amount);
     }
   }
   return Object.entries(onCold)
     .filter(([, q]) => q > 0.001)
     .map(([sym, qty]) => ({ symbol: sym, name: sym, qty }));
 }
+
 
 function deriveBitvavoPositions(rows, headers) {
   const col = h => headers.indexOf(h.toLowerCase());
@@ -1630,22 +1784,20 @@ function ImportModal({ onClose, onImport, existingPositions = [], existingTransa
 
         // ── Step 2c: Bitvavo (hardcoded — handles all crypto tx types correctly) ──
         if (isBitvavoCSV(headers)) {
-          const txs = parseBitvavoCSV(rows, headers);
-          const positions = deriveBitvavoPositions(rows, headers).map((p, i) => ({
-            ...p,
-            id: Date.now() + i,
-            color: ALLOC_COLORS_EXT[i % ALLOC_COLORS_EXT.length],
-            currentPrice: 0,
+          const allTxs = parseBitvavoCSV(rows, headers); // full normalized txs incl. transfer_in/out/reward
+          const tradeTxs = allTxs.filter(t => t.type === 'buy' || t.type === 'sell'); // for tx history display
+          // Derive positions from normalized txs (broker-agnostic function)
+          const positions = derivePositionsFromTxs(allTxs, 'Bitvavo').map((p, i) => ({
+            ...p, id: Date.now() + i, color: ALLOC_COLORS_EXT[i % ALLOC_COLORS_EXT.length], currentPrice: 0,
           }));
-          const dates = txs.map(t => t.date).sort();
-          const net = txs.reduce((s,t) => s + (t.type==='buy' ? t.amountEur : -t.amountEur), 0);
-          setTxData(txs);
-          setTxPreview({ count: txs.length, from: dates[0], to: dates[dates.length-1], net, brokerName: 'Bitvavo' });
+          // Detect cold wallet transfers (broker-agnostic function)
+          const transfers = detectColdWalletTransfers(allTxs);
+          const dates = tradeTxs.map(t => t.date).sort();
+          const net = tradeTxs.reduce((s,t) => s + (t.type==='buy' ? t.amountEur : -t.amountEur), 0);
+          setTxData(tradeTxs);
+          setTxPreview({ count: tradeTxs.length, from: dates[0], to: dates[dates.length-1], net, brokerName: 'Bitvavo' });
           setParseMethod('hardcoded');
-          // Store derived positions so onImport can apply them
           setDerivedPositions(positions);
-          // Detect cold wallet transfers for post-import prompt
-          const transfers = getBitvavoTransferOuts(rows, headers);
           setPendingTransfers(transfers.length > 0 ? transfers : null);
           setStep('activity');
           return;
@@ -1663,28 +1815,13 @@ function ImportModal({ onClose, onImport, existingPositions = [], existingTransa
                 setTxData(txs);
                 setTxPreview({ count: txs.length, from: dates[0], to: dates[dates.length-1], net, isLearned: true, brokerName: learned.brokerName });
                 setParseMethod("learned");
-                // Derive positions from learned transaction parse
-                const hMap = {};
-                for (const t of txs) {
-                  const key = t.isin || t.symbol || t.name;
-                  if (!key) continue;
-                  if (!hMap[key]) hMap[key] = { symbol:t.symbol||key, isin:t.isin||null, name:t.name||key, qty:0, totalCost:0 };
-                  const h = hMap[key];
-                  if (t.type==='buy') { h.totalCost+=t.amountEur||0; h.qty+=t.qty||0; }
-                  else if (t.type==='sell' && h.qty>0) {
-                    const frac = Math.min(t.qty||0,h.qty)/h.qty;
-                    h.totalCost *= (1-frac); h.qty = Math.max(0,h.qty-(t.qty||0));
-                  }
-                }
-                const dp = Object.values(hMap).filter(h=>h.qty>0.000001).map((h,i)=>({
-                  id:Date.now()+i, symbol:h.isin&&isISIN(h.isin)?h.isin:h.symbol, isin:h.isin,
-                  name:h.name, type:inferType(h.symbol,h.isin,h.name,'stock'),
-                  qty:Math.round(h.qty*1e8)/1e8,
-                  avgPrice:h.qty>0&&h.totalCost>0?h.totalCost/h.qty:0,
-                  currentPrice:h.qty>0&&h.totalCost>0?h.totalCost/h.qty:0,
-                  broker:learned.brokerName, color:ALLOC_COLORS_EXT[i%ALLOC_COLORS_EXT.length],
+                // Use generic derivers — works for any broker incl. future Tink
+                const dp = derivePositionsFromTxs(txs, learned.brokerName).map((h, i) => ({
+                  ...h, id: Date.now()+i, color: ALLOC_COLORS_EXT[i%ALLOC_COLORS_EXT.length], currentPrice: 0,
                 }));
                 setDerivedPositions(dp);
+                const learnedTransfers = detectColdWalletTransfers(txs);
+                setPendingTransfers(learnedTransfers.length > 0 ? learnedTransfers : null);
                 setStep("activity");
                 return;
               }
@@ -1803,6 +1940,14 @@ function ImportModal({ onClose, onImport, existingPositions = [], existingTransa
         const isSell = t => t.type === 'sell' || t.type === 'transfer_out';
         const net = txs.reduce((s,t) => s + (isBuy(t) ? t.amountEur : isSell(t) ? -t.amountEur : 0), 0);
         setTxPreview({ count: txs.length, from: dates[0], to: dates[dates.length-1], net, isAI: true });
+        // Broker-agnostic cold wallet detection — works for any broker
+        const aiTransfers = detectColdWalletTransfers(txs);
+        setPendingTransfers(aiTransfers.length > 0 ? aiTransfers : null);
+        // Derive positions from normalized txs
+        const aiDerived = derivePositionsFromTxs(txs, data.broker || 'Imported').map((p, i) => ({
+          ...p, id: Date.now() + i, color: ALLOC_COLORS_EXT[i % ALLOC_COLORS_EXT.length], currentPrice: 0,
+        }));
+        setDerivedPositions(aiDerived);
 
         // ── Derive current positions from transaction history ──────────────
         // Group buys/sells by symbol, compute net qty + weighted avg cost
@@ -9080,6 +9225,7 @@ export default function App() {
         <ColdWalletModal
           transfers={showColdWalletModal.transfers}
           existingWallets={wallets}
+          existingPositions={positions}
           onClose={() => setShowColdWalletModal(null)}
           onSave={({ newWallets, newPositions }) => {
             // Merge new cold wallets into wallets list
