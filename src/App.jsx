@@ -9321,7 +9321,8 @@ export default function App() {
                   m.walletId === p.walletId
                 );
                 if (idx >= 0) {
-                  merged[idx] = { ...merged[idx], qty: merged[idx].qty + p.qty };
+                  // Replace qty and avgPrice entirely on re-import — never add onto stale avgPrice=0
+                  merged[idx] = { ...merged[idx], qty: p.qty, avgPrice: p.avgPrice || merged[idx].avgPrice };
                 } else {
                   merged.push(p);
                 }
