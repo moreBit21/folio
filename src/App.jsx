@@ -9053,8 +9053,8 @@ export default function App() {
       // This correctly answers: "if you had put the same money into SPY — both the opening
       // balance AND every subsequent deposit/withdrawal — what would it be worth?"
 
-      // Step 1: find the first day where portfolio has a real value — this is our seed day.
-      // Day 0 may be zero (e.g. market closed, no prices yet), so we scan forward.
+      // Step 1: find the first day where BOTH portfolio and all active benchmarks have real prices.
+      // This ensures the seed happens on a day we can actually buy the benchmark ETF.
       let seedDay = 0;
       let portValSeed = 0;
       for (let i = 0; i <= totalDays; i++) {
@@ -9064,7 +9064,10 @@ export default function App() {
           const p = priceOnDay[k][i]; if (!p) return;
           v += qty * p;
         });
-        if (v > 0) { seedDay = i; portValSeed = v; break; }
+        if (v <= 0) continue;
+        // Also require benchmark prices to be available on this day
+        const bmReady = activeBM.every(id => bmPriceOnDay[id][i] > 0);
+        if (bmReady) { seedDay = i; portValSeed = v; break; }
       }
 
       // Step 2: in-window cash flows AFTER the seed day (seed already reflects those buys)
@@ -9143,18 +9146,20 @@ export default function App() {
       // Convert all EUR values to % gain/loss from their first real data point.
       // This matches the Finanzfluss-style chart: both lines start at 0%, Y-axis shows %.
       const keys = ['portfolio', ...activeBM];
-      const baseVal = {}; // first real value per key
+      const baseVal = {};
       keys.forEach(k => {
         const firstRow = rows.find(r => r[k] > 0);
         if (firstRow) baseVal[k] = firstRow[k];
       });
       rows.forEach(r => {
         keys.forEach(k => {
-          if (r[k] != null && baseVal[k] > 0) {
+          if (r[k] > 0 && baseVal[k] > 0) {
+            // Only normalize rows that have real data — leave 0/null rows as null (no line drawn)
             r[k] = +((r[k] - baseVal[k]) / baseVal[k] * 100).toFixed(2);
+          } else {
+            delete r[k]; // remove so Recharts draws no point (connectNulls handles gaps)
           }
         });
-        // invested stays in EUR — we'll keep it but won't show on same axis
       });
 
       setChartData(rows);
@@ -9375,7 +9380,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v96 · Performance chart: % return from 0 (indexed), shadow portfolio + Y-axis shows % like Finanzfluss</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v97 · Fix ALL chart: seed on first day with real portfolio+benchmark prices, null gaps instead of -100%</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
