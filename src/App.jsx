@@ -975,29 +975,33 @@ function TransferModal({ modal, wallets, positions, onClose, onSave }) {
 
   const handleSave = () => {
     const qtyNum = parseFloat(qty);
-    const feeNum = parseFloat(fee) || 0;
     if (!qtyNum || qtyNum <= 0)             { setErr('Enter a valid quantity.'); return; }
     if (qtyNum > maxQty)                    { setErr(`Max available: ${maxQty}`); return; }
     if (isToCold && !targetId)              { setErr('Select a cold wallet.'); return; }
 
     const txId = 'tx_transfer_' + Date.now();
+    // Fee is paid in the coin (deducted from what arrives at destination)
+    const feeCoins = parseFloat(fee) || 0;
+    const arrivedQty = +(qtyNum - feeCoins).toFixed(8);
+    if (arrivedQty < 0) { setErr('Fee cannot exceed transfer amount.'); return; }
 
     if (isToCold) {
       const wallet = wallets.find(w => w.id === targetId);
-      // Reduce source broker position
+      // Reduce source broker position by full sent amount
       const fromPos = { id: pos.id, newQty: +(maxQty - qtyNum).toFixed(8) };
 
       // Find existing cold wallet position for same symbol
       const existingCold = positions.find(p =>
         p.symbol === symbol && p.walletId === targetId
       );
+      // Cold wallet receives arrived qty (sent minus fee)
       const toPos = existingCold
-        ? { id: existingCold.id, newQty: +(existingCold.qty + qtyNum).toFixed(8) }
+        ? { id: existingCold.id, newQty: +(existingCold.qty + arrivedQty).toFixed(8) }
         : {
             isNew: true,
             id: 'pos_cold_' + symbol + '_' + targetId + '_' + Date.now(),
             symbol, name: pos.name, type: 'crypto',
-            qty: qtyNum,
+            qty: arrivedQty,
             avgPrice: pos.avgPrice,
             currentPrice: pos.currentPrice,
             broker: wallet?.name || 'Cold Wallet',
@@ -1008,27 +1012,26 @@ function TransferModal({ modal, wallets, positions, onClose, onSave }) {
       const txRecord = {
         id: txId, date, type: 'transfer_out', symbol,
         qty: qtyNum, price: pos.currentPrice,
-        fee: feeNum, broker: pos.broker,
-        note: `Transfer to ${wallet?.name || 'cold wallet'}`,
+        fee: feeCoins, broker: pos.broker,
+        note: `Transfer to ${wallet?.name || 'cold wallet'}${feeCoins > 0 ? ` (fee: ${feeCoins} ${symbol})` : ''}`,
       };
       onSave(fromPos, toPos, txRecord);
 
     } else {
-      // from_cold → exchange: find the broker position to increase
-      // Use broker from source pos (which is the cold wallet pos here)
-      // We need user to pick a destination broker
+      // from_cold → exchange
       const exchPos = positions.find(p =>
-        p.symbol === symbol && !p.walletId && p.broker !== pos.broker
+        p.symbol === symbol && !p.walletId && p.broker === destBroker
       ) || positions.find(p => p.symbol === symbol && !p.walletId);
 
+      // Cold wallet sends full qtyNum, exchange receives arrivedQty
       const fromPos = { id: pos.id, newQty: +(maxQty - qtyNum).toFixed(8) };
       const toPos = exchPos
-        ? { id: exchPos.id, newQty: +(exchPos.qty + qtyNum).toFixed(8) }
+        ? { id: exchPos.id, newQty: +(parseFloat(exchPos.qty) + arrivedQty).toFixed(8) }
         : {
             isNew: true,
             id: 'pos_exch_' + symbol + '_' + Date.now(),
             symbol, name: pos.name, type: 'crypto',
-            qty: qtyNum, avgPrice: pos.avgPrice,
+            qty: arrivedQty, avgPrice: pos.avgPrice,
             currentPrice: pos.currentPrice,
             broker: destBroker || 'Exchange',
             color: pos.color,
@@ -1036,9 +1039,9 @@ function TransferModal({ modal, wallets, positions, onClose, onSave }) {
 
       const txRecord = {
         id: txId, date, type: 'transfer_in', symbol,
-        qty: qtyNum, price: pos.currentPrice,
-        fee: feeNum, broker: pos.broker,
-        note: `Transfer from cold wallet to exchange`,
+        qty: arrivedQty, price: pos.currentPrice,
+        fee: feeCoins, broker: destBroker || pos.broker,
+        note: `Transfer from cold wallet${feeCoins > 0 ? ` (fee: ${feeCoins} ${symbol})` : ''}`,
       };
       onSave(fromPos, toPos, txRecord);
     }
@@ -1070,10 +1073,15 @@ function TransferModal({ modal, wallets, positions, onClose, onSave }) {
 
           {/* Network fee */}
           <div>
-            <div className="mono" style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 5, letterSpacing: '0.08em' }}>NETWORK / TX FEE (€)</div>
+            <div className="mono" style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 5, letterSpacing: '0.08em' }}>NETWORK FEE (in {symbol}, deducted from arrival)</div>
             <input type="number" min="0" step="any" value={fee}
-              onChange={e => setFee(e.target.value)} placeholder="0.00"
+              onChange={e => setFee(e.target.value)} placeholder="0"
               style={labelInput} />
+            {fee > 0 && qty > 0 && (
+              <div className="mono" style={{fontSize:10, color:'var(--text3)', marginTop:4}}>
+                Recipient receives: {Math.max(0, parseFloat(qty) - parseFloat(fee)).toFixed(6)} {symbol}
+              </div>
+            )}
           </div>
 
           {/* Cold wallet selector (to_cold only) */}
@@ -2850,21 +2858,50 @@ function TVChart({ ticker, txs = [], currentPrice, compact = false }) {
       }
       seriesRef.current = series;
 
-      // ── Buy/sell markers ──
+      // ── Buy/sell/transfer markers — grouped by date to avoid overlap ──
       if (txs.length && mode !== 'candle') {
         const firstDate = filtered[0].date;
         const lastDate  = filtered[filtered.length-1].date;
-        const mks = txs
-          .filter(tx => tx.date >= firstDate && tx.date <= lastDate)
-          .map(tx => ({
-            time:     tx.date,
-            position: tx.type === 'buy' ? 'belowBar' : 'aboveBar',
-            color:    tx.type === 'buy' ? GREEN : RED,
-            shape:    tx.type === 'buy' ? 'arrowUp' : 'arrowDown',
-            text:     tx.type === 'buy' ? `B ${tx.qty}` : `S ${tx.qty}`,
-            size: 1,
-          }));
-        if (mks.length) series.setMarkers(mks);
+        const inRange = txs.filter(tx => tx.date >= firstDate && tx.date <= lastDate);
+
+        // Group by date
+        const byDate = {};
+        inRange.forEach(tx => {
+          if (!byDate[tx.date]) byDate[tx.date] = [];
+          byDate[tx.date].push(tx);
+        });
+
+        const mks = Object.entries(byDate).map(([date, group]) => {
+          // Determine dominant type: prefer buy/sell over transfer; if mixed use the most common
+          const typeCount = {};
+          group.forEach(tx => { typeCount[tx.type] = (typeCount[tx.type] || 0) + 1; });
+          const dominant = group.reduce((a, b) => (typeCount[a.type] >= typeCount[b.type] ? a : b)).type;
+          const n = group.length;
+
+          const isBuyDom     = dominant === 'buy';
+          const isSellDom    = dominant === 'sell';
+          const isTransOutDom = dominant === 'transfer_out';
+          const isTransInDom  = dominant === 'transfer_in';
+
+          const color    = isBuyDom ? GREEN : isSellDom ? RED : isTransOutDom ? '#ffb432' : '#4d9fff';
+          const position = (isBuyDom || isTransInDom) ? 'belowBar' : 'aboveBar';
+          const shape    = (isBuyDom || isTransInDom) ? 'arrowUp' : 'arrowDown';
+
+          // Label: show count if >1, otherwise show short qty
+          let text;
+          if (n > 1) {
+            const label = isBuyDom ? 'B' : isSellDom ? 'S' : isTransOutDom ? '→' : '←';
+            text = `${label}×${n}`;
+          } else {
+            const tx = group[0];
+            const qtyStr = tx.qty < 1 ? tx.qty.toFixed(4) : tx.qty.toFixed(tx.qty < 10 ? 2 : 0);
+            text = isBuyDom ? `B ${qtyStr}` : isSellDom ? `S ${qtyStr}` : isTransOutDom ? `→ ${qtyStr}` : `← ${qtyStr}`;
+          }
+
+          return { time: date, position, color, shape, text, size: 1 };
+        });
+
+        if (mks.length) series.setMarkers(mks.sort((a,b) => a.time.localeCompare(b.time)));
       }
 
       chart.timeScale().fitContent();
@@ -2929,8 +2966,8 @@ function TVChart({ ticker, txs = [], currentPrice, compact = false }) {
       <div ref={containerRef} style={{width:'100%'}}/>
       {/* Legend */}
       {txs.length > 0 && mode !== 'candle' && (
-        <div style={{display:'flex', gap:16, marginTop:8}}>
-          {[['#00e5a0','BUY'],['#ff4d6d','SELL']].map(([col,lbl]) => (
+        <div style={{display:'flex', gap:16, marginTop:8, flexWrap:'wrap'}}>
+          {[['#00e5a0','BUY / IN'],['#ff4d6d','SELL / OUT'],['#ffb432','TRANSFER OUT'],['#4d9fff','TRANSFER IN']].map(([col,lbl]) => (
             <div key={lbl} style={{display:'flex', alignItems:'center', gap:5}}>
               <div style={{width:7, height:7, borderRadius:'50%', background:col}}/>
               <span className="mono" style={{fontSize:9, color:'var(--text3)'}}>{lbl}</span>
@@ -6958,7 +6995,7 @@ function StockDetail({ pos, onBack, transactions, onTransfer }) {
               {/* Transaction list */}
               <div className="card" style={{padding:0,overflow:'hidden'}}>
                 {/* Header */}
-                <div style={{display:'grid',gridTemplateColumns:'90px 1fr 1fr 1fr',
+                <div style={{display:'grid',gridTemplateColumns:'110px 1fr 1fr 1fr',
                   padding:'8px 16px',background:'var(--surface2)',borderBottom:'1px solid var(--border)'}}>
                   {['DATE','DETAILS','AMOUNT','P&L'].map(h=>(
                     <div key={h} className="mono" style={{fontSize:9,color:'var(--text3)',letterSpacing:'0.1em',
@@ -6967,20 +7004,33 @@ function StockDetail({ pos, onBack, transactions, onTransfer }) {
                 </div>
 
                 {txs.map((tx, i) => {
-                  const isBuy  = tx.type === 'buy';
-                  const pricePerShare = tx.qty > 0 ? tx.amountEur / tx.qty : 0;
-                  // P&L: unrealised for buys (vs current price), realised for sells (vs avg cost)
+                  const isBuy      = tx.type === 'buy';
+                  const isSell     = tx.type === 'sell';
+                  const isTransOut = tx.type === 'transfer_out';
+                  const isTransIn  = tx.type === 'transfer_in';
+                  const isTransfer = isTransOut || isTransIn;
+                  const pricePerShare = tx.qty > 0 ? (tx.amountEur || 0) / tx.qty : 0;
+                  // P&L: only meaningful for buys/sells
                   const pnl = isBuy
                     ? (pos.currentPrice - pricePerShare) * tx.qty
-                    : (pricePerShare - pos.avgPrice) * tx.qty;
-                  const pnlPct = pricePerShare > 0
+                    : isSell
+                      ? (pricePerShare - pos.avgPrice) * tx.qty
+                      : null;
+                  const pnlPct = (isBuy || isSell) && pricePerShare > 0
                     ? ((isBuy ? pos.currentPrice : pricePerShare) / pricePerShare - 1) * 100 * (isBuy ? 1 : -1) * (isBuy ? 1 : -1)
-                    : 0;
+                    : null;
                   const pnlUp = pnl >= 0;
+
+                  // Badge config per type
+                  const badge = isBuy      ? { label: 'BUY',         bg: 'rgba(0,229,160,0.12)',  color: 'var(--green)' }
+                              : isSell     ? { label: 'SELL',        bg: 'rgba(255,77,109,0.12)', color: 'var(--red)'   }
+                              : isTransOut ? { label: 'TRANSFER OUT',bg: 'rgba(255,180,50,0.12)', color: '#ffb432'      }
+                              : isTransIn  ? { label: 'TRANSFER IN', bg: 'rgba(77,159,255,0.12)', color: 'var(--blue)'  }
+                              :              { label: tx.type?.toUpperCase() || '—', bg: 'rgba(120,120,120,0.12)', color: 'var(--text3)' };
 
                   return (
                     <div key={i} style={{
-                      display:'grid', gridTemplateColumns:'90px 1fr 1fr 1fr',
+                      display:'grid', gridTemplateColumns:'110px 1fr 1fr 1fr',
                       padding:'12px 16px', borderBottom: i<txs.length-1?'1px solid var(--border)':'none',
                       alignItems:'center',
                     }}>
@@ -6990,40 +7040,48 @@ function StockDetail({ pos, onBack, transactions, onTransfer }) {
                           <span style={{
                             fontSize:9, fontWeight:700, letterSpacing:'0.06em',
                             padding:'2px 7px', borderRadius:4,
-                            background: isBuy?'rgba(0,229,160,0.12)':'rgba(255,77,109,0.12)',
-                            color: isBuy?'var(--green)':'var(--red)',
+                            background: badge.bg, color: badge.color,
                           }}>
-                            {isBuy ? 'BUY' : 'SELL'}
+                            {badge.label}
                           </span>
                         </div>
                         <div className="mono" style={{fontSize:10,color:'var(--text3)'}}>{tx.date}</div>
+                        {tx.note && <div className="mono" style={{fontSize:9,color:'var(--text3)',marginTop:2,fontStyle:'italic'}}>{tx.note}</div>}
                       </div>
 
                       {/* Qty × price */}
                       <div style={{textAlign:'right'}}>
                         <div className="mono" style={{fontSize:13,fontWeight:500}}>
-                          {tx.qty % 1 === 0 ? tx.qty : tx.qty.toFixed(4)} × {fmtE(pricePerShare)}
+                          {tx.qty % 1 === 0 ? tx.qty : tx.qty?.toFixed(4)} {isTransfer ? pos.symbol : ('× ' + fmtE(pricePerShare))}
                         </div>
-                        <div className="mono" style={{fontSize:10,color:'var(--text3)'}}>
-                          {tx.qty % 1 === 0 ? tx.qty : tx.qty.toFixed(4)} Stk.
-                        </div>
+                        {tx.fee > 0 && (
+                          <div className="mono" style={{fontSize:10,color:'var(--text3)'}}>fee: {fmtE(tx.fee)}</div>
+                        )}
                       </div>
 
                       {/* Total amount */}
                       <div style={{textAlign:'right'}}>
-                        <div className="mono" style={{fontSize:13,fontWeight:500}}>{fmtE(tx.amountEur)}</div>
+                        <div className="mono" style={{fontSize:13,fontWeight:500}}>
+                          {isTransfer ? '—' : fmtE(tx.amountEur)}
+                        </div>
                       </div>
 
                       {/* P&L */}
                       <div style={{textAlign:'right'}}>
-                        <div className="mono" style={{fontSize:13,fontWeight:600,
-                          color: pnlUp?'var(--green)':'var(--red)'}}>
-                          {pnlUp?'+':''}{fmtE(pnl)}
-                        </div>
-                        <div className="mono" style={{fontSize:10,
-                          color: pnlUp?'var(--green)':'var(--red)'}}>
-                          {isBuy ? 'unrealised' : 'realised'}
-                        </div>
+                        {pnl !== null ? (
+                          <>
+                            <div className="mono" style={{fontSize:13,fontWeight:600,
+                              color: pnlUp?'var(--green)':'var(--red)'}}>
+                              {pnlUp?'+':''}{fmtE(pnl)}
+                            </div>
+                            <div className="mono" style={{fontSize:10,
+                              color: pnlUp?'var(--green)':'var(--red)'}}>
+                              {isBuy ? 'unrealised' : 'realised'}
+                            </div>
+                          </>
+                        ) : (
+                          <div className="mono" style={{fontSize:10,color:'var(--text3)'}}>—</div>
+                        )}
                       </div>
                     </div>
                   );
@@ -9137,7 +9195,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v75 · Cold wallet prices: strip currentPrice from Supabase saves, always re-fetch on load</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v76 · Transfer tx types; grouped chart markers; fee in coin denomination</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
