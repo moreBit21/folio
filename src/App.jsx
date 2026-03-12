@@ -1184,7 +1184,7 @@ function parseBitvavoCSV(rows, headers) {
     'staking': 'reward', 'fixed_staking': 'reward',
     'rebate': 'reward', 'campaign_new_user_incentive': 'reward',
     'affiliate': 'ignore',
-    'margin_loan_borrow': 'ignore', 'margin_loan_repay': 'ignore',
+    'margin_loan_borrow': 'buy', 'margin_loan_repay': 'sell', // borrowed coins enter/leave balance
     'margin_loan_collateral_deposit': 'ignore', 'margin_loan_collateral_return': 'ignore',
     'withdrawal_cancelled': 'ignore',
   };
