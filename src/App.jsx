@@ -156,6 +156,56 @@ const LOGOS = {
 function getLogoSVG(symbol) { return LOGOS[symbol] || null; }
 
 const BROKERS_LIST  = ["Bitvavo","Smartbroker+","Trade Republic"];
+
+// ── Account type map: name → { label, icon } ─────────────────────────────────
+// Used in "By Account" tab badge. cold_wallet type is always overridden by wallet.type.
+const ACCOUNT_TYPE_MAP = {
+  // Crypto Exchanges
+  'Bitvavo':       { label: 'Crypto Exchange', icon: '⬡' },
+  'Binance':       { label: 'Crypto Exchange', icon: '⬡' },
+  'Coinbase':      { label: 'Crypto Exchange', icon: '⬡' },
+  'Kraken':        { label: 'Crypto Exchange', icon: '⬡' },
+  'Bybit':         { label: 'Crypto Exchange', icon: '⬡' },
+  'OKX':           { label: 'Crypto Exchange', icon: '⬡' },
+  'KuCoin':        { label: 'Crypto Exchange', icon: '⬡' },
+  'Gate.io':       { label: 'Crypto Exchange', icon: '⬡' },
+  'Huobi':         { label: 'Crypto Exchange', icon: '⬡' },
+  'Bitfinex':      { label: 'Crypto Exchange', icon: '⬡' },
+  'Gemini':        { label: 'Crypto Exchange', icon: '⬡' },
+  'Bitpanda':      { label: 'Crypto Exchange', icon: '⬡' },
+  'Crypto.com':    { label: 'Crypto Exchange', icon: '⬡' },
+  'eToro':         { label: 'Crypto Exchange', icon: '⬡' },
+  'Nexo':          { label: 'Crypto Exchange', icon: '⬡' },
+  // Stock/ETF Brokers
+  'Smartbroker+':    { label: 'Broker', icon: '◈' },
+  'Trade Republic':  { label: 'Broker', icon: '◈' },
+  'DEGIRO':          { label: 'Broker', icon: '◈' },
+  'Interactive Brokers': { label: 'Broker', icon: '◈' },
+  'Flatex':          { label: 'Broker', icon: '◈' },
+  'Scalable Capital': { label: 'Broker', icon: '◈' },
+  'Comdirect':       { label: 'Broker', icon: '◈' },
+  'ING':             { label: 'Broker', icon: '◈' },
+  'DKB':             { label: 'Broker', icon: '◈' },
+  'Consorsbank':     { label: 'Broker', icon: '◈' },
+  'Fidelity':        { label: 'Broker', icon: '◈' },
+  'Charles Schwab':  { label: 'Broker', icon: '◈' },
+  'Robinhood':       { label: 'Broker', icon: '◈' },
+  'Revolut':         { label: 'Broker', icon: '◈' },
+  // Cold / Hardware Wallets
+  'Tangem':          { label: 'Cold Wallet', icon: '🔒' },
+  'Ledger':          { label: 'Cold Wallet', icon: '🔒' },
+  'Trezor':          { label: 'Cold Wallet', icon: '🔒' },
+  'Coldcard':        { label: 'Cold Wallet', icon: '🔒' },
+  'BitBox':          { label: 'Cold Wallet', icon: '🔒' },
+  'Keepkey':         { label: 'Cold Wallet', icon: '🔒' },
+  'Foundation Passport': { label: 'Cold Wallet', icon: '🔒' },
+  'Ellipal':         { label: 'Cold Wallet', icon: '🔒' },
+  'Manual':          { label: 'Manual', icon: '✎' },
+};
+const getAccountType = (name, isCold) => {
+  if (isCold) return { label: 'Cold Wallet', icon: '🔒' };
+  return ACCOUNT_TYPE_MAP[name] || { label: 'Broker', icon: '◈' };
+};
 const BENCHMARKS    = [
   {id:"sp500", label:"S&P 500",   color:"#4d9fff"},
   {id:"nasdaq",label:"Nasdaq 100",color:"#f0b429"},
@@ -906,17 +956,16 @@ function TransferModal({ modal, wallets, positions, onClose, onSave }) {
   const isToCold   = direction === 'to_cold';
   const coldWallets = (wallets || []).filter(w => w.type === 'cold_wallet');
 
-  const [qty,      setQty]      = React.useState('');
-  const [fee,      setFee]      = React.useState('');
-  const [targetId, setTargetId] = React.useState(coldWallets[0]?.id || '');
-  const [date,     setDate]     = React.useState(new Date().toISOString().split('T')[0]);
-  const [err,      setErr]      = React.useState('');
-
+  const symbol  = pos.symbol;
+  const maxQty  = parseFloat(pos.qty) || 0;
   const brokerPositions = positions.filter(p => p.symbol === symbol && !p.walletId);
-  const [destBroker, setDestBroker] = React.useState(brokerPositions[0]?.broker || '');
 
-  const maxQty = pos.qty;
-  const symbol = pos.symbol;
+  const [qty,       setQty]       = React.useState('');
+  const [fee,       setFee]       = React.useState('');
+  const [targetId,  setTargetId]  = React.useState(coldWallets[0]?.id || '');
+  const [destBroker,setDestBroker]= React.useState(brokerPositions[0]?.broker || '');
+  const [date,      setDate]      = React.useState(new Date().toISOString().split('T')[0]);
+  const [err,       setErr]       = React.useState('');
 
   const labelInput = {
     background: 'var(--surface2)', border: '1px solid var(--border)',
@@ -7653,7 +7702,7 @@ function PortfolioPage({ positions, transactions, wallets, onOpenStock, priceLoa
                         </span>
                         <span className="mono" style={{ fontSize: 9, color: 'var(--text3)', padding: '1px 6px',
                           background: 'var(--surface2)', borderRadius: 3, letterSpacing: '0.08em' }}>
-                          {isCold ? 'COLD WALLET' : 'BROKER'}
+                          {getAccountType(brokerName, isCold).label.toUpperCase()}
                         </span>
                         <span className="mono" style={{ fontSize: 10, color: 'var(--text3)' }}>
                           {poses.length} position{poses.length !== 1 ? 's' : ''}
@@ -9080,7 +9129,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v73 · By Account collapsed by default; Transfer to/from Cold Wallet modal</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v74 · Account type map (Crypto Exchange/Broker/Cold Wallet); Transfer crash fix</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
