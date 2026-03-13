@@ -2000,6 +2000,111 @@ function runLearnedParser(rows, headers, spec) {
   }, []);
 }
 
+// ── SHARED ISIN → TICKER MAP (Supabase-backed, crowd-sourced) ─────────────
+// One user resolves a ticker → all users benefit forever.
+// Pipeline: localStorage cache → Supabase lookup → FMP /search-isin → name fallback → manual
+// Every successful resolution (automatic or manual) is saved to Supabase for all users.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const ISIN_CACHE_KEY = "folio_isin_cache";
+const ISIN_CACHE_TTL = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+function _getISINCache() {
+  try {
+    const raw = localStorage.getItem(ISIN_CACHE_KEY);
+    if (!raw) return {};
+    const { ts, data } = JSON.parse(raw);
+    if (Date.now() - ts > ISIN_CACHE_TTL) return {};
+    return data || {};
+  } catch { return {}; }
+}
+
+function _setISINCache(isin, ticker) {
+  try {
+    const cache = _getISINCache();
+    cache[isin] = ticker;
+    localStorage.setItem(ISIN_CACHE_KEY, JSON.stringify({ ts: Date.now(), data: cache }));
+  } catch(e) {}
+}
+
+// Look up ticker: local cache first, then Supabase
+async function lookupISINTicker(isin) {
+  if (!isin) return null;
+
+  // 1. Local cache (instant)
+  const cache = _getISINCache();
+  if (cache[isin]) return cache[isin];
+
+  // 2. Supabase (shared across all users)
+  if (!supabase) return null;
+  try {
+    const { data, error } = await supabase
+      .from("isin_ticker_map")
+      .select("ticker")
+      .eq("isin", isin)
+      .single();
+    if (error || !data) return null;
+    _setISINCache(isin, data.ticker); // cache locally
+    // Increment use_count in background
+    supabase.rpc("increment_isin_use_count", { p_isin: isin }).catch(() => {});
+    return data.ticker;
+  } catch(e) {
+    return null;
+  }
+}
+
+// Save a resolved ISIN → ticker mapping to Supabase (shared for all users)
+async function saveISINTicker(isin, ticker, name, source) {
+  if (!isin || !ticker) return;
+  _setISINCache(isin, ticker); // always cache locally
+
+  if (!supabase) return;
+  try {
+    await supabase.from("isin_ticker_map").upsert({
+      isin,
+      ticker,
+      name: name || null,
+      source: source || 'auto',
+      use_count: 1,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "isin" });
+  } catch(e) {}
+}
+
+// Batch lookup: check multiple ISINs at once against local cache + Supabase
+async function batchLookupISINs(isins) {
+  const result = {}; // isin → ticker
+  const cache = _getISINCache();
+  const needsSupabase = [];
+
+  // Check local cache first
+  for (const isin of isins) {
+    if (cache[isin]) {
+      result[isin] = cache[isin];
+    } else {
+      needsSupabase.push(isin);
+    }
+  }
+
+  // Batch query Supabase for uncached ISINs
+  if (needsSupabase.length && supabase) {
+    try {
+      const { data, error } = await supabase
+        .from("isin_ticker_map")
+        .select("isin, ticker")
+        .in("isin", needsSupabase);
+      if (!error && data) {
+        for (const row of data) {
+          result[row.isin] = row.ticker;
+          _setISINCache(row.isin, row.ticker);
+        }
+      }
+    } catch(e) {}
+  }
+
+  return result;
+}
+
 // Build a parser spec from Claude's AI result + the original headers
 // This is what we save to localStorage after a successful AI parse
 function buildParserSpec(aiResult, headers) {
@@ -8602,7 +8707,7 @@ export default function App() {
             // stored wrong resolutions (e.g. v105 ISIN_MAP shortcuts, v106 name mismatch false positives).
             // The corrected pipeline (v108+) will re-resolve all positions from their ISINs on first fetchPrices.
             // This migration runs once — after re-resolution, correct fmpTicker values are saved back to Supabase.
-            const MIGRATION_KEY = 'folio_migration_v111';
+            const MIGRATION_KEY = 'folio_migration_v113';
             const needsMigration = !localStorage.getItem(MIGRATION_KEY);
             const loaded = plain.positions.map(p => {
               if (needsMigration) {
@@ -8752,11 +8857,11 @@ export default function App() {
         if(p.isin?.startsWith('IE')) return p.symbol+'.AS';
         return p.symbol;
       };
-      // Generic ticker resolution pipeline:
-      //   Step 1: FMP /search-isin (validates result name against position name)
-      //   Step 2: FMP /search?query={name} fallback (for failed or mismatched ISINs)
-      // Every resolved ticker is persisted as fmpTicker → survives page reloads via Supabase.
-      // No ISIN_MAP dependency — the pipeline must work for ANY stock from ANY broker.
+      // ── TICKER RESOLUTION PIPELINE ───────────────────────────────────────────
+      // Step 0: Supabase isin_ticker_map (shared, instant, crowd-sourced)
+      // Step 1: FMP /search-isin (trust ISIN, no name validation)
+      // Step 2: FMP /search-name progressive fallback
+      // Every successful resolution saved to Supabase isin_ticker_map for all users.
       const resolvedTickerMap = {}; // isin → { ticker, type }
 
       const pickFromResults = (res, isin) => {
@@ -8770,7 +8875,6 @@ export default function App() {
           || res.find(r=>r.marketCap>0) || res[0];
       };
 
-      // Helper: check if an FMP result name roughly matches the position name
       const nameMatches = (fmpName, posName) => {
         if (!fmpName || !posName) return true;
         const normalize = s => s.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 8);
@@ -8779,65 +8883,74 @@ export default function App() {
         return fmpN.startsWith(posN.slice(0, 4)) || posN.startsWith(fmpN.slice(0, 4));
       };
 
-      // Collect ALL positions that don't have fmpTicker yet
-      const unresolvedISINs = [...new Set(
+      const buildSearchQueries = (name) => {
+        const cleaned = name
+          .replace(/\s*\(.*?\)\s*/g, ' ')
+          .replace(/U\.?ETF|ETF|ETC|ETP|UCITS/gi, '')
+          .replace(/\s+(Inc\.?|Corp\.?|Ltd\.?|Group\.?|PLC|SE|AG|Co\.?|GmbH|B\.V\.|& Co\.?)$/i, '')
+          .replace(/[^a-zA-Z0-9\s&-]/g, ' ')
+          .replace(/\s+/g, ' ').trim();
+        const words = cleaned.split(' ').filter(w => w.length > 1);
+        const queries = [];
+        if (words.length >= 3) queries.push(words.slice(0, 3).join(' '));
+        if (words.length >= 2) queries.push(words.slice(0, 2).join(' '));
+        if (words.length >= 1) queries.push(words[0]);
+        return [...new Set(queries)];
+      };
+
+      // Collect positions needing resolution
+      const allUnresolved = [...new Set(
         stockPos.filter(p => !p.fmpTicker && p.isin).map(p => p.isin)
       )];
 
-      const needsNameFallback = [];
-      if(unresolvedISINs.length) {
-        console.log('[folio] resolving', unresolvedISINs.length, 'ISINs via generic pipeline');
+      if (allUnresolved.length) {
         const BATCH2 = 5;
         const delay2 = ms => new Promise(r => setTimeout(r, ms));
 
-        // Step 1: FMP /search-isin — TRUST the ISIN, no name validation needed.
-        // ISINs are globally unique security identifiers. If FMP returns a result for a valid ISIN,
-        // it IS the correct security. Name differences (Smartbroker abbreviations vs FMP full names)
-        // are expected and not a signal of wrong resolution.
-        for(let i=0; i<unresolvedISINs.length; i+=BATCH2) {
-          const batch = unresolvedISINs.slice(i, i+BATCH2);
-          await Promise.all(batch.map(async isin => {
-            try {
-              const res = await fmpGet('/search-isin?isin='+isin);
-              const pick = pickFromResults(res, isin);
-              if(pick?.symbol) {
-                const rep = stockPos.find(p => p.isin === isin);
-                const resolvedTk = pick.symbol.split('.')[0].toUpperCase();
-                const correctedType = inferType(resolvedTk, isin, rep?.name, rep?.type);
-                resolvedTickerMap[isin] = { ticker: pick.symbol, type: correctedType };
-              } else {
-                needsNameFallback.push(isin);
-              }
-            } catch(e){ needsNameFallback.push(isin); }
-          }));
-          if(i+BATCH2 < unresolvedISINs.length) await delay2(300);
+        // Step 0: Supabase isin_ticker_map (shared across all users)
+        const sharedMap = await batchLookupISINs(allUnresolved);
+        const afterShared = [];
+        for (const isin of allUnresolved) {
+          if (sharedMap[isin]) {
+            const rep = stockPos.find(p => p.isin === isin);
+            resolvedTickerMap[isin] = { ticker: sharedMap[isin], type: inferType(sharedMap[isin].split('.')[0], isin, rep?.name, rep?.type) };
+          } else {
+            afterShared.push(isin);
+          }
+        }
+        if (Object.keys(sharedMap).length) {
+          console.log('[folio] isin_ticker_map hits:', Object.entries(sharedMap).map(([k,v])=>k+'→'+v).join(', '));
         }
 
-        // Step 2: Name-based fallback for ISINs that FMP /search-isin doesn't cover.
-        // Uses progressive search: try increasingly shorter versions of the name.
-        // Smartbroker names are heavily abbreviated (e.g. "ARK Space & Defen.Innov.U.ETF"),
-        // so we extract clean search terms by taking the first 2-3 meaningful words.
+        // Step 1: FMP /search-isin — trust the ISIN
+        const needsNameFallback = [];
+        if (afterShared.length) {
+          console.log('[folio] resolving', afterShared.length, 'ISINs via FMP /search-isin');
+          for (let i = 0; i < afterShared.length; i += BATCH2) {
+            const batch = afterShared.slice(i, i + BATCH2);
+            await Promise.all(batch.map(async isin => {
+              try {
+                const res = await fmpGet('/search-isin?isin=' + isin);
+                const pick = pickFromResults(res, isin);
+                if (pick?.symbol) {
+                  const rep = stockPos.find(p => p.isin === isin);
+                  const resolvedTk = pick.symbol.split('.')[0].toUpperCase();
+                  const correctedType = inferType(resolvedTk, isin, rep?.name, rep?.type);
+                  resolvedTickerMap[isin] = { ticker: pick.symbol, type: correctedType };
+                  // Save to shared map for all users
+                  saveISINTicker(isin, pick.symbol, pick.name || rep?.name, 'auto');
+                } else {
+                  needsNameFallback.push(isin);
+                }
+              } catch(e) { needsNameFallback.push(isin); }
+            }));
+            if (i + BATCH2 < afterShared.length) await delay2(300);
+          }
+        }
+
+        // Step 2: Name-based fallback with progressive search
         if (needsNameFallback.length) {
           console.log('[folio] name fallback needed for', needsNameFallback.length, 'ISINs:', needsNameFallback.join(', '));
-
-          // Build search queries from abbreviated Smartbroker names
-          const buildSearchQueries = (name) => {
-            // Remove common suffixes, parenthetical, and abbreviation noise
-            const cleaned = name
-              .replace(/\s*\(.*?\)\s*/g, ' ')                    // remove (EUR), (USD) etc
-              .replace(/U\.?ETF|ETF|ETC|ETP|UCITS/gi, '')        // remove fund type labels
-              .replace(/\s+(Inc\.?|Corp\.?|Ltd\.?|Group\.?|PLC|SE|AG|Co\.?|GmbH|B\.V\.|& Co\.?)$/i, '')
-              .replace(/[^a-zA-Z0-9\s&-]/g, ' ')                 // replace dots, special chars with space
-              .replace(/\s+/g, ' ').trim();
-            const words = cleaned.split(' ').filter(w => w.length > 1);
-            const queries = [];
-            // Try first 3 words, then first 2, then first word
-            if (words.length >= 3) queries.push(words.slice(0, 3).join(' '));
-            if (words.length >= 2) queries.push(words.slice(0, 2).join(' '));
-            if (words.length >= 1) queries.push(words[0]);
-            return [...new Set(queries)]; // deduplicate
-          };
-
           for (let i = 0; i < needsNameFallback.length; i += BATCH2) {
             const batch = needsNameFallback.slice(i, i + BATCH2);
             await Promise.all(batch.map(async isin => {
@@ -8846,7 +8959,6 @@ export default function App() {
                 if (!rep?.name) return;
                 const queries = buildSearchQueries(rep.name);
                 let searchRes = [];
-                // Try each progressively shorter query on /search-name, then /search
                 for (const q of queries) {
                   if (searchRes.length) break;
                   try { searchRes = await fmpGet('/search-name?query=' + encodeURIComponent(q) + '&limit=5'); } catch(e) {}
@@ -8865,20 +8977,25 @@ export default function App() {
                   const resolvedTk = pick.symbol.split('.')[0].toUpperCase();
                   const correctedType = inferType(resolvedTk, isin, rep.name, rep.type);
                   resolvedTickerMap[isin] = { ticker: pick.symbol, type: correctedType };
+                  saveISINTicker(isin, pick.symbol, pick.name || rep.name, 'name');
                   console.log('[folio] name fallback resolved:', rep.name, '→', pick.symbol);
                 } else {
                   console.log('[folio] name fallback: could not resolve "' + rep.name + '"');
                 }
-              } catch(e){}
+              } catch(e) {}
             }));
             if (i + BATCH2 < needsNameFallback.length) await delay2(300);
           }
         }
-        // Mutate local stockPos objects so getT() returns the ticker for tickerList building
+
+        // Apply resolved tickers to local position objects
         stockPos.forEach(p => {
-          if(resolvedTickerMap[p.isin]) p.fmpTicker = resolvedTickerMap[p.isin].ticker;
+          if (resolvedTickerMap[p.isin]) p.fmpTicker = resolvedTickerMap[p.isin].ticker;
         });
-        console.log('[folio] resolved ISINs:', Object.entries(resolvedTickerMap).map(([k,v])=>k+'→'+v.ticker).join(', '));
+        const resolvedEntries = Object.entries(resolvedTickerMap);
+        if (resolvedEntries.length) {
+          console.log('[folio] resolved ISINs:', resolvedEntries.map(([k,v])=>k+'→'+v.ticker).join(', '));
+        }
       }
       // Build ticker list using local objects (already mutated above, no stale state issue)
       const rawTickers = stockPos.map(getT).filter(Boolean);
@@ -9531,7 +9648,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v112 · Resolve badge shows for any zero-price non-derivative position</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v113 · Supabase isin_ticker_map: crowd-sourced ISIN resolution, manual resolve saves for all users</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
@@ -10375,13 +10492,19 @@ export default function App() {
                     const data = await res.json();
                     const quote = Array.isArray(data) ? data[0] : data;
                     if (quote?.price || quote?.previousClose) {
-                      // Valid ticker — apply to position
+                      // Valid ticker — apply to position + save to shared map
+                      const resolvedPrice = (quote.price || quote.previousClose);
                       setPositions(prev => prev.map(p =>
                         p.id === manualResolvePos.id
-                          ? { ...p, fmpTicker: ticker, currentPrice: (quote.price || quote.previousClose) / (manualResolvePos.isin?.startsWith('US') ? (1/0.92) : 1) }
+                          ? { ...p, fmpTicker: ticker, currentPrice: resolvedPrice / (manualResolvePos.isin?.startsWith('US') ? (1/0.92) : 1) }
                           : p
                       ));
-                      statusEl.textContent = '✓ Resolved to ' + ticker + ' ($' + (quote.price || quote.previousClose).toFixed(2) + ')';
+                      // Save to Supabase isin_ticker_map — all future users get this instantly
+                      if (manualResolvePos.isin) {
+                        saveISINTicker(manualResolvePos.isin, ticker, manualResolvePos.name, 'manual');
+                        console.log('[folio] manual resolve saved:', manualResolvePos.isin, '→', ticker);
+                      }
+                      statusEl.textContent = '✓ Resolved to ' + ticker + ' ($' + resolvedPrice.toFixed(2) + ') — saved for all users';
                       statusEl.style.color = 'var(--green)';
                       setTimeout(() => setManualResolvePos(null), 1200);
                     } else {

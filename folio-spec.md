@@ -180,6 +180,39 @@
   - Migration v111: re-runs `inferType` on all positions loaded from Supabase to reclassify derivatives. v110's derivative detection code was correct but only ran at import time — positions already saved as `type: "stock"` from previous sessions were never reclassified. The migration fixes this by re-evaluating the type of every position on load.
 - **TODO (future):** Remove ISIN_MAP constant entirely. Add "Re-resolve all tickers" button in developer settings.
 
+### Shared ISIN → Ticker Map (Supabase-backed, crowd-sourced)
+
+> Replaces the hardcoded `ISIN_MAP` with a living, shared database.
+> One user resolves a ticker (automatically or manually) → all users benefit forever.
+> Same pattern as the learned parser system.
+
+**Supabase table:**
+
+```sql
+create table isin_ticker_map (
+  isin text primary key,
+  ticker text not null,               -- FMP ticker (e.g. "AAPL", "SLVR.L", "XNAS.F")
+  name text,                          -- company/product name for display
+  source text default 'auto',         -- 'auto' (FMP /search-isin), 'name' (FMP /search-name), 'manual' (user input)
+  use_count int default 1,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+-- Public read, authenticated write (RLS)
+```
+
+**Resolution pipeline (updated):**
+
+1. `pos.fmpTicker` already set → use it (instant, no API call)
+2. **Supabase `isin_ticker_map` lookup** → if found, use it + write to `fmpTicker` (instant, shared across users)
+3. FMP `/search-isin` → if success, use it + **save to `isin_ticker_map`** for all future users
+4. Name fallback (`/search-name` progressive) → if success, use it + **save to `isin_ticker_map`**
+5. Manual resolve prompt → user enters ticker, validated via FMP `/quote` → **save to `isin_ticker_map`**
+
+**Local cache:** `localStorage` cache of the map with 7-day TTL (same pattern as learned parser cache) to avoid Supabase round-trips on every page load.
+
+**Cost:** Zero — reads from Supabase are free on the Pro plan, writes are negligible.
+
 **Broker export instructions:**
 
 - **Smartbroker+:** Depot → Depotübersicht → Export → CSV (depot snapshot)
