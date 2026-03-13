@@ -9648,7 +9648,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v114 · Fix resolve badge click (pass setManualResolvePos to PortfolioPage)</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v115 · Smart resolve: search by name or ticker, auto-try exchange suffixes, click to pick</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
@@ -10474,51 +10474,104 @@ export default function App() {
               </div>
             </div>
             <div style={{marginBottom:12}}>
-              <label style={{fontSize:11,color:'var(--text3)',display:'block',marginBottom:4}}>Ticker symbol (e.g. PHAG, SLVR.L, ARKX)</label>
+              <label style={{fontSize:11,color:'var(--text3)',display:'block',marginBottom:4}}>Search by ticker or name (e.g. WSLV, WisdomTree Silver, PHAG)</label>
               <input
                 id="manual-ticker-input"
                 className="input mono"
                 autoFocus
-                placeholder="Enter ticker..."
+                placeholder="Type ticker or name and press Enter to search..."
                 style={{width:'100%',fontSize:13,padding:'8px 12px'}}
                 onKeyDown={async e => {
                   if (e.key !== 'Enter') return;
-                  const ticker = e.target.value.trim().toUpperCase();
-                  if (!ticker) return;
+                  const query = e.target.value.trim();
+                  if (!query) return;
                   const statusEl = document.getElementById('resolve-status');
-                  statusEl.textContent = 'Checking...';
+                  const resultsEl = document.getElementById('resolve-results');
+                  statusEl.textContent = 'Searching...';
                   statusEl.style.color = 'var(--text3)';
+                  resultsEl.innerHTML = '';
                   try {
-                    const res = await fetch('/api/fmp?path=' + encodeURIComponent('/quote?symbol=' + ticker));
-                    const data = await res.json();
-                    const quote = Array.isArray(data) ? data[0] : data;
-                    if (quote?.price || quote?.previousClose) {
-                      // Valid ticker — apply to position + save to shared map
-                      const resolvedPrice = (quote.price || quote.previousClose);
-                      setPositions(prev => prev.map(p =>
-                        p.id === manualResolvePos.id
-                          ? { ...p, fmpTicker: ticker, currentPrice: resolvedPrice / (manualResolvePos.isin?.startsWith('US') ? (1/0.92) : 1) }
-                          : p
-                      ));
-                      // Save to Supabase isin_ticker_map — all future users get this instantly
-                      if (manualResolvePos.isin) {
-                        saveISINTicker(manualResolvePos.isin, ticker, manualResolvePos.name, 'manual');
-                        console.log('[folio] manual resolve saved:', manualResolvePos.isin, '→', ticker);
-                      }
-                      statusEl.textContent = '✓ Resolved to ' + ticker + ' ($' + resolvedPrice.toFixed(2) + ') — saved for all users';
-                      statusEl.style.color = 'var(--green)';
-                      setTimeout(() => setManualResolvePos(null), 1200);
-                    } else {
-                      statusEl.textContent = 'No price found for "' + ticker + '". Try with exchange suffix (.L, .DE, .AS)';
-                      statusEl.style.color = 'var(--red)';
+                    // Strategy: try /quote first, then /quote with exchange suffixes,
+                    // then /search-name, then /search — collect all valid results
+                    const candidates = [];
+                    const tryQuote = async (sym) => {
+                      try {
+                        const res = await fetch('/api/fmp?path=' + encodeURIComponent('/quote?symbol=' + sym));
+                        const data = await res.json();
+                        const q = Array.isArray(data) ? data[0] : data;
+                        if (q?.price || q?.previousClose) candidates.push({ symbol: sym, name: q.name || sym, price: q.price || q.previousClose, exchange: q.exchange });
+                      } catch(e){}
+                    };
+                    const ticker = query.toUpperCase();
+                    // Try exact ticker + common European suffixes
+                    const suffixes = ['', '.DE', '.L', '.F', '.AS', '.MI', '.PA', '.SW'];
+                    await Promise.all(suffixes.map(s => tryQuote(ticker + s)));
+
+                    // Also try /search-name and /search for broader results
+                    let searchResults = [];
+                    try {
+                      const res = await fetch('/api/fmp?path=' + encodeURIComponent('/search-name?query=' + encodeURIComponent(query) + '&limit=8'));
+                      searchResults = await res.json();
+                    } catch(e){}
+                    if (!Array.isArray(searchResults) || !searchResults.length) {
+                      try {
+                        const res = await fetch('/api/fmp?path=' + encodeURIComponent('/search?query=' + encodeURIComponent(query) + '&limit=8'));
+                        searchResults = await res.json();
+                      } catch(e){}
                     }
+                    // Add search results that aren't already in candidates
+                    if (Array.isArray(searchResults)) {
+                      const existing = new Set(candidates.map(c => c.symbol));
+                      searchResults.forEach(r => {
+                        if (r.symbol && !existing.has(r.symbol)) {
+                          candidates.push({ symbol: r.symbol, name: r.name || r.symbol, price: null, exchange: r.exchange || r.exchangeFullName });
+                        }
+                      });
+                    }
+
+                    if (!candidates.length) {
+                      statusEl.textContent = 'No results for "' + query + '". Try a different name or ticker.';
+                      statusEl.style.color = 'var(--red)';
+                      return;
+                    }
+
+                    statusEl.textContent = candidates.length + ' result(s) — click to select:';
+                    statusEl.style.color = 'var(--text2)';
+
+                    // Render clickable result rows
+                    candidates.slice(0, 8).forEach(c => {
+                      const row = document.createElement('div');
+                      row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:8px 10px;margin:4px 0;border-radius:6px;cursor:pointer;border:1px solid var(--border);font-size:12px;transition:background 0.1s';
+                      row.onmouseenter = () => row.style.background = 'var(--surface2)';
+                      row.onmouseleave = () => row.style.background = 'transparent';
+                      row.innerHTML = '<div><span style="font-weight:600;font-family:monospace">' + c.symbol + '</span> <span style="color:var(--text3);font-size:11px">' + (c.exchange || '') + '</span><div style="font-size:10px;color:var(--text3);margin-top:1px">' + (c.name || '') + '</div></div>' +
+                        (c.price ? '<div style="font-family:monospace;font-weight:600">$' + c.price.toFixed(2) + '</div>' : '<div style="color:var(--text3);font-size:10px">no quote yet</div>');
+                      row.onclick = async () => {
+                        // Apply this ticker to the position
+                        setPositions(prev => prev.map(p =>
+                          p.id === manualResolvePos.id
+                            ? { ...p, fmpTicker: c.symbol, currentPrice: c.price ? c.price / (manualResolvePos.isin?.startsWith('US') ? (1/0.92) : 1) : p.currentPrice }
+                            : p
+                        ));
+                        if (manualResolvePos.isin) {
+                          saveISINTicker(manualResolvePos.isin, c.symbol, c.name || manualResolvePos.name, 'manual');
+                          console.log('[folio] manual resolve saved:', manualResolvePos.isin, '→', c.symbol);
+                        }
+                        statusEl.textContent = '✓ Saved ' + c.symbol + ' for all users';
+                        statusEl.style.color = 'var(--green)';
+                        resultsEl.innerHTML = '';
+                        setTimeout(() => setManualResolvePos(null), 1000);
+                      };
+                      resultsEl.appendChild(row);
+                    });
                   } catch(err) {
-                    statusEl.textContent = 'Error checking ticker. Try again.';
+                    statusEl.textContent = 'Error searching. Try again.';
                     statusEl.style.color = 'var(--red)';
                   }
                 }}
               />
               <div id="resolve-status" style={{fontSize:11,marginTop:6,minHeight:16}}></div>
+              <div id="resolve-results" style={{maxHeight:280,overflowY:'auto'}}></div>
             </div>
             <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
               <button className="btn btn-ghost" onClick={() => setManualResolvePos(null)}>CANCEL</button>
