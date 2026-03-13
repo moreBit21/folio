@@ -1362,8 +1362,17 @@ const isUSOrGlobalTicker = s => s && /^[A-Z]{1,5}(\.[A-Z]+)?$/.test(s) && !/^[A-
 // If symbol is still a raw ISIN, show first word of name or abbreviated ISIN
 const displayTicker = pos => {
   if (!pos) return '?';
+  // Prefer resolved FMP ticker (base, without exchange suffix)
+  if (pos.fmpTicker) return pos.fmpTicker.split('.')[0];
+  // Then displaySymbol from Smartbroker+ parser (cleaned Kürzel column)
+  if (pos.displaySymbol) return pos.displaySymbol;
+  // Then check ISIN_MAP
+  if (pos.isin && ISIN_MAP[pos.isin]) return ISIN_MAP[pos.isin];
   const sym = pos.symbol || '';
-  if (isISIN(sym)) return pos.name ? pos.name.split(' ')[0].slice(0,8).toUpperCase() : sym.slice(0,6)+'…';
+  // If symbol is an ISIN (12 chars) or WKN (6 alphanumeric) — show first word of name
+  if (isISIN(sym) || /^[A-Z0-9]{6}$/.test(sym)) {
+    return pos.name ? pos.name.split(' ')[0].slice(0,8).toUpperCase() : sym.slice(0,6)+'…';
+  }
   return sym;
 };
 
@@ -8735,7 +8744,6 @@ export default function App() {
               const res = await fmpGet('/search-isin?isin='+isin);
               const pick = pickFromResults(res, isin);
               if(pick?.symbol) {
-                // Find one representative position to infer type
                 const rep = stockPos.find(p => p.isin === isin);
                 const resolvedTk = pick.symbol.split('.')[0].toUpperCase();
                 const correctedType = inferType(resolvedTk, isin, rep?.name, rep?.type);
@@ -8744,6 +8752,35 @@ export default function App() {
             } catch(e){}
           }));
           if(i+BATCH2 < unresolvedISINs.length) await delay2(300);
+        }
+
+        // Fallback: for ISINs that still didn't resolve, try name-based search
+        // This handles invalid/outdated ISINs (post-corporate-actions, German deposit receipts, etc.)
+        const stillUnresolved = unresolvedISINs.filter(isin => !resolvedTickerMap[isin]);
+        if (stillUnresolved.length) {
+          console.log('[folio] ISIN resolution failed for:', stillUnresolved.join(', '), '— trying name search fallback');
+          for (let i = 0; i < stillUnresolved.length; i += BATCH2) {
+            const batch = stillUnresolved.slice(i, i + BATCH2);
+            await Promise.all(batch.map(async isin => {
+              try {
+                // Find a representative position to get the name
+                const rep = stockPos.find(p => p.isin === isin);
+                if (!rep?.name) return;
+                // Clean name: remove suffixes like "Inc.", "Corp.", "Ltd." for better search
+                const cleanName = rep.name.replace(/\s+(Inc\.?|Corp\.?|Ltd\.?|Group\.?|PLC|SE|AG|Co\.?|& Co\.?)$/i, '').trim();
+                const searchRes = await fmpGet('/search?query=' + encodeURIComponent(cleanName) + '&limit=5');
+                if (!Array.isArray(searchRes) || !searchRes.length) return;
+                const pick = pickFromResults(searchRes, isin);
+                if (pick?.symbol) {
+                  const resolvedTk = pick.symbol.split('.')[0].toUpperCase();
+                  const correctedType = inferType(resolvedTk, isin, rep.name, rep.type);
+                  resolvedTickerMap[isin] = { ticker: pick.symbol, type: correctedType };
+                  console.log('[folio] name fallback resolved:', rep.name, '→', pick.symbol);
+                }
+              } catch(e){}
+            }));
+            if (i + BATCH2 < stillUnresolved.length) await delay2(300);
+          }
         }
         // Mutate local stockPos objects so getT() returns the ticker for tickerList building
         stockPos.forEach(p => {
@@ -9405,7 +9442,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v103 · Show fmpTicker in position list; WKN→ticker via ISIN lookup, persisted to Supabase</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v104 · Fix displayTicker to prefer fmpTicker; name-based fallback when ISIN resolution fails</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
