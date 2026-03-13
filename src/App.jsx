@@ -9064,21 +9064,24 @@ export default function App() {
         });
       }
 
-      // ── Shadow Portfolio Benchmark ──
-      // Strategy: seed with the portfolio's opening value on day 0, then mirror
-      // every in-window buy/sell as a cash flow adjustment.
+      // ── Time-Weighted Return (TWR) ──
+      // TWR removes the effect of cash flows (deposits/withdrawals) so the % shows
+      // pure investment performance — identical to how Finanzfluss computes it.
       //
-      // Seed (day 0):   buy (portVal_day0 / bmPrice_day0) units  → benchmark starts at same EUR value
-      // In-window buy:  buy  (amountEur / bmPrice_that_day) more units
-      // In-window sell: sell (amountEur / bmPrice_that_day) units (proportional reduction)
+      // Algorithm:
+      //   For each day i, portVal(i) = sum(qty * price) for all positions.
+      //   On days with a cash flow (deposit or withdrawal of amount CF):
+      //     sub-period return = (portVal_before_CF - portVal_prev) / portVal_prev
+      //   On other days:
+      //     sub-period return = (portVal(i) - portVal(i-1)) / portVal(i-1)
+      //   TWR index = product of (1 + sub-period return) — starts at 1.0
+      //   Chart % = (TWR_index - 1) * 100
       //
-      // This correctly answers: "if you had put the same money into SPY — both the opening
-      // balance AND every subsequent deposit/withdrawal — what would it be worth?"
+      // Same logic applied to benchmark (SPY/QQQ etc.) — benchmark TWR = its own price return
+      // since it has no cash flows of its own. SPY TWR over any period = SPY price return. ✓
 
-      // Step 1: find the first day where BOTH portfolio and all active benchmarks have real prices.
-      // This ensures the seed happens on a day we can actually buy the benchmark ETF.
+      // Find seedDay: first day with both portfolio value AND benchmark prices
       let seedDay = 0;
-      let portValSeed = 0;
       for (let i = 0; i <= totalDays; i++) {
         let v = 0;
         allKeys.forEach(k => {
@@ -9087,64 +9090,30 @@ export default function App() {
           v += qty * p;
         });
         if (v <= 0) continue;
-        // Also require benchmark prices to be available on this day
-        const bmReady = activeBM.every(id => bmPriceOnDay[id][i] > 0);
-        if (bmReady) { seedDay = i; portValSeed = v; break; }
+        if (activeBM.every(id => bmPriceOnDay[id][i] > 0)) { seedDay = i; break; }
       }
 
-      // Step 2: in-window cash flows AFTER the seed day (seed already reflects those buys)
-      const seedDate = new Date(from); seedDate.setDate(seedDate.getDate() + seedDay);
-      const seedDateStr = seedDate.toISOString().slice(0, 10);
-      const cashFlows = sorted.filter(t =>
-        (t.type === 'buy' || t.type === 'sell') && t.amountEur > 0 && t.date > seedDateStr
-      );
-
-      // Step 3: build shadow units day by day
-      const bmUnitsOnDay = {};
-      activeBM.forEach(id => { bmUnitsOnDay[id] = new Float64Array(totalDays + 1); });
-
-      const runningUnits = {};
-      activeBM.forEach(id => {
-        // Seed on seedDay: buy portValSeed worth of benchmark at that day's price
-        const pSeed = bmPriceOnDay[id][seedDay];
-        runningUnits[id] = pSeed > 0 ? portValSeed / pSeed : 0;
+      // Build a date→totalCashFlow map for the portfolio (all buys/sells)
+      const cashFlowByDate = {};
+      sorted.forEach(t => {
+        if (t.type === 'buy' && t.amountEur > 0) cashFlowByDate[t.date] = (cashFlowByDate[t.date] || 0) + t.amountEur;
+        else if (t.type === 'sell' && t.amountEur > 0) cashFlowByDate[t.date] = (cashFlowByDate[t.date] || 0) - t.amountEur;
       });
 
-      let cfIdx = 0;
+      // Compute TWR index day-by-day (full resolution, not stepped)
+      const twrPort = new Float64Array(totalDays + 1);
+      const twrBM = {};
+      activeBM.forEach(id => { twrBM[id] = new Float64Array(totalDays + 1); });
+
+      let prevPortVal = 0;
+      const prevBMPrice = {};
+      activeBM.forEach(id => { prevBMPrice[id] = 0; });
+
       for (let i = 0; i <= totalDays; i++) {
         const d = new Date(from); d.setDate(d.getDate() + i);
         const ds = d.toISOString().slice(0, 10);
 
-        if (i === seedDay) {
-          // Seed already applied above — just store and continue
-          activeBM.forEach(id => { bmUnitsOnDay[id][i] = runningUnits[id]; });
-          continue;
-        }
-
-        // Apply cash flows that land on this day (only post-seed)
-        if (i > seedDay) {
-          while (cfIdx < cashFlows.length && cashFlows[cfIdx].date <= ds) {
-            const tx = cashFlows[cfIdx++];
-            activeBM.forEach(id => {
-              const p = bmPriceOnDay[id][i];
-              if (!p) return;
-              if (tx.type === 'buy') {
-                runningUnits[id] += tx.amountEur / p;
-              } else {
-                runningUnits[id] = Math.max(0, runningUnits[id] - tx.amountEur / p);
-              }
-            });
-          }
-        }
-        activeBM.forEach(id => { bmUnitsOnDay[id][i] = runningUnits[id]; });
-      }
-
-      // ── Assemble rows ──
-      const rows = [];
-      for (let i = 0; i <= totalDays; i += step) {
-        const d = new Date(from); d.setDate(d.getDate() + i);
-        const baseRow = investedChartData[Math.round(i / step)] || {};
-
+        // Portfolio value on this day
         let portVal = 0;
         allKeys.forEach(k => {
           const qty = qtyByDay[k]?.[i] || 0; if (qty <= 0) return;
@@ -9152,39 +9121,57 @@ export default function App() {
           portVal += qty * p;
         });
 
+        if (i < seedDay) {
+          twrPort[i] = 1;
+          activeBM.forEach(id => { twrBM[id][i] = 1; });
+          if (portVal > 0) prevPortVal = portVal;
+          activeBM.forEach(id => { if (bmPriceOnDay[id][i] > 0) prevBMPrice[id] = bmPriceOnDay[id][i]; });
+          continue;
+        }
+
+        if (i === seedDay) {
+          twrPort[i] = 1;
+          activeBM.forEach(id => { twrBM[id][i] = 1; });
+          prevPortVal = portVal;
+          activeBM.forEach(id => { prevBMPrice[id] = bmPriceOnDay[id][i]; });
+          continue;
+        }
+
+        // Portfolio TWR: on days with cash flow, evaluate return BEFORE the cash flow hits
+        // portVal already includes the new cash (it's qty-based), so subtract today's CF
+        const cf = cashFlowByDate[ds] || 0;
+        const portValBeforeCF = portVal - cf; // remove deposit / add back withdrawal
+        const portReturn = prevPortVal > 0 ? (portValBeforeCF - prevPortVal) / prevPortVal : 0;
+        twrPort[i] = twrPort[i - 1] * (1 + portReturn);
+        prevPortVal = portVal; // after CF, this is the new base
+
+        // Benchmark TWR: pure price return (no cash flows)
+        activeBM.forEach(id => {
+          const p = bmPriceOnDay[id][i];
+          const pp = prevBMPrice[id];
+          const bmReturn = (p > 0 && pp > 0) ? (p - pp) / pp : 0;
+          twrBM[id][i] = twrBM[id][i - 1] * (1 + bmReturn);
+          if (p > 0) prevBMPrice[id] = p;
+        });
+      }
+
+      // ── Assemble rows ──
+      const rows = [];
+      for (let i = 0; i <= totalDays; i += step) {
+        const d = new Date(from); d.setDate(d.getDate() + i);
+        const baseRow = investedChartData[Math.round(i / step)] || {};
         const row = {
           date: baseRow.date || d.toLocaleDateString('de-DE', { day: '2-digit', month: 'short' }),
           invested: baseRow.invested || 0,
-          portfolio: +portVal.toFixed(2),
         };
-        activeBM.forEach(id => {
-          const units = bmUnitsOnDay[id][i];
-          const p = bmPriceOnDay[id][i];
-          if (units > 0 && p > 0) row[id] = +(units * p).toFixed(0);
-        });
+        if (i >= seedDay) {
+          row.portfolio = +((twrPort[i] - 1) * 100).toFixed(2);
+          activeBM.forEach(id => {
+            if (twrBM[id][i] > 0) row[id] = +((twrBM[id][i] - 1) * 100).toFixed(2);
+          });
+        }
         rows.push(row);
       }
-      // ── Normalize to % return (indexed from 0%) ──
-      // Both portfolio and all benchmarks are normalized from the SAME anchor: seedDay.
-      // This guarantees both lines start at exactly 0% on the same day.
-      const keys = ['portfolio', ...activeBM];
-      const anchorRowIdx = Math.round(seedDay / step); // seedDay in data-row index space
-      const anchorRow = rows[anchorRowIdx] || rows.find(r => r.portfolio > 0);
-      const baseVal = {};
-      keys.forEach(k => { if (anchorRow?.[k] > 0) baseVal[k] = anchorRow[k]; });
-
-      rows.forEach((r, ri) => {
-        keys.forEach(k => {
-          if (ri < anchorRowIdx) {
-            // Before anchor: no data yet, remove key entirely
-            delete r[k];
-          } else if (r[k] > 0 && baseVal[k] > 0) {
-            r[k] = +((r[k] - baseVal[k]) / baseVal[k] * 100).toFixed(2);
-          } else {
-            delete r[k];
-          }
-        });
-      });
 
       setChartData(rows);
       if (skippedTickers.length > 0) {
@@ -9404,7 +9391,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v98 · Fix ALL chart %: normalize from seedDay anchor (same 0% start for all lines) + fix WKN ticker resolution</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v99 · TWR chart: time-weighted return eliminates deposit/withdrawal distortion — matches Finanzfluss</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
