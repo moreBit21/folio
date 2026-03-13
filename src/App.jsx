@@ -7853,8 +7853,8 @@ function PortfolioPage({ positions, transactions, wallets, onOpenStock, priceLoa
                   <div style={{minWidth:0}}>
                     <div style={{display:'flex',alignItems:'center',gap:4}}>
                       <span style={{fontSize:12,fontWeight:500}}>{displayTicker(pos)}</span>
-                      {/* Manual resolve badge: shown when position has no price and is not a derivative/crypto */}
-                      {pos.type !== 'derivative' && pos.type !== 'crypto' && (pos.currentPrice === 0 || !pos.currentPrice) && (
+                      {/* Manual resolve badge: only when no ticker resolved and not a derivative/crypto */}
+                      {!pos.fmpTicker && pos.type !== 'derivative' && pos.type !== 'crypto' && (
                         <span
                           title="Click to enter ticker symbol manually"
                           onClick={e => { e.stopPropagation(); setManualResolvePos(pos); }}
@@ -9648,7 +9648,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v118 · Resolve: skip /quote spam for name queries, debug logging for search</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v119 · Resolve badge only when no fmpTicker (not when price is 0 from FMP plan limit)</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
