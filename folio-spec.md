@@ -173,7 +173,8 @@
   - **nameMatches only applies to name-based fallback** (Step 2) where we search by company name and need to verify.
   - **Zero-price self-healing removed** — caused infinite re-resolution loops when FMP quote endpoint doesn't cover European-listed tickers (e.g. XSIL.L, EL4C.DE). These tickers ARE correctly resolved from their ISIN; they just don't have live quotes on FMP's current plan.
   - **One-time migration (v108):** clears all `fmpTicker` values from Supabase on first load so the corrected pipeline re-resolves everything cleanly. Uses localStorage flag `folio_migration_v108` to run only once.
-  - **German derivatives (Turbos, Warrants, Factor Certs):** ISINs starting with DE000 from issuers like Morgan Stanley, UniCredit, Vontobel — FMP doesn't cover these. Expected and not fixable. These should be tagged as `type: "derivative"` and excluded from price fetching.
+  - **German derivatives (Turbos, Warrants, Factor Certs):** ISINs starting with DE000 from issuers like Morgan Stanley, UniCredit, Vontobel — FMP doesn't cover these. Expected and not fixable via FMP. Strategy for future: use the derivative's underlying asset (encoded in the product name or obtainable from the issuer) to at least show the underlying's price and reference data. Alternatively, German derivative data providers like Onvista or Ariva could serve as supplementary sources.
+- **v109: Progressive name search** — Smartbroker abbreviates names heavily ("ARK Space & Defen.Innov.U.ETF", "WisdomTree Metal Securiti.Ltd."). The name fallback now builds multiple search queries from the abbreviated name: cleans out ETF/ETC/UCITS labels, removes dots and abbreviation noise, then tries first 3 words, first 2 words, and first word progressively. This resolves ARK Space → ARKX and WisdomTree → SLVR.L.
 - **TODO (future):** Remove ISIN_MAP constant entirely. Add "Re-resolve all tickers" button in developer settings.
 
 **Broker export instructions:**

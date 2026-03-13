@@ -8790,31 +8790,50 @@ export default function App() {
           if(i+BATCH2 < unresolvedISINs.length) await delay2(300);
         }
 
-        // Step 2: Name-based fallback for failed or mismatched ISINs
-        // Uses /search-name (searches by company name) as primary,
-        // then /search (searches by ticker/symbol) as secondary
+        // Step 2: Name-based fallback for ISINs that FMP /search-isin doesn't cover.
+        // Uses progressive search: try increasingly shorter versions of the name.
+        // Smartbroker names are heavily abbreviated (e.g. "ARK Space & Defen.Innov.U.ETF"),
+        // so we extract clean search terms by taking the first 2-3 meaningful words.
         if (needsNameFallback.length) {
           console.log('[folio] name fallback needed for', needsNameFallback.length, 'ISINs:', needsNameFallback.join(', '));
+
+          // Build search queries from abbreviated Smartbroker names
+          const buildSearchQueries = (name) => {
+            // Remove common suffixes, parenthetical, and abbreviation noise
+            const cleaned = name
+              .replace(/\s*\(.*?\)\s*/g, ' ')                    // remove (EUR), (USD) etc
+              .replace(/U\.?ETF|ETF|ETC|ETP|UCITS/gi, '')        // remove fund type labels
+              .replace(/\s+(Inc\.?|Corp\.?|Ltd\.?|Group\.?|PLC|SE|AG|Co\.?|GmbH|B\.V\.|& Co\.?)$/i, '')
+              .replace(/[^a-zA-Z0-9\s&-]/g, ' ')                 // replace dots, special chars with space
+              .replace(/\s+/g, ' ').trim();
+            const words = cleaned.split(' ').filter(w => w.length > 1);
+            const queries = [];
+            // Try first 3 words, then first 2, then first word
+            if (words.length >= 3) queries.push(words.slice(0, 3).join(' '));
+            if (words.length >= 2) queries.push(words.slice(0, 2).join(' '));
+            if (words.length >= 1) queries.push(words[0]);
+            return [...new Set(queries)]; // deduplicate
+          };
+
           for (let i = 0; i < needsNameFallback.length; i += BATCH2) {
             const batch = needsNameFallback.slice(i, i + BATCH2);
             await Promise.all(batch.map(async isin => {
               try {
                 const rep = stockPos.find(p => p.isin === isin);
                 if (!rep?.name) return;
-                const cleanName = rep.name.replace(/\s+(Inc\.?|Corp\.?|Ltd\.?|Group\.?|PLC|SE|AG|Co\.?|& Co\.?)$/i, '').trim();
-                // Try /search-name first (company name search — more reliable for full names)
+                const queries = buildSearchQueries(rep.name);
                 let searchRes = [];
-                try {
-                  searchRes = await fmpGet('/search-name?query=' + encodeURIComponent(cleanName) + '&limit=5');
-                } catch(e) {}
-                // If /search-name returned nothing, try /search (ticker/symbol search)
-                if (!Array.isArray(searchRes) || !searchRes.length) {
-                  try {
-                    searchRes = await fmpGet('/search?query=' + encodeURIComponent(cleanName) + '&limit=5');
-                  } catch(e) {}
+                // Try each progressively shorter query on /search-name, then /search
+                for (const q of queries) {
+                  if (searchRes.length) break;
+                  try { searchRes = await fmpGet('/search-name?query=' + encodeURIComponent(q) + '&limit=5'); } catch(e) {}
+                  if (!Array.isArray(searchRes) || !searchRes.length) {
+                    try { searchRes = await fmpGet('/search?query=' + encodeURIComponent(q) + '&limit=5'); } catch(e) {}
+                  }
+                  if (!Array.isArray(searchRes) || !searchRes.length) searchRes = [];
                 }
-                if (!Array.isArray(searchRes) || !searchRes.length) {
-                  console.log('[folio] name fallback: no results for "' + cleanName + '" on either endpoint');
+                if (!searchRes.length) {
+                  console.log('[folio] name fallback: no results for "' + rep.name + '" (tried: ' + queries.join(', ') + ')');
                   return;
                 }
                 const matchingResults = searchRes.filter(r => nameMatches(r.name, rep.name));
@@ -9489,7 +9508,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v108 · Trust ISIN resolution, remove name validation from Step 1, one-time fmpTicker migration</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v109 · Progressive name search for abbreviated Smartbroker names (ARK, WisdomTree etc)</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
