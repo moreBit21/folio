@@ -2244,7 +2244,7 @@ function ImportModal({ onClose, onImport, existingPositions = [], existingTransa
           if (parsed.length > 0) {
             setBroker("smartbroker");
             setParseMethod("hardcoded");
-            const hasISINs = parsed.some(p => isISIN(p.symbol));
+            const hasISINs = parsed.some(p => isISIN(p.symbol) || (p.isin && !p.fmpTicker && !isUSOrGlobalTicker(p.symbol)));
             if (hasISINs) { setStep("resolving"); parsed = await resolveISINs(parsed); }
             setPreview(parsed);
             setStep("preview");
@@ -2300,7 +2300,7 @@ function ImportModal({ onClose, onImport, existingPositions = [], existingTransa
               let parsed = runLearnedParser(rows, headers, learned);
               if (parsed.length > 0) {
                 parsed = parsed.map((p,i) => ({ ...p, id: Date.now()+i, color: ALLOC_COLORS_EXT[i % ALLOC_COLORS_EXT.length] }));
-                const hasISINs = parsed.some(p => isISIN(p.symbol));
+                const hasISINs = parsed.some(p => isISIN(p.symbol) || (p.isin && !p.fmpTicker && !isUSOrGlobalTicker(p.symbol)));
                 if (hasISINs) { setStep("resolving"); parsed = await resolveISINs(parsed); }
                 setPreview(parsed);
                 setBroker("learned");
@@ -2477,7 +2477,7 @@ function ImportModal({ onClose, onImport, existingPositions = [], existingTransa
           broker: p.broker || data.broker || "Imported",
           color: ALLOC_COLORS_EXT[i % ALLOC_COLORS_EXT.length],
         }));
-        const hasISINs = positions.some(p => isISIN(p.symbol));
+        const hasISINs = positions.some(p => isISIN(p.symbol) || (p.isin && !p.fmpTicker && !isUSOrGlobalTicker(p.symbol)));
         if (hasISINs) { setStep("resolving"); positions = await resolveISINs(positions); }
         setPreview(positions);
         setBroker("ai");
@@ -8686,18 +8686,17 @@ export default function App() {
       // Stocks/ETFs: FMP
       const stockPos = cur.filter(p=>p.type!=='crypto'&&p.type!=='derivative');
       if(!stockPos.length){ setLastUpdated(new Date()); return; }
+      // isRealTicker: true if symbol looks like an exchange ticker (1-5 letters, optional .XX suffix)
+      // false for WKNs (6 alphanumeric chars like "858301", "A2QHKM") or raw ISINs
+      const isRealTicker = s => s && /^[A-Z]{1,5}(\.[A-Z]{1,3})?$/.test(s);
+
       const getT = p => {
         if(p.fmpTicker) return p.fmpTicker;
         // Check ISIN_MAP first (pre-mapped known tickers)
         if(p.isin && ISIN_MAP[p.isin]) return ISIN_MAP[p.isin];
-        // If symbol is an ISIN (not yet resolved), we can't use it as ticker
-        if(p.isin && isISIN(p.symbol)) {
-          // Guess ticker from ISIN country prefix
-          if(p.isin.startsWith('DE')||p.isin.startsWith('LU')) return null; // needs FMP search
-          if(p.isin.startsWith('IE')) return null;
-          return null;
-        }
-        // symbol is already a real ticker
+        // Symbol is an ISIN or WKN (non-ticker) — needs resolution via ISIN search
+        if(!isRealTicker(p.symbol)) return null;
+        // Symbol looks like a real ticker — apply exchange suffix if needed
         if(p.isin?.startsWith('DE')||p.isin?.startsWith('LU')) return p.symbol+'.DE';
         if(p.isin?.startsWith('IE')) return p.symbol+'.AS';
         return p.symbol;
@@ -9391,7 +9390,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v99 · TWR chart: time-weighted return eliminates deposit/withdrawal distortion — matches Finanzfluss</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v100 · Fix ticker resolution: WKN symbols (858301, A2QHKM) now resolve via p.isin — broker/import agnostic</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
