@@ -7405,7 +7405,7 @@ function GroupAllocBadge({ groupVal, positions }) {
   return <span className="mono" style={{fontSize:9,color:'var(--green)',marginLeft:6,background:'rgba(0,229,160,0.1)',padding:'1px 6px',borderRadius:3}}>{alloc.toFixed(1)}%</span>;
 }
 
-function PortfolioPage({ positions, transactions, wallets, onOpenStock, priceLoading, chartData, investedChartData, chartLoading, chartError, chartProgress, activeBM, setActiveBM, range, setRange, BENCHMARKS, perfStats }) {
+function PortfolioPage({ positions, transactions, wallets, onOpenStock, priceLoading, chartData, investedChartData, chartLoading, chartError, chartProgress, activeBM, setActiveBM, range, setRange, BENCHMARKS, perfStats, setManualResolvePos }) {
   const [collapsedGroups, setCollapsedGroups] = useState(new Set(['stock','etf','crypto','derivative'])); // all collapsed by default
   const [expandedAccounts, setExpandedAccounts] = useState(new Set()); // By Account: empty = all collapsed
   const [tab, setTab] = React.useState('positions'); // positions | analysis
@@ -9648,7 +9648,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v113 · Supabase isin_ticker_map: crowd-sourced ISIN resolution, manual resolve saves for all users</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v114 · Fix resolve badge click (pass setManualResolvePos to PortfolioPage)</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
@@ -9985,7 +9985,8 @@ export default function App() {
             chartLoading={chartLoading} chartError={chartError} chartProgress={chartProgress}
             activeBM={activeBM} setActiveBM={setActiveBM}
             range={range} setRange={setRange}
-            BENCHMARKS={BENCHMARKS} perfStats={perfStats}/>}
+            BENCHMARKS={BENCHMARKS} perfStats={perfStats}
+            setManualResolvePos={setManualResolvePos}/>}
           {/* Screener container — always mounted to preserve list state */}
           <div style={{display: nav==="screener" || (nav==="stock" && prevNav==="screener") ? 'block' : 'none'}}>
             {/* Tab bar */}
