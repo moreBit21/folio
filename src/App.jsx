@@ -8701,40 +8701,52 @@ export default function App() {
         if(p.isin?.startsWith('IE')) return p.symbol+'.AS';
         return p.symbol;
       };
-      // Resolve any unresolved ISINs via FMP search
-      // Build a local isin→ticker map so we don't rely on stale React state later
-      const resolvedTickerMap = {}; // isin → fmpTicker
-      const needsResolution = stockPos.filter(p => !getT(p) && p.isin);
-      if(needsResolution.length) {
-        const pickFromResults = (res, isin) => {
-          if(!Array.isArray(res)||!res.length) return null;
-          if(isin?.startsWith('US'))
-            return res.filter(r=>!r.symbol?.includes('.')).sort((a,b)=>(b.marketCap||0)-(a.marketCap||0))[0]
-              || res.sort((a,b)=>(b.marketCap||0)-(a.marketCap||0))[0] || res[0];
-          return res.find(r=>r.symbol?.endsWith('.DE'))
-            || res.find(r=>r.symbol?.endsWith('.F'))
-            || res.find(r=>r.symbol?.endsWith('.AS')||r.symbol?.endsWith('.PA'))
-            || res.find(r=>r.marketCap>0) || res[0];
-        };
-        const BATCH2 = 3;
+      // Resolve unresolved positions (WKN symbols, raw ISINs) via FMP /search-isin
+      // Key fix: deduplicate by ISIN first, resolve each ISIN only once,
+      // then apply ALL resolved tickers in a single setPositions call at the end.
+      const resolvedTickerMap = {}; // isin → { ticker, type }
+
+      const pickFromResults = (res, isin) => {
+        if(!Array.isArray(res)||!res.length) return null;
+        if(isin?.startsWith('US'))
+          return res.filter(r=>!r.symbol?.includes('.')).sort((a,b)=>(b.marketCap||0)-(a.marketCap||0))[0]
+            || res.sort((a,b)=>(b.marketCap||0)-(a.marketCap||0))[0] || res[0];
+        return res.find(r=>r.symbol?.endsWith('.DE'))
+          || res.find(r=>r.symbol?.endsWith('.F'))
+          || res.find(r=>r.symbol?.endsWith('.AS')||r.symbol?.endsWith('.PA'))
+          || res.find(r=>r.marketCap>0) || res[0];
+      };
+
+      // Deduplicate: only unique ISINs that need resolution
+      const unresolvedISINs = [...new Set(
+        stockPos.filter(p => !getT(p) && p.isin).map(p => p.isin)
+      )];
+
+      if(unresolvedISINs.length) {
+        const BATCH2 = 5;
         const delay2 = ms => new Promise(r => setTimeout(r, ms));
-        for(let i=0; i<needsResolution.length; i+=BATCH2) {
-          const batch = needsResolution.slice(i, i+BATCH2);
-          await Promise.all(batch.map(async p => {
+        for(let i=0; i<unresolvedISINs.length; i+=BATCH2) {
+          const batch = unresolvedISINs.slice(i, i+BATCH2);
+          await Promise.all(batch.map(async isin => {
             try {
-              const res = await fmpGet('/search-isin?isin='+p.isin);
-              const pick = pickFromResults(res, p.isin);
+              const res = await fmpGet('/search-isin?isin='+isin);
+              const pick = pickFromResults(res, isin);
               if(pick?.symbol) {
+                // Find one representative position to infer type
+                const rep = stockPos.find(p => p.isin === isin);
                 const resolvedTk = pick.symbol.split('.')[0].toUpperCase();
-                const correctedType = inferType(resolvedTk, p.isin, p.name, p.type);
-                resolvedTickerMap[p.isin] = { ticker: pick.symbol, type: correctedType };
-                setPositions(prev=>prev.map(q=>q.isin===p.isin?{...q,fmpTicker:pick.symbol,type:correctedType}:q));
-                p.fmpTicker = pick.symbol; // mutate local obj for tickerList below
+                const correctedType = inferType(resolvedTk, isin, rep?.name, rep?.type);
+                resolvedTickerMap[isin] = { ticker: pick.symbol, type: correctedType };
               }
             } catch(e){}
           }));
-          if(i+BATCH2 < needsResolution.length) await delay2(300);
+          if(i+BATCH2 < unresolvedISINs.length) await delay2(300);
         }
+        // Mutate local stockPos objects so getT() returns the ticker for tickerList building
+        stockPos.forEach(p => {
+          if(resolvedTickerMap[p.isin]) p.fmpTicker = resolvedTickerMap[p.isin].ticker;
+        });
+        console.log('[folio] resolved ISINs:', Object.entries(resolvedTickerMap).map(([k,v])=>k+'→'+v.ticker).join(', '));
       }
       // Build ticker list using local objects (already mutated above, no stale state issue)
       const rawTickers = stockPos.map(getT).filter(Boolean);
@@ -9390,7 +9402,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v100 · Fix ticker resolution: WKN symbols (858301, A2QHKM) now resolve via p.isin — broker/import agnostic</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v101 · Fix price update: deduplicate ISINs before FMP resolution, single setPositions call — no mid-loop clobber</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
