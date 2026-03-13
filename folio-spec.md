@@ -209,6 +209,21 @@ create table isin_ticker_map (
 4. Name fallback (`/search-name` progressive) → if success, use it + **save to `isin_ticker_map`**
 5. Manual resolve prompt → user enters ticker, validated via FMP `/quote` → **save to `isin_ticker_map`**
 
+**Ticker override (✏️ edit icon):**
+
+> **TODO (v122):** Any position can have its ticker manually overridden — not just unresolved ones.
+> This is needed because FMP's ISIN database can be outdated (e.g. Block Inc. changed ticker from SQ→XYZ in June 2024, but FMP `/search-isin` for `US8522341036` still returns `SQ`, which now belongs to a different company returning $83 instead of Block's $60).
+>
+> **Implementation:**
+> - In the stock detail view header, show the current resolved ticker (e.g. `SQ`) with a small ✏️ edit icon next to it
+> - Click ✏️ → opens the same search modal as the resolve flow (search by name or ticker, auto-try suffixes, clickable results with RECOMMENDED badge)
+> - User picks the correct ticker → saves to `fmpTicker` + updates `isin_ticker_map` in Supabase with `source: 'manual'`
+> - The override is permanent — survives page reloads, and benefits all future users with the same ISIN
+>
+> **Known FMP stale ISIN cases:**
+> - `US8522341036` → FMP returns `SQ` (old Square ticker, now a different company). Correct ticker: `XYZ` (Block Inc.)
+> - More cases expected as companies rename/reticker. The manual override + isin_ticker_map system handles all of these generically.
+
 **Local cache:** `localStorage` cache of the map with 7-day TTL (same pattern as learned parser cache) to avoid Supabase round-trips on every page load.
 
 **Cost:** Zero — reads from Supabase are free on the Pro plan, writes are negligible.
@@ -2092,8 +2107,8 @@ GET /api/dashboard-widget?token={device_token}
 
 |Token         |Value           |
 |--------------|----------------|
-|Background    |`#ffffff`       |
-|Surface       |`#f5f7fa`       |
+|Background    |`#f8f9fb`       |
+|Surface       |`#f0f2f5`       |
 |Border        |`#e2e8f0`       |
 |Text primary  |`#1a202c`       |
 |Text secondary|`#718096`       |
@@ -2101,6 +2116,8 @@ GET /api/dashboard-widget?token={device_token}
 |Red (loss)    |`#dc2626`       |
 |Gold (crypto) |`#d97706`       |
 |Blue (info)   |`#2563eb`       |
+
+> **TODO (v122):** `#ffffff` background is too harsh — change to `#f8f9fb` (soft off-white). Also update Surface from `#f5f7fa` to `#f0f2f5` for more contrast between bg and cards.
 
 **Dark theme (toggle in Settings):**
 
