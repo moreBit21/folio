@@ -9648,7 +9648,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v116 · Resolve modal: also searches by position name when ticker query returns nothing</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v117 · Resolve modal: sorted results, RECOMMENDED badge, exchange + currency labels</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
@@ -10544,7 +10544,7 @@ export default function App() {
                       const existing = new Set(candidates.map(c => c.symbol));
                       searchResults.forEach(r => {
                         if (r.symbol && !existing.has(r.symbol)) {
-                          candidates.push({ symbol: r.symbol, name: r.name || r.symbol, price: null, exchange: r.exchange || r.exchangeFullName });
+                          candidates.push({ symbol: r.symbol, name: r.name || r.symbol, price: null, exchange: r.exchange || r.exchangeFullName, currency: r.currency });
                         }
                       });
                     }
@@ -10555,17 +10555,41 @@ export default function App() {
                       return;
                     }
 
-                    statusEl.textContent = candidates.length + ' result(s) — click to select:';
+                    // Deduplicate by symbol
+                    const seen = new Set();
+                    const unique = candidates.filter(c => { if (seen.has(c.symbol)) return false; seen.add(c.symbol); return true; });
+
+                    // Sort: results with price first, then prefer .DE > .L > .F > no suffix > other
+                    const exchangeRank = s => {
+                      if (s.endsWith('.DE')) return 0;
+                      if (s.endsWith('.L')) return 1;
+                      if (s.endsWith('.F')) return 2;
+                      if (!s.includes('.')) return 3; // US listing
+                      return 4;
+                    };
+                    unique.sort((a, b) => {
+                      if (a.price && !b.price) return -1;
+                      if (!a.price && b.price) return 1;
+                      return exchangeRank(a.symbol) - exchangeRank(b.symbol);
+                    });
+
+                    const isRecommended = (c, idx) => idx === 0; // top result after sorting
+
+                    statusEl.textContent = unique.length + ' result(s) — click to select:';
                     statusEl.style.color = 'var(--text2)';
 
                     // Render clickable result rows
-                    candidates.slice(0, 8).forEach(c => {
+                    unique.slice(0, 8).forEach((c, idx) => {
+                      const rec = isRecommended(c, idx);
                       const row = document.createElement('div');
-                      row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:8px 10px;margin:4px 0;border-radius:6px;cursor:pointer;border:1px solid var(--border);font-size:12px;transition:background 0.1s';
-                      row.onmouseenter = () => row.style.background = 'var(--surface2)';
-                      row.onmouseleave = () => row.style.background = 'transparent';
-                      row.innerHTML = '<div><span style="font-weight:600;font-family:monospace">' + c.symbol + '</span> <span style="color:var(--text3);font-size:11px">' + (c.exchange || '') + '</span><div style="font-size:10px;color:var(--text3);margin-top:1px">' + (c.name || '') + '</div></div>' +
-                        (c.price ? '<div style="font-family:monospace;font-weight:600">$' + c.price.toFixed(2) + '</div>' : '<div style="color:var(--text3);font-size:10px">no quote yet</div>');
+                      row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:8px 10px;margin:4px 0;border-radius:6px;cursor:pointer;border:1px solid ' + (rec ? 'var(--green)' : 'var(--border)') + ';font-size:12px;transition:background 0.1s' + (rec ? ';background:rgba(0,229,160,0.06)' : '');
+                      row.onmouseenter = () => row.style.background = rec ? 'rgba(0,229,160,0.12)' : 'var(--surface2)';
+                      row.onmouseleave = () => row.style.background = rec ? 'rgba(0,229,160,0.06)' : 'transparent';
+                      const exchangeLabel = (c.exchange || '').replace('Stock Exchange', 'SE');
+                      const currLabel = c.currency ? ' · ' + c.currency : '';
+                      const recBadge = rec ? '<span style="font-size:8px;background:var(--green);color:#000;padding:1px 5px;border-radius:3px;margin-left:6px;font-weight:700">RECOMMENDED</span>' : '';
+                      row.innerHTML = '<div><span style="font-weight:600;font-family:monospace">' + c.symbol + '</span>' + recBadge + '<div style="font-size:10px;color:var(--text3);margin-top:1px">' + (c.name || '') + ' <span style="opacity:0.7">' + exchangeLabel + currLabel + '</span></div></div>' +
+                        (c.price ? '<div style="font-family:monospace;font-weight:600;color:var(--green)">$' + c.price.toFixed(2) + '</div>' : '<div style="color:var(--text3);font-size:10px;text-align:right">no live price<br>on current plan</div>');
                       row.onclick = async () => {
                         // Apply this ticker to the position
                         setPositions(prev => prev.map(p =>
