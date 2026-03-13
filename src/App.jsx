@@ -1456,6 +1456,12 @@ function inferType(ticker, isin, name, rawType) {
   if (rawType === 'crypto') return 'crypto';
   if (rawType === 'derivative') return 'derivative';
   if (/derivat|warrant|zertifikat|knock.out|turbo|faktor/i.test(n)) return 'derivative';
+  // German structured products: DE000 + issuer code. Known derivative issuers:
+  // UG=UBS, MM/MH=Morgan Stanley, HD=HSBC, VH/VJ=Vontobel, SB=Société Générale,
+  // HB=UniCredit/HVB, DW/DV=DZ Bank, GX/GK=Goldman Sachs, CU/CZ=Citigroup
+  if (/^DE000(UG|MM|MH|HD|VH|VJ|SB|HB|DW|DV|GX|GK|CU|CZ)[A-Z0-9]/.test(i)) return 'derivative';
+  // Issuer names in position name (Smartbroker activity CSV uses issuer as name for derivatives)
+  if (/morgan stanley|unicredit|vontobel|hsbc trinkaus|société générale|goldman sachs.*warrant|bnp paribas.*turbo/i.test(n)) return 'derivative';
   if (STOCK_TICKERS.has(t)) return 'stock';
   if (i.startsWith('IE') || i.startsWith('LU')) return 'etf';
   if (/^DE000(ETF|EXS|EL4|A0S|A1J)/.test(i)) return 'etf';
@@ -8582,7 +8588,7 @@ export default function App() {
             // stored wrong resolutions (e.g. v105 ISIN_MAP shortcuts, v106 name mismatch false positives).
             // The corrected pipeline (v108+) will re-resolve all positions from their ISINs on first fetchPrices.
             // This migration runs once — after re-resolution, correct fmpTicker values are saved back to Supabase.
-            const MIGRATION_KEY = 'folio_migration_v108';
+            const MIGRATION_KEY = 'folio_migration_v110';
             const needsMigration = !localStorage.getItem(MIGRATION_KEY);
             const loaded = plain.positions.map(p => {
               if (needsMigration && p.fmpTicker) {
@@ -9508,7 +9514,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v109 · Progressive name search for abbreviated Smartbroker names (ARK, WisdomTree etc)</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v110 · Derivative detection via DE000 ISIN issuer codes + issuer name patterns</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
