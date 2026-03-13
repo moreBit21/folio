@@ -163,10 +163,11 @@
 - Some Smartbroker+ ISINs are invalid or outdated (corporate actions, deposit receipt ISINs). Examples: HubSpot `US44922N1037`, Qualcomm `US7960508882` — FMP `/search-isin` returns nothing for these. Fix: fall back to name-based search via `/search?query=` using the position's `name` field. Fixed in v104.
 - Resolution pipeline priority: (1) `ISIN_MAP` instant lookup → (2) FMP `/search-isin` with name validation → (3) FMP `/search?query={name}` fallback → (4) unresolved (show first word of name)
 - `resolvedTickerMap[isin]` in `fetchPrices` must be applied to ALL positions sharing that ISIN in a single `setPositions` call — never per-position setState (causes stale state)
-- **Critical v105 fix:** Three distinct bugs found and fixed generically:
-  - (a) `ISIN_MAP` resolved tickers for price fetching but never persisted `fmpTicker` on the position → `displayTicker` showed WKN instead of ticker. Fix: ISIN_MAP hits now also write to `resolvedTickerMap`.
-  - (b) Some Smartbroker+ ISINs are German deposit receipt identifiers, not real US ISINs (e.g. Qualcomm `US7960508882` → FMP returns Samsung). Fix: after ISIN resolution, validate the returned company name against the position name. Mismatch → discard result, trigger name fallback.
-  - (c) Name fallback wasn't triggering for positions where ISIN resolution "succeeded" with wrong data. Fix: explicit `needsNameFallback` list fed by both failed and mismatched ISIN resolutions.
+- **Critical v105→v106 fix:** ISIN_MAP completely removed from the resolution pipeline in `fetchPrices`. ALL positions now go through the same generic path: FMP `/search-isin` → name validation → name fallback. ISIN_MAP remains only as a temporary display fallback in `displayTicker`, `AssetLogo`, and chart code — to be removed entirely in a future version once we confirm the generic pipeline resolves everything.
+  - (a) Positions that were previously shortcutted via ISIN_MAP (Apple, Goldman, Meta etc.) now go through `/search-isin` like every other stock. `fmpTicker` is persisted to Supabase on first successful resolution.
+  - (b) German deposit receipt ISINs (Qualcomm `US7960508882` → Samsung, Broadcom `US1255231003` → Cigna) are caught by name validation and routed to name fallback.
+  - (c) Name fallback searches `/search?query={cleanName}` and filters results by name match before picking.
+- **TODO (future):** Remove ISIN_MAP constant entirely once v106 is confirmed stable. All 20+ references throughout the codebase that fall back to ISIN_MAP should use `pos.fmpTicker` only.
 
 **Broker export instructions:**
 

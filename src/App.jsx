@@ -8703,18 +8703,18 @@ export default function App() {
 
       const getT = p => {
         if(p.fmpTicker) return p.fmpTicker;
-        // Check ISIN_MAP first (pre-mapped known tickers)
-        if(p.isin && ISIN_MAP[p.isin]) return ISIN_MAP[p.isin];
-        // Symbol is an ISIN or WKN (non-ticker) — needs resolution via ISIN search
+        // Symbol is an ISIN or WKN (non-ticker) — needs resolution
         if(!isRealTicker(p.symbol)) return null;
         // Symbol looks like a real ticker — apply exchange suffix if needed
         if(p.isin?.startsWith('DE')||p.isin?.startsWith('LU')) return p.symbol+'.DE';
         if(p.isin?.startsWith('IE')) return p.symbol+'.AS';
         return p.symbol;
       };
-      // Resolve unresolved positions (WKN symbols, raw ISINs) via FMP /search-isin
-      // Key fix: deduplicate by ISIN first, resolve each ISIN only once,
-      // then apply ALL resolved tickers in a single setPositions call at the end.
+      // Generic ticker resolution pipeline:
+      //   Step 1: FMP /search-isin (validates result name against position name)
+      //   Step 2: FMP /search?query={name} fallback (for failed or mismatched ISINs)
+      // Every resolved ticker is persisted as fmpTicker → survives page reloads via Supabase.
+      // No ISIN_MAP dependency — the pipeline must work for ANY stock from ANY broker.
       const resolvedTickerMap = {}; // isin → { ticker, type }
 
       const pickFromResults = (res, isin) => {
@@ -8729,37 +8729,26 @@ export default function App() {
       };
 
       // Helper: check if an FMP result name roughly matches the position name
-      // Used to detect wrong ISIN→ticker mappings (e.g. German deposit receipt ISINs)
       const nameMatches = (fmpName, posName) => {
-        if (!fmpName || !posName) return true; // if we can't check, assume ok
+        if (!fmpName || !posName) return true;
         const normalize = s => s.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 8);
         const fmpN = normalize(fmpName);
         const posN = normalize(posName);
-        // Match if first 4+ chars overlap (handles "Qualcomm" vs "QUALCOMM Inc.")
         return fmpN.startsWith(posN.slice(0, 4)) || posN.startsWith(fmpN.slice(0, 4));
       };
 
-      // Step 1: For positions resolved via ISIN_MAP (known tickers), persist fmpTicker
-      // These were skipped by the old code because getT() returned a value, so they
-      // never entered unresolvedISINs — but fmpTicker was never written to the position.
-      stockPos.forEach(p => {
-        if (!p.fmpTicker && p.isin && ISIN_MAP[p.isin]) {
-          const ticker = ISIN_MAP[p.isin];
-          resolvedTickerMap[p.isin] = { ticker, type: inferType(ticker, p.isin, p.name, p.type) };
-        }
-      });
-
-      // Step 2: Collect ISINs that still need FMP resolution
-      // (no fmpTicker, not in ISIN_MAP, and symbol is not a real ticker)
+      // Collect ALL positions that don't have fmpTicker yet
       const unresolvedISINs = [...new Set(
-        stockPos.filter(p => !p.fmpTicker && !ISIN_MAP[p.isin] && !isRealTicker(p.symbol) && p.isin).map(p => p.isin)
+        stockPos.filter(p => !p.fmpTicker && p.isin).map(p => p.isin)
       )];
 
-      // Step 3: Resolve via FMP /search-isin
-      const needsNameFallback = []; // ISINs where ISIN resolution gave wrong result or nothing
+      const needsNameFallback = [];
       if(unresolvedISINs.length) {
+        console.log('[folio] resolving', unresolvedISINs.length, 'ISINs via generic pipeline (no ISIN_MAP)');
         const BATCH2 = 5;
         const delay2 = ms => new Promise(r => setTimeout(r, ms));
+
+        // Step 1: FMP /search-isin with name validation
         for(let i=0; i<unresolvedISINs.length; i+=BATCH2) {
           const batch = unresolvedISINs.slice(i, i+BATCH2);
           await Promise.all(batch.map(async isin => {
@@ -8768,10 +8757,8 @@ export default function App() {
               const pick = pickFromResults(res, isin);
               if(pick?.symbol) {
                 const rep = stockPos.find(p => p.isin === isin);
-                // Validate: does the FMP result name match our position name?
-                // Catches wrong ISINs (e.g. German deposit receipt ISIN for Qualcomm → Samsung)
                 if (!nameMatches(pick.name, rep?.name)) {
-                  console.log('[folio] ISIN mismatch:', isin, '→ FMP says', pick.name, 'but position says', rep?.name, '— will try name fallback');
+                  console.log('[folio] ISIN mismatch:', isin, '→ FMP says "' + pick.name + '" but position says "' + rep?.name + '" — routing to name fallback');
                   needsNameFallback.push(isin);
                   return;
                 }
@@ -8786,23 +8773,21 @@ export default function App() {
           if(i+BATCH2 < unresolvedISINs.length) await delay2(300);
         }
 
-        // Step 4: Name-based fallback for ISINs that failed or mismatched
+        // Step 2: Name-based fallback for failed or mismatched ISINs
         if (needsNameFallback.length) {
-          console.log('[folio] Name fallback needed for:', needsNameFallback.join(', '));
+          console.log('[folio] name fallback needed for', needsNameFallback.length, 'ISINs:', needsNameFallback.join(', '));
           for (let i = 0; i < needsNameFallback.length; i += BATCH2) {
             const batch = needsNameFallback.slice(i, i + BATCH2);
             await Promise.all(batch.map(async isin => {
               try {
                 const rep = stockPos.find(p => p.isin === isin);
                 if (!rep?.name) return;
-                // Clean name: remove suffixes for better search
                 const cleanName = rep.name.replace(/\s+(Inc\.?|Corp\.?|Ltd\.?|Group\.?|PLC|SE|AG|Co\.?|& Co\.?)$/i, '').trim();
                 const searchRes = await fmpGet('/search?query=' + encodeURIComponent(cleanName) + '&limit=5');
                 if (!Array.isArray(searchRes) || !searchRes.length) {
-                  console.log('[folio] name fallback: no results for', cleanName);
+                  console.log('[folio] name fallback: no results for "' + cleanName + '"');
                   return;
                 }
-                // For name search, prefer results whose name actually matches
                 const matchingResults = searchRes.filter(r => nameMatches(r.name, rep.name));
                 const pick = pickFromResults(matchingResults.length ? matchingResults : searchRes, isin);
                 if (pick?.symbol) {
@@ -8810,6 +8795,8 @@ export default function App() {
                   const correctedType = inferType(resolvedTk, isin, rep.name, rep.type);
                   resolvedTickerMap[isin] = { ticker: pick.symbol, type: correctedType };
                   console.log('[folio] name fallback resolved:', rep.name, '→', pick.symbol);
+                } else {
+                  console.log('[folio] name fallback: could not resolve "' + rep.name + '"');
                 }
               } catch(e){}
             }));
@@ -9476,7 +9463,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v105 · Generic ticker resolution: ISIN_MAP persistence + ISIN→name validation + name fallback</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v106 · Fully generic ticker resolution — no ISIN_MAP in pipeline, name validation + fallback</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
