@@ -9648,7 +9648,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v117 · Resolve modal: sorted results, RECOMMENDED badge, exchange + currency labels</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v118 · Resolve: skip /quote spam for name queries, debug logging for search</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
@@ -10503,12 +10503,16 @@ export default function App() {
                       } catch(e){}
                     };
                     const ticker = query.toUpperCase();
-                    // Try exact ticker + common European suffixes
-                    const suffixes = ['', '.DE', '.L', '.F', '.AS', '.MI', '.PA', '.SW'];
-                    await Promise.all(suffixes.map(s => tryQuote(ticker + s)));
+                    const isNameQuery = query.includes(' ') || query.length > 8;
 
-                    // Also try /search-name and /search for broader results
-                    // Search with user query AND position name (in case user typed a ticker FMP doesn't know)
+                    // Only try /quote with suffixes if it looks like a ticker (no spaces, short)
+                    if (!isNameQuery) {
+                      const suffixes = ['', '.DE', '.L', '.F', '.AS', '.MI', '.PA', '.SW'];
+                      await Promise.all(suffixes.map(s => tryQuote(ticker + s)));
+                    }
+
+                    // Search by name using /search-name and /search
+                    // Try: user query, cleaned position name, first 2 words of position name
                     const searchQueries = [query];
                     if (manualResolvePos.name && manualResolvePos.name.toLowerCase() !== query.toLowerCase()) {
                       // Add cleaned position name as secondary search
@@ -10525,18 +10529,21 @@ export default function App() {
                     }
                     let searchResults = [];
                     for (const sq of searchQueries) {
-                      if (searchResults.length >= 3) break; // enough results
+                      if (searchResults.length >= 3) break;
+                      console.log('[folio] resolve search: trying "' + sq + '"');
                       try {
                         const res = await fetch('/api/fmp?path=' + encodeURIComponent('/search-name?query=' + encodeURIComponent(sq) + '&limit=8'));
                         const data = await res.json();
-                        if (Array.isArray(data)) searchResults.push(...data);
-                      } catch(e){}
+                        console.log('[folio] /search-name "' + sq + '" →', Array.isArray(data) ? data.length + ' results' : 'not array');
+                        if (Array.isArray(data) && data.length) searchResults.push(...data);
+                      } catch(e){ console.log('[folio] /search-name error:', e.message); }
                       if (!searchResults.length) {
                         try {
                           const res = await fetch('/api/fmp?path=' + encodeURIComponent('/search?query=' + encodeURIComponent(sq) + '&limit=8'));
                           const data = await res.json();
-                          if (Array.isArray(data)) searchResults.push(...data);
-                        } catch(e){}
+                          console.log('[folio] /search "' + sq + '" →', Array.isArray(data) ? data.length + ' results' : 'not array');
+                          if (Array.isArray(data) && data.length) searchResults.push(...data);
+                        } catch(e){ console.log('[folio] /search error:', e.message); }
                       }
                     }
                     // Add search results that aren't already in candidates
