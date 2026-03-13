@@ -167,7 +167,11 @@
   - (a) Positions that were previously shortcutted via ISIN_MAP (Apple, Goldman, Meta etc.) now go through `/search-isin` like every other stock. `fmpTicker` is persisted to Supabase on first successful resolution.
   - (b) German deposit receipt ISINs (Qualcomm `US7960508882` → Samsung, Broadcom `US1255231003` → Cigna) are caught by name validation and routed to name fallback.
   - (c) Name fallback searches `/search?query={cleanName}` and filters results by name match before picking.
-- **TODO (future):** Remove ISIN_MAP constant entirely once v106 is confirmed stable. All 20+ references throughout the codebase that fall back to ISIN_MAP should use `pos.fmpTicker` only.
+- **v107 fixes on top of v106:**
+  - Name fallback now uses `/search-name` endpoint (searches by company name) as primary, `/search` as secondary. FMP `/search?query=HubSpot` returns nothing but `/search-name?query=HubSpot` returns HUBS correctly.
+  - Zero-price self-healing: positions with `fmpTicker` but `currentPrice === 0` get `fmpTicker` cleared at the start of each `fetchPrices` cycle, forcing re-resolution through the generic pipeline. Catches: Qualcomm (SMSN.IL→no price), HubSpot (no fmpTicker→no price).
+  - Known limitation: Broadcom has `fmpTicker: "CI"` (Cigna) which returns Cigna's price (non-zero). The zero-price check doesn't catch this. Requires either a manual re-resolve or a one-time data cleanup. Future: add "Re-resolve all tickers" button in Settings.
+- **TODO (future):** Remove ISIN_MAP constant entirely once v107 is confirmed stable. Add "Re-resolve all tickers" developer/settings button for one-time cleanup of bad historical resolutions.
 
 **Broker export instructions:**
 

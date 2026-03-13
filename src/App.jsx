@@ -8737,7 +8737,22 @@ export default function App() {
         return fmpN.startsWith(posN.slice(0, 4)) || posN.startsWith(fmpN.slice(0, 4));
       };
 
-      // Collect ALL positions that don't have fmpTicker yet
+      // Step 0: Self-healing — positions with fmpTicker but currentPrice === 0
+      // likely have a wrongly-resolved ticker from a previous session.
+      // Clear fmpTicker so they re-enter the generic resolution pipeline.
+      // This safely handles: bad ISIN resolutions (SMSN.IL for Qualcomm),
+      // wrong ISIN mappings (CI for Broadcom), and any other stale/invalid tickers.
+      // If FMP is temporarily down, all positions clear — but they re-resolve on next cycle.
+      const cleared = [];
+      stockPos.forEach(p => {
+        if (p.fmpTicker && p.currentPrice === 0 && p.isin) {
+          cleared.push(p.name + '→' + p.fmpTicker);
+          p.fmpTicker = undefined;
+        }
+      });
+      if (cleared.length) console.log('[folio] cleared zero-price fmpTickers for re-resolution:', cleared.join(', '));
+
+      // Collect ALL positions that don't have fmpTicker (including just-cleared ones)
       const unresolvedISINs = [...new Set(
         stockPos.filter(p => !p.fmpTicker && p.isin).map(p => p.isin)
       )];
@@ -8774,6 +8789,8 @@ export default function App() {
         }
 
         // Step 2: Name-based fallback for failed or mismatched ISINs
+        // Uses /search-name (searches by company name) as primary,
+        // then /search (searches by ticker/symbol) as secondary
         if (needsNameFallback.length) {
           console.log('[folio] name fallback needed for', needsNameFallback.length, 'ISINs:', needsNameFallback.join(', '));
           for (let i = 0; i < needsNameFallback.length; i += BATCH2) {
@@ -8783,9 +8800,19 @@ export default function App() {
                 const rep = stockPos.find(p => p.isin === isin);
                 if (!rep?.name) return;
                 const cleanName = rep.name.replace(/\s+(Inc\.?|Corp\.?|Ltd\.?|Group\.?|PLC|SE|AG|Co\.?|& Co\.?)$/i, '').trim();
-                const searchRes = await fmpGet('/search?query=' + encodeURIComponent(cleanName) + '&limit=5');
+                // Try /search-name first (company name search — more reliable for full names)
+                let searchRes = [];
+                try {
+                  searchRes = await fmpGet('/search-name?query=' + encodeURIComponent(cleanName) + '&limit=5');
+                } catch(e) {}
+                // If /search-name returned nothing, try /search (ticker/symbol search)
                 if (!Array.isArray(searchRes) || !searchRes.length) {
-                  console.log('[folio] name fallback: no results for "' + cleanName + '"');
+                  try {
+                    searchRes = await fmpGet('/search?query=' + encodeURIComponent(cleanName) + '&limit=5');
+                  } catch(e) {}
+                }
+                if (!Array.isArray(searchRes) || !searchRes.length) {
+                  console.log('[folio] name fallback: no results for "' + cleanName + '" on either endpoint');
                   return;
                 }
                 const matchingResults = searchRes.filter(r => nameMatches(r.name, rep.name));
@@ -8825,11 +8852,8 @@ export default function App() {
       }
       setPositions(prev=>prev.map(p=>{
         if(p.type==='crypto'||p.type==='derivative') return p;
-        // Use resolvedTickerMap for newly-resolved positions (avoids stale React state),
-        // fall back to p.fmpTicker (already-resolved from previous runs) then getT
         const resolvedTicker = resolvedTickerMap[p.isin]?.ticker;
         const t = resolvedTicker || p.fmpTicker || getT(p);
-        // Try full ticker, base ticker, raw symbol
         const q = qmap[t] || qmap[t?.split('.')[0]] || qmap[p.symbol];
         if(!q?.price) return { currentPrice: p.currentPrice ?? 0, ...p };
         const rawPrice = (p.isin?.startsWith('US') || (!t?.includes('.') && p.type!=='etf'))
@@ -9463,7 +9487,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v106 · Fully generic ticker resolution — no ISIN_MAP in pipeline, name validation + fallback</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v107 · Generic pipeline: /search-name fallback, zero-price self-healing, no ISIN_MAP in resolution</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
