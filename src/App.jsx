@@ -7853,8 +7853,12 @@ function PortfolioPage({ positions, transactions, wallets, onOpenStock, priceLoa
                   <div style={{minWidth:0}}>
                     <div style={{display:'flex',alignItems:'center',gap:4}}>
                       <span style={{fontSize:12,fontWeight:500}}>{displayTicker(pos)}</span>
-                      {/* Manual resolve badge: only when no ticker resolved and not a derivative/crypto */}
-                      {!pos.fmpTicker && pos.type !== 'derivative' && pos.type !== 'crypto' && (
+                      {/* Manual resolve badge:
+                           - No fmpTicker at all → show
+                           - fmpTicker from name fallback + no price → show (possibly wrong resolution)
+                           - fmpTicker from ISIN/map/manual + no price → don't show (FMP plan limit, not wrong) */}
+                      {pos.type !== 'derivative' && pos.type !== 'crypto' &&
+                        (!pos.fmpTicker || (pos.tickerSource === 'name' && (pos.currentPrice === 0 || !pos.currentPrice))) && (
                         <span
                           title="Click to enter ticker symbol manually"
                           onClick={e => { e.stopPropagation(); setManualResolvePos(pos); }}
@@ -8913,7 +8917,7 @@ export default function App() {
         for (const isin of allUnresolved) {
           if (sharedMap[isin]) {
             const rep = stockPos.find(p => p.isin === isin);
-            resolvedTickerMap[isin] = { ticker: sharedMap[isin], type: inferType(sharedMap[isin].split('.')[0], isin, rep?.name, rep?.type) };
+            resolvedTickerMap[isin] = { ticker: sharedMap[isin], type: inferType(sharedMap[isin].split('.')[0], isin, rep?.name, rep?.type), source: 'map' };
           } else {
             afterShared.push(isin);
           }
@@ -8936,8 +8940,8 @@ export default function App() {
                   const rep = stockPos.find(p => p.isin === isin);
                   const resolvedTk = pick.symbol.split('.')[0].toUpperCase();
                   const correctedType = inferType(resolvedTk, isin, rep?.name, rep?.type);
-                  resolvedTickerMap[isin] = { ticker: pick.symbol, type: correctedType };
-                  // Save to shared map for all users
+                  resolvedTickerMap[isin] = { ticker: pick.symbol, type: correctedType, source: 'isin' };
+                  saveISINTicker(isin, pick.symbol, pick.name || rep?.name, 'auto');
                   saveISINTicker(isin, pick.symbol, pick.name || rep?.name, 'auto');
                 } else {
                   needsNameFallback.push(isin);
@@ -8976,7 +8980,7 @@ export default function App() {
                 if (pick?.symbol) {
                   const resolvedTk = pick.symbol.split('.')[0].toUpperCase();
                   const correctedType = inferType(resolvedTk, isin, rep.name, rep.type);
-                  resolvedTickerMap[isin] = { ticker: pick.symbol, type: correctedType };
+                  resolvedTickerMap[isin] = { ticker: pick.symbol, type: correctedType, source: 'name' };
                   saveISINTicker(isin, pick.symbol, pick.name || rep.name, 'name');
                   console.log('[folio] name fallback resolved:', rep.name, '→', pick.symbol);
                 } else {
@@ -8990,7 +8994,10 @@ export default function App() {
 
         // Apply resolved tickers to local position objects
         stockPos.forEach(p => {
-          if (resolvedTickerMap[p.isin]) p.fmpTicker = resolvedTickerMap[p.isin].ticker;
+          if (resolvedTickerMap[p.isin]) {
+            p.fmpTicker = resolvedTickerMap[p.isin].ticker;
+            p.tickerSource = resolvedTickerMap[p.isin].source;
+          }
         });
         const resolvedEntries = Object.entries(resolvedTickerMap);
         if (resolvedEntries.length) {
@@ -9030,7 +9037,7 @@ export default function App() {
           : rawPrice;
         // Also apply any resolved ticker/type from this run
         const extra = resolvedTickerMap[p.isin]
-          ? { fmpTicker: resolvedTickerMap[p.isin].ticker, type: resolvedTickerMap[p.isin].type }
+          ? { fmpTicker: resolvedTickerMap[p.isin].ticker, type: resolvedTickerMap[p.isin].type, tickerSource: resolvedTickerMap[p.isin].source }
           : {};
         return {...p, ...extra, currentPrice: price, dailyChange: q.change ?? null};
       }));
@@ -9648,7 +9655,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v119 · Resolve badge only when no fmpTicker (not when price is 0 from FMP plan limit)</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v120 · tickerSource tracking: badge for unresolved + name-fallback-with-no-price only</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
@@ -10601,7 +10608,7 @@ export default function App() {
                         // Apply this ticker to the position
                         setPositions(prev => prev.map(p =>
                           p.id === manualResolvePos.id
-                            ? { ...p, fmpTicker: c.symbol, currentPrice: c.price ? c.price / (manualResolvePos.isin?.startsWith('US') ? (1/0.92) : 1) : p.currentPrice }
+                            ? { ...p, fmpTicker: c.symbol, tickerSource: 'manual', currentPrice: c.price ? c.price / (manualResolvePos.isin?.startsWith('US') ? (1/0.92) : 1) : p.currentPrice }
                             : p
                         ));
                         if (manualResolvePos.isin) {
