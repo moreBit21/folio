@@ -167,11 +167,14 @@
   - (a) Positions that were previously shortcutted via ISIN_MAP (Apple, Goldman, Meta etc.) now go through `/search-isin` like every other stock. `fmpTicker` is persisted to Supabase on first successful resolution.
   - (b) German deposit receipt ISINs (Qualcomm `US7960508882` → Samsung, Broadcom `US1255231003` → Cigna) are caught by name validation and routed to name fallback.
   - (c) Name fallback searches `/search?query={cleanName}` and filters results by name match before picking.
-- **v107 fixes on top of v106:**
-  - Name fallback now uses `/search-name` endpoint (searches by company name) as primary, `/search` as secondary. FMP `/search?query=HubSpot` returns nothing but `/search-name?query=HubSpot` returns HUBS correctly.
-  - Zero-price self-healing: positions with `fmpTicker` but `currentPrice === 0` get `fmpTicker` cleared at the start of each `fetchPrices` cycle, forcing re-resolution through the generic pipeline. Catches: Qualcomm (SMSN.IL→no price), HubSpot (no fmpTicker→no price).
-  - Known limitation: Broadcom has `fmpTicker: "CI"` (Cigna) which returns Cigna's price (non-zero). The zero-price check doesn't catch this. Requires either a manual re-resolve or a one-time data cleanup. Future: add "Re-resolve all tickers" button in Settings.
-- **TODO (future):** Remove ISIN_MAP constant entirely once v107 is confirmed stable. Add "Re-resolve all tickers" developer/settings button for one-time cleanup of bad historical resolutions.
+- **v108 — critical learnings from real data:**
+  - ISINs in real Smartbroker+ exports are CORRECT. All resolution problems in v104–v107 were caused by (a) bad test data with wrong ISINs, and (b) nameMatches falsely rejecting valid resolutions because Smartbroker abbreviates names differently from FMP.
+  - **Rule: TRUST the ISIN.** When FMP `/search-isin` returns a result for a valid ISIN, it IS the correct security. No name validation needed on this path. ISINs are globally unique.
+  - **nameMatches only applies to name-based fallback** (Step 2) where we search by company name and need to verify.
+  - **Zero-price self-healing removed** — caused infinite re-resolution loops when FMP quote endpoint doesn't cover European-listed tickers (e.g. XSIL.L, EL4C.DE). These tickers ARE correctly resolved from their ISIN; they just don't have live quotes on FMP's current plan.
+  - **One-time migration (v108):** clears all `fmpTicker` values from Supabase on first load so the corrected pipeline re-resolves everything cleanly. Uses localStorage flag `folio_migration_v108` to run only once.
+  - **German derivatives (Turbos, Warrants, Factor Certs):** ISINs starting with DE000 from issuers like Morgan Stanley, UniCredit, Vontobel — FMP doesn't cover these. Expected and not fixable. These should be tagged as `type: "derivative"` and excluded from price fetching.
+- **TODO (future):** Remove ISIN_MAP constant entirely. Add "Re-resolve all tickers" button in developer settings.
 
 **Broker export instructions:**
 

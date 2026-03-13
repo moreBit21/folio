@@ -8577,7 +8577,26 @@ export default function App() {
         if (error && error.code !== 'PGRST116') throw error;
         if (data && data.ciphertext && data.ciphertext.length > 0 && _sessionCryptoKey) {
           const plain = await _decryptPayload(_sessionCryptoKey, data.iv, data.ciphertext);
-          if (plain.positions    && plain.positions.length)    setPositions(plain.positions.map(p => ({ currentPrice: 0, ...p })));
+          if (plain.positions && plain.positions.length) {
+            // v108 migration: clear all fmpTicker values from previous versions that may have
+            // stored wrong resolutions (e.g. v105 ISIN_MAP shortcuts, v106 name mismatch false positives).
+            // The corrected pipeline (v108+) will re-resolve all positions from their ISINs on first fetchPrices.
+            // This migration runs once — after re-resolution, correct fmpTicker values are saved back to Supabase.
+            const MIGRATION_KEY = 'folio_migration_v108';
+            const needsMigration = !localStorage.getItem(MIGRATION_KEY);
+            const loaded = plain.positions.map(p => {
+              if (needsMigration && p.fmpTicker) {
+                const { fmpTicker, ...rest } = p;
+                return { currentPrice: 0, ...rest };
+              }
+              return { currentPrice: 0, ...p };
+            });
+            if (needsMigration) {
+              console.log('[folio] v108 migration: cleared all fmpTicker values for clean re-resolution');
+              localStorage.setItem(MIGRATION_KEY, Date.now().toString());
+            }
+            setPositions(loaded);
+          }
           if (plain.transactions && plain.transactions.length) setTransactions(plain.transactions);
           if (plain.watchlists   && plain.watchlists.length)   setWatchlists(plain.watchlists);
           if (plain.coldWallets  && plain.coldWallets.length)  setWallets(prev => {
@@ -8737,33 +8756,21 @@ export default function App() {
         return fmpN.startsWith(posN.slice(0, 4)) || posN.startsWith(fmpN.slice(0, 4));
       };
 
-      // Step 0: Self-healing — positions with fmpTicker but currentPrice === 0
-      // likely have a wrongly-resolved ticker from a previous session.
-      // Clear fmpTicker so they re-enter the generic resolution pipeline.
-      // This safely handles: bad ISIN resolutions (SMSN.IL for Qualcomm),
-      // wrong ISIN mappings (CI for Broadcom), and any other stale/invalid tickers.
-      // If FMP is temporarily down, all positions clear — but they re-resolve on next cycle.
-      const cleared = [];
-      stockPos.forEach(p => {
-        if (p.fmpTicker && p.currentPrice === 0 && p.isin) {
-          cleared.push(p.name + '→' + p.fmpTicker);
-          p.fmpTicker = undefined;
-        }
-      });
-      if (cleared.length) console.log('[folio] cleared zero-price fmpTickers for re-resolution:', cleared.join(', '));
-
-      // Collect ALL positions that don't have fmpTicker (including just-cleared ones)
+      // Collect ALL positions that don't have fmpTicker yet
       const unresolvedISINs = [...new Set(
         stockPos.filter(p => !p.fmpTicker && p.isin).map(p => p.isin)
       )];
 
       const needsNameFallback = [];
       if(unresolvedISINs.length) {
-        console.log('[folio] resolving', unresolvedISINs.length, 'ISINs via generic pipeline (no ISIN_MAP)');
+        console.log('[folio] resolving', unresolvedISINs.length, 'ISINs via generic pipeline');
         const BATCH2 = 5;
         const delay2 = ms => new Promise(r => setTimeout(r, ms));
 
-        // Step 1: FMP /search-isin with name validation
+        // Step 1: FMP /search-isin — TRUST the ISIN, no name validation needed.
+        // ISINs are globally unique security identifiers. If FMP returns a result for a valid ISIN,
+        // it IS the correct security. Name differences (Smartbroker abbreviations vs FMP full names)
+        // are expected and not a signal of wrong resolution.
         for(let i=0; i<unresolvedISINs.length; i+=BATCH2) {
           const batch = unresolvedISINs.slice(i, i+BATCH2);
           await Promise.all(batch.map(async isin => {
@@ -8772,11 +8779,6 @@ export default function App() {
               const pick = pickFromResults(res, isin);
               if(pick?.symbol) {
                 const rep = stockPos.find(p => p.isin === isin);
-                if (!nameMatches(pick.name, rep?.name)) {
-                  console.log('[folio] ISIN mismatch:', isin, '→ FMP says "' + pick.name + '" but position says "' + rep?.name + '" — routing to name fallback');
-                  needsNameFallback.push(isin);
-                  return;
-                }
                 const resolvedTk = pick.symbol.split('.')[0].toUpperCase();
                 const correctedType = inferType(resolvedTk, isin, rep?.name, rep?.type);
                 resolvedTickerMap[isin] = { ticker: pick.symbol, type: correctedType };
@@ -9487,7 +9489,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v107 · Generic pipeline: /search-name fallback, zero-price self-healing, no ISIN_MAP in resolution</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v108 · Trust ISIN resolution, remove name validation from Step 1, one-time fmpTicker migration</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
