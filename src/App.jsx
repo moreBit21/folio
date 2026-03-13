@@ -9648,7 +9648,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v115 · Smart resolve: search by name or ticker, auto-try exchange suffixes, click to pick</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v116 · Resolve modal: also searches by position name when ticker query returns nothing</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
@@ -10508,16 +10508,36 @@ export default function App() {
                     await Promise.all(suffixes.map(s => tryQuote(ticker + s)));
 
                     // Also try /search-name and /search for broader results
+                    // Search with user query AND position name (in case user typed a ticker FMP doesn't know)
+                    const searchQueries = [query];
+                    if (manualResolvePos.name && manualResolvePos.name.toLowerCase() !== query.toLowerCase()) {
+                      // Add cleaned position name as secondary search
+                      const cleanPosName = manualResolvePos.name
+                        .replace(/\s*\(.*?\)\s*/g, ' ')
+                        .replace(/U\.?ETF|ETF|ETC|ETP|UCITS/gi, '')
+                        .replace(/\s+(Inc\.?|Corp\.?|Ltd\.?|Group\.?|PLC|SE|AG|Co\.?|GmbH|B\.V\.)$/i, '')
+                        .replace(/[^a-zA-Z0-9\s&-]/g, ' ')
+                        .replace(/\s+/g, ' ').trim();
+                      if (cleanPosName.length > 2) searchQueries.push(cleanPosName);
+                      // Also try first 2 words of position name
+                      const words = cleanPosName.split(' ').filter(w => w.length > 1);
+                      if (words.length >= 2) searchQueries.push(words.slice(0, 2).join(' '));
+                    }
                     let searchResults = [];
-                    try {
-                      const res = await fetch('/api/fmp?path=' + encodeURIComponent('/search-name?query=' + encodeURIComponent(query) + '&limit=8'));
-                      searchResults = await res.json();
-                    } catch(e){}
-                    if (!Array.isArray(searchResults) || !searchResults.length) {
+                    for (const sq of searchQueries) {
+                      if (searchResults.length >= 3) break; // enough results
                       try {
-                        const res = await fetch('/api/fmp?path=' + encodeURIComponent('/search?query=' + encodeURIComponent(query) + '&limit=8'));
-                        searchResults = await res.json();
+                        const res = await fetch('/api/fmp?path=' + encodeURIComponent('/search-name?query=' + encodeURIComponent(sq) + '&limit=8'));
+                        const data = await res.json();
+                        if (Array.isArray(data)) searchResults.push(...data);
                       } catch(e){}
+                      if (!searchResults.length) {
+                        try {
+                          const res = await fetch('/api/fmp?path=' + encodeURIComponent('/search?query=' + encodeURIComponent(sq) + '&limit=8'));
+                          const data = await res.json();
+                          if (Array.isArray(data)) searchResults.push(...data);
+                        } catch(e){}
+                      }
                     }
                     // Add search results that aren't already in candidates
                     if (Array.isArray(searchResults)) {
