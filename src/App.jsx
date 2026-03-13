@@ -388,6 +388,8 @@ function AssetLogoInner({baseSymbol, pos, size, r}) {
         KRYS:'krystalbio.com',ACHR:'archer.com',PINS:'pinterest.com',
         TEM:'tempus.com',XYZ:'block.xyz',SQ:'block.xyz',BLOCK:'block.xyz',
         TTD:'thetradedesk.com',SNAP:'snap.com',
+        HUBS:'hubspot.com',QCOM:'qualcomm.com',AVGO:'broadcom.com',
+        BNTX:'biontech.de',IRM:'ironmountain.com',
         CRISPR:'crisprtx.com',
         // ETFs
         SPY:'ssga.com',QQQ:'invesco.com',GLD:'spdrgoldshares.com',
@@ -8722,6 +8724,7 @@ export default function App() {
         stockPos.filter(p => !getT(p) && p.isin).map(p => p.isin)
       )];
 
+
       if(unresolvedISINs.length) {
         const BATCH2 = 5;
         const delay2 = ms => new Promise(r => setTimeout(r, ms));
@@ -9402,7 +9405,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v101 · Fix price update: deduplicate ISINs before FMP resolution, single setPositions call — no mid-loop clobber</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v103 · Show fmpTicker in position list; WKN→ticker via ISIN lookup, persisted to Supabase</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
@@ -9687,7 +9690,7 @@ export default function App() {
                     <div style={{display:"flex",alignItems:"center",gap:10}}>
                       <AssetLogo pos={pos}/>
                       <div>
-                        <div style={{fontSize:13,fontWeight:500,color:"var(--text)"}}>{pos.symbol}</div>
+                        <div style={{fontSize:13,fontWeight:500,color:"var(--text)"}}>{pos.fmpTicker?.split('.')[0] || pos.symbol}</div>
                         <div style={{fontSize:11,color:"var(--text2)"}}>{pos.name}</div>
                       </div>
                       <span className={`tag tag-${pos.type==="crypto"?"gold":pos.type==="etf"?"blue":pos.type==="derivative"?"red":"gray"}`}
