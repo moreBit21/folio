@@ -7746,7 +7746,20 @@ function PortfolioPage({ positions, transactions, wallets, onOpenStock, priceLoa
                 <div style={{display:'flex',alignItems:'center',gap:8,minWidth:0}}>
                   <AssetLogo pos={pos}/>
                   <div style={{minWidth:0}}>
-                    <div style={{fontSize:12,fontWeight:500}}>{displayTicker(pos)}</div>
+                    <div style={{display:'flex',alignItems:'center',gap:4}}>
+                      <span style={{fontSize:12,fontWeight:500}}>{displayTicker(pos)}</span>
+                      {/* Manual resolve badge: shown when position has no fmpTicker, is not a derivative, and has no price */}
+                      {!pos.fmpTicker && pos.type !== 'derivative' && pos.type !== 'crypto' && pos.currentPrice === 0 && (
+                        <span
+                          title="Click to enter ticker symbol manually"
+                          onClick={e => { e.stopPropagation(); setManualResolvePos(pos); }}
+                          style={{fontSize:9,cursor:'pointer',color:'var(--gold)',fontWeight:700,
+                            background:'rgba(245,200,66,0.12)',padding:'1px 5px',borderRadius:4,
+                            border:'1px solid rgba(245,200,66,0.3)'}}>
+                          ⚠ resolve
+                        </span>
+                      )}
+                    </div>
                     <div style={{fontSize:10,color:'var(--text3)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:110}}>{pos.name}</div>
                   </div>
                 </div>
@@ -8506,6 +8519,7 @@ export default function App() {
   const [txSearch,     setTxSearch]     = useState([]);
   const [txSearchLoading, setTxSearchLoading] = useState(false);
   const [selectedPos,  setSelectedPos]  = useState(null);
+  const [manualResolvePos, setManualResolvePos] = useState(null); // position needing manual ticker input
 
   // ── Shared Watchlist state ──
   const mkDefaultWL = () => ([{
@@ -8588,17 +8602,20 @@ export default function App() {
             // stored wrong resolutions (e.g. v105 ISIN_MAP shortcuts, v106 name mismatch false positives).
             // The corrected pipeline (v108+) will re-resolve all positions from their ISINs on first fetchPrices.
             // This migration runs once — after re-resolution, correct fmpTicker values are saved back to Supabase.
-            const MIGRATION_KEY = 'folio_migration_v110';
+            const MIGRATION_KEY = 'folio_migration_v111';
             const needsMigration = !localStorage.getItem(MIGRATION_KEY);
             const loaded = plain.positions.map(p => {
-              if (needsMigration && p.fmpTicker) {
+              if (needsMigration) {
+                // Clear fmpTicker for clean re-resolution
+                // Re-run inferType to reclassify derivatives that were previously tagged as "stock"
+                const correctedType = inferType(p.fmpTicker || p.symbol, p.isin, p.name, null);
                 const { fmpTicker, ...rest } = p;
-                return { currentPrice: 0, ...rest };
+                return { currentPrice: 0, ...rest, type: correctedType };
               }
               return { currentPrice: 0, ...p };
             });
             if (needsMigration) {
-              console.log('[folio] v108 migration: cleared all fmpTicker values for clean re-resolution');
+              console.log('[folio] v110 migration: cleared fmpTicker + re-ran inferType on all positions');
               localStorage.setItem(MIGRATION_KEY, Date.now().toString());
             }
             setPositions(loaded);
@@ -9514,7 +9531,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v110 · Derivative detection via DE000 ISIN issuer codes + issuer name patterns</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v111 · Manual ticker resolve prompt + derivative reclassification migration</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
@@ -10318,6 +10335,69 @@ export default function App() {
             <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
               <button className="btn btn-ghost" onClick={()=>setShowModal(false)}>CANCEL</button>
               <button className="btn btn-primary" onClick={addPos}>ADD POSITION</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Manual Ticker Resolution Modal ── */}
+      {manualResolvePos && (
+        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setManualResolvePos(null)}>
+          <div className="modal" style={{minWidth:360,maxWidth:440}}>
+            <div className="serif" style={{fontSize:18,marginBottom:4}}>Resolve Ticker</div>
+            <div style={{fontSize:12,color:'var(--text3)',marginBottom:16}}>
+              We couldn't automatically find the ticker for this position. Enter the correct ticker symbol.
+            </div>
+            <div className="card" style={{padding:'12px 14px',marginBottom:16}}>
+              <div style={{fontSize:11,color:'var(--text3)'}}>Position</div>
+              <div style={{fontSize:14,fontWeight:600,marginTop:2}}>{manualResolvePos.name}</div>
+              <div className="mono" style={{fontSize:10,color:'var(--text3)',marginTop:2}}>
+                ISIN: {manualResolvePos.isin || '—'} · WKN: {manualResolvePos.symbol || '—'}
+              </div>
+            </div>
+            <div style={{marginBottom:12}}>
+              <label style={{fontSize:11,color:'var(--text3)',display:'block',marginBottom:4}}>Ticker symbol (e.g. PHAG, SLVR.L, ARKX)</label>
+              <input
+                id="manual-ticker-input"
+                className="input mono"
+                autoFocus
+                placeholder="Enter ticker..."
+                style={{width:'100%',fontSize:13,padding:'8px 12px'}}
+                onKeyDown={async e => {
+                  if (e.key !== 'Enter') return;
+                  const ticker = e.target.value.trim().toUpperCase();
+                  if (!ticker) return;
+                  const statusEl = document.getElementById('resolve-status');
+                  statusEl.textContent = 'Checking...';
+                  statusEl.style.color = 'var(--text3)';
+                  try {
+                    const res = await fetch('/api/fmp?path=' + encodeURIComponent('/quote?symbol=' + ticker));
+                    const data = await res.json();
+                    const quote = Array.isArray(data) ? data[0] : data;
+                    if (quote?.price || quote?.previousClose) {
+                      // Valid ticker — apply to position
+                      setPositions(prev => prev.map(p =>
+                        p.id === manualResolvePos.id
+                          ? { ...p, fmpTicker: ticker, currentPrice: (quote.price || quote.previousClose) / (manualResolvePos.isin?.startsWith('US') ? (1/0.92) : 1) }
+                          : p
+                      ));
+                      statusEl.textContent = '✓ Resolved to ' + ticker + ' ($' + (quote.price || quote.previousClose).toFixed(2) + ')';
+                      statusEl.style.color = 'var(--green)';
+                      setTimeout(() => setManualResolvePos(null), 1200);
+                    } else {
+                      statusEl.textContent = 'No price found for "' + ticker + '". Try with exchange suffix (.L, .DE, .AS)';
+                      statusEl.style.color = 'var(--red)';
+                    }
+                  } catch(err) {
+                    statusEl.textContent = 'Error checking ticker. Try again.';
+                    statusEl.style.color = 'var(--red)';
+                  }
+                }}
+              />
+              <div id="resolve-status" style={{fontSize:11,marginTop:6,minHeight:16}}></div>
+            </div>
+            <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
+              <button className="btn btn-ghost" onClick={() => setManualResolvePos(null)}>CANCEL</button>
             </div>
           </div>
         </div>
