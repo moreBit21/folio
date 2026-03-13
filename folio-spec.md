@@ -223,6 +223,12 @@ create table isin_ticker_map (
 > **Known FMP stale ISIN cases:**
 > - `US8522341036` → FMP returns `SQ` (old Square ticker, now a different company). Correct ticker: `XYZ` (Block Inc.)
 > - More cases expected as companies rename/reticker. The manual override + isin_ticker_map system handles all of these generically.
+>
+> **Known name-fallback wrong-product cases:**
+> - `IE000AON7ET1` (ARK Space & Defense UCITS ETF, European, ~€4.39/unit) → name fallback found `ARKX` (US-listed ARK Space ETF, $30.74). FMP only has the US version — the European UCITS product doesn't exist in FMP's database at all (not via ISIN, not via name). The name fallback picked the only result, which is the wrong product at 7× the price.
+> - **This is a category of problem:** European UCITS ETFs that don't exist in FMP, where a US version with a similar name does exist. The name fallback will always pick the wrong one, and because it returns a price, the resolve badge doesn't show.
+> - **Fix needed (v122):** When the name fallback resolves a position and the resulting price is dramatically different from the CSV import price (e.g. >3× ratio), flag it as suspicious — either show the resolve badge or log a warning. The existing 5× sanity check in setPositions catches extreme cases but 7× just barely misses at the 5× threshold. Consider lowering to 3× for name-fallback-sourced resolutions.
+> - Also: the ✏️ ticker override (separate from resolve badge) would let the user fix this regardless.
 
 **Local cache:** `localStorage` cache of the map with 7-day TTL (same pattern as learned parser cache) to avoid Supabase round-trips on every page load.
 
