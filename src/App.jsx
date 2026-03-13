@@ -5,15 +5,43 @@ import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, AreaChart, ComposedC
 
 const FONTS = `@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=IBM+Plex+Mono:wght@300;400;500;600&family=DM+Sans:wght@300;400;500&display=swap');`;
 
+// Helper: read current theme colors from DOM — works in any component without prop drilling
+function getTC() {
+  const dark = document.documentElement.classList.contains('theme-dark');
+  return dark ? {
+    bg:'#080c10',surface:'#0d1117',border:'#1c2730',text:'#e8edf2',text2:'#7a8a98',text3:'#3d4f5e',
+    green:'#00e5a0',red:'#ff4d6d',gold:'#f0b429',blue:'#4d9fff',gridLine:'#1c2730'
+  } : {
+    bg:'#ffffff',surface:'#f5f7fa',border:'#e2e8f0',text:'#1a202c',text2:'#718096',text3:'#a0aec0',
+    green:'#16a34a',red:'#dc2626',gold:'#d97706',blue:'#2563eb',gridLine:'#e2e8f0'
+  };
+}
+
 const CSS = `
   * { box-sizing: border-box; margin: 0; padding: 0; }
   :root {
+    /* Light theme (default) — clean, trustworthy Parqet/Copilot vibe */
+    --bg: #ffffff; --surface: #f5f7fa; --surface2: #edf0f5;
+    --border: #e2e8f0; --border2: #cbd5e1;
+    --text: #1a202c; --text2: #718096; --text3: #a0aec0;
+    --green: #16a34a; --green-dim: rgba(22,163,74,0.08);
+    --red: #dc2626;   --red-dim: rgba(220,38,38,0.08);
+    --gold: #d97706;  --blue: #2563eb; --violet: #7c3aed;
+    --modal-shadow: rgba(0,0,0,0.15);
+    --chart-grid: #e2e8f0;
+    --popover-shadow: 0 12px 40px rgba(0,0,0,0.12);
+  }
+  .theme-dark {
+    /* Dark theme — premium Bloomberg meets modern fintech */
     --bg: #080c10; --surface: #0d1117; --surface2: #131920;
     --border: #1c2730; --border2: #243040;
     --text: #e8edf2; --text2: #7a8a98; --text3: #3d4f5e;
     --green: #00e5a0; --green-dim: rgba(0,229,160,0.10);
     --red: #ff4d6d;   --red-dim: rgba(255,77,109,0.10);
     --gold: #f0b429;  --blue: #4d9fff; --violet: #a78bfa;
+    --modal-shadow: rgba(0,0,0,0.6);
+    --chart-grid: #1c2730;
+    --popover-shadow: 0 12px 40px rgba(0,0,0,0.7);
   }
   body { background:var(--bg); color:var(--text); font-family:'DM Sans',sans-serif; }
   .mono { font-family:'IBM Plex Mono',monospace; }
@@ -40,17 +68,18 @@ const CSS = `
   .tag-gold{background:rgba(240,180,41,0.12);color:var(--gold)} .tag-gray{background:var(--surface2);color:var(--text2)}
   .tag-blue{background:rgba(77,159,255,0.12);color:var(--blue)}
   .btn{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border-radius:6px;font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:0.06em;font-weight:500;cursor:pointer;transition:all 0.15s;border:none}
-  .btn-primary{background:var(--green);color:#080c10} .btn-primary:hover{background:#00ffb3}
+  .btn-primary{background:var(--green);color:#fff} .btn-primary:hover{filter:brightness(1.1)}
   .btn-ghost{background:transparent;color:var(--text2);border:1px solid var(--border2)} .btn-ghost:hover{color:var(--text);border-color:var(--text3)}
-  .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.75);display:flex;align-items:center;justify-content:center;z-index:100;backdrop-filter:blur(4px);animation:fadeUp 0.2s ease}
-  .modal{background:var(--surface);border:1px solid var(--border2);border-radius:12px;padding:28px;width:440px;box-shadow:0 24px 80px rgba(0,0,0,0.6)}
+  .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:100;backdrop-filter:blur(4px);animation:fadeUp 0.2s ease}
+  .theme-dark .modal-overlay{background:rgba(0,0,0,0.75)}
+  .modal{background:var(--surface);border:1px solid var(--border2);border-radius:12px;padding:28px;width:440px;box-shadow:0 24px 80px var(--modal-shadow)}
   .inp{width:100%;background:var(--bg);border:1px solid var(--border2);border-radius:6px;color:var(--text);font-family:'IBM Plex Mono',monospace;font-size:13px;padding:10px 12px;outline:none;transition:border 0.15s}
   .inp:focus{border-color:var(--green)} .inp::placeholder{color:var(--text3)}
   .trow{display:grid;grid-template-columns:2.2fr 0.8fr 1fr 1fr 0.8fr 1fr 0.8fr;align-items:center;padding:13px 18px;border-bottom:1px solid var(--border);transition:background 0.12s;cursor:pointer}
   .trow:hover{background:var(--surface2)} .trow:last-child{border-bottom:none}
   .btog{display:flex;align-items:center;gap:7px;padding:6px 12px;border-radius:6px;border:1px solid var(--border);background:transparent;cursor:pointer;transition:all 0.15s;font-family:'IBM Plex Mono',monospace;font-size:10px}
   .btog.on{border-color:rgba(0,229,160,0.3);background:var(--green-dim)} .btog.off{opacity:0.4}
-  .ctt{background:var(--surface);border:1px solid var(--border2);border-radius:8px;padding:12px 16px;font-family:'IBM Plex Mono',monospace;font-size:11px;box-shadow:0 8px 32px rgba(0,0,0,0.5)}
+  .ctt{background:var(--surface);border:1px solid var(--border2);border-radius:8px;padding:12px 16px;font-family:'IBM Plex Mono',monospace;font-size:11px;box-shadow:0 8px 32px var(--modal-shadow)}
   .logo-wrap{width:36px;height:36px;border-radius:9px;overflow:hidden;display:flex;align-items:center;justify-content:center;flex-shrink:0;position:relative}
   .logo-img{width:100%;height:100%;object-fit:cover;border-radius:9px}
   .logo-fallback{width:36px;height:36px;border-radius:9px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
@@ -356,7 +385,7 @@ function AssetLogoInner({baseSymbol, pos, size, r}) {
     const m = {BTC:'1/small/bitcoin',ETH:'279/small/ethereum',SOL:'4128/small/solana',BNB:'825/small/binance-coin',XRP:'44/small/xrp-symbol-white-128',ADA:'975/small/cardano',DOT:'12171/small/polkadot',MATIC:'4713/small/matic-token',AVAX:'12559/small/avalanche-2',LINK:'877/small/chainlink-new-logo',UNI:'12504/small/uni',AAVE:'7279/small/aave-v3-logo'};
     const path = m[baseSymbol];
     if (path) return (
-      <div style={{width:size,height:size,borderRadius:r,overflow:'hidden',flexShrink:0,background:'#1a1a2e'}}>
+      <div style={{width:size,height:size,borderRadius:r,overflow:'hidden',flexShrink:0,background:'var(--surface2)'}}>
         <img src={`https://assets.coingecko.com/coins/images/${path}.png`} width={size} height={size}
           style={{objectFit:'cover'}} onError={()=>setImgErr(true)}/>
       </div>
@@ -3028,7 +3057,8 @@ function TVChart({ ticker, txs = [], currentPrice, compact = false }) {
     if (!filtered.length) return;
 
     const isUp = filtered[filtered.length-1].close >= filtered[0].close;
-    const GREEN = '#00e5a0', RED = '#ff4d6d';
+    const _tc = getTC();
+    const GREEN = _tc.green, RED = _tc.red;
     const upColor = isUp ? GREEN : RED;
 
     loadTVLib().then(LW => {
@@ -3039,11 +3069,11 @@ function TVChart({ ticker, txs = [], currentPrice, compact = false }) {
       const chart = LW.createChart(containerRef.current, {
         width:  containerRef.current.clientWidth,
         height: h,
-        layout:  { background: { color: 'transparent' }, textColor: '#7a8a98' },
-        grid:    { vertLines: { color: '#1c2730' }, horzLines: { color: '#1c2730' } },
+        layout:  { background: { color: 'transparent' }, textColor: getTC().text2 },
+        grid:    { vertLines: { color: getTC().gridLine }, horzLines: { color: getTC().gridLine } },
         crosshair: { mode: LW.CrosshairMode.Normal },
-        rightPriceScale: { borderColor: '#1c2730', textColor: '#7a8a98' },
-        timeScale: { borderColor: '#1c2730', timeVisible: true, secondsVisible: false },
+        rightPriceScale: { borderColor: getTC().gridLine, textColor: getTC().text2 },
+        timeScale: { borderColor: getTC().gridLine, timeVisible: true, secondsVisible: false },
         handleScroll: true,
         handleScale:  true,
       });
@@ -3279,7 +3309,7 @@ function TickerDropdown({ results, searching, onSelect, highlightIdx = -1 }) {
       position:'absolute', top:'110%', left:0, zIndex:9999,
       background:'var(--surface)', border:'1px solid var(--border2)',
       borderRadius:8, minWidth:280, maxWidth:360,
-      boxShadow:'0 16px 48px rgba(0,0,0,0.7)', overflow:'hidden',
+      boxShadow:'var(--popover-shadow)', overflow:'hidden',
     }}>
       {searching && !results.length && <div className="mono" style={{padding:'10px 14px',fontSize:11,color:'var(--text3)'}}>Searching…</div>}
       {results.map((r, i) => (
@@ -3327,7 +3357,7 @@ function WLContextMenu({ x, y, item, onFlag, onOpenStock, onRemove, onClose }) {
     <div onMouseDown={e => e.stopPropagation()}
       style={{ position:'fixed', left:x, top:y, zIndex:9999,
         background:'var(--surface)', border:'1px solid var(--border2)',
-        borderRadius:8, minWidth:180, boxShadow:'0 12px 40px rgba(0,0,0,0.7)',
+        borderRadius:8, minWidth:180, boxShadow:'var(--popover-shadow)',
         overflow:'hidden', animation:'fadeUp 0.12s ease' }}>
       {/* Flag row */}
       <div style={{ padding:'8px 12px', borderBottom:'1px solid var(--border)' }}>
@@ -3811,7 +3841,7 @@ function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
         </div>
 
         <button onClick={runScreener} disabled={loading}
-          style={{marginTop:4,padding:'9px 22px',background:'var(--green)',color:'#080c10',
+          style={{marginTop:4,padding:'9px 22px',background:'var(--green)',color:'#fff',
             border:'none',borderRadius:6,fontSize:12,fontWeight:700,cursor:'pointer',
             opacity:loading?0.6:1,letterSpacing:'0.06em'}}>
           {loading ? 'SCREENING…' : '⊞  RUN SCREENER'}
@@ -3820,7 +3850,7 @@ function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
 
       {error && (
         <div style={{padding:'10px 14px',borderRadius:6,marginBottom:12,fontSize:12,
-          background:'rgba(255,77,109,0.1)',color:'#ff4d6d',border:'1px solid rgba(255,77,109,0.25)'}}>
+          background:'var(--red-dim)',color:'var(--red)',border:'1px solid var(--red)'}}>
           {error}
         </div>
       )}
@@ -3987,7 +4017,7 @@ function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
                             {wlDropdown===row.symbol && watchlists.length > 0 && (
                               <div style={{position:'absolute',right:0,top:'100%',zIndex:50,
                                 background:'var(--surface)',border:'1px solid var(--border2)',
-                                borderRadius:6,padding:4,minWidth:140,boxShadow:'0 4px 16px rgba(0,0,0,0.4)'}}>
+                                borderRadius:6,padding:4,minWidth:140,boxShadow:'var(--popover-shadow)'}}>
                                 {watchlists.map(wl => (
                                   <div key={wl.id}
                                     onClick={() => {
@@ -4304,7 +4334,7 @@ function ETFScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
                                 <div style={{position:'fixed', right: rect?window.innerWidth-rect.right:16,
                                   top:rect?rect.bottom+4:100, background:'var(--surface)',
                                   border:'1px solid var(--border2)', borderRadius:8, padding:6,
-                                  zIndex:99999, minWidth:150, boxShadow:'0 8px 32px rgba(0,0,0,0.6)'}}>
+                                  zIndex:99999, minWidth:150, boxShadow:'var(--popover-shadow)'}}>
                                   {watchlists.map(wl=>(
                                     <div key={wl.id} onClick={()=>{
                                       setWatchlists(prev=>prev.map(w=>w.id===wl.id?{...w,items:[...w.items,{symbol:r.symbol,name:r.companyName,type:'etf',addedAt:Date.now()}]}:w));
@@ -5129,7 +5159,8 @@ function ChartsPage({ positions, watchlists, setWatchlists, activeWLId, setActiv
     if (!filtered.length) return;
 
     const isUp = filtered[filtered.length - 1].close >= filtered[0].close;
-    const GREEN = '#00e5a0', RED = '#ff4d6d';
+    const _tc2 = getTC();
+    const GREEN = _tc2.green, RED = _tc2.red;
     const upColor = isUp ? GREEN : RED;
 
     loadTVLib().then(LW => {
@@ -5142,11 +5173,11 @@ function ChartsPage({ positions, watchlists, setWatchlists, activeWLId, setActiv
       const chart = LW.createChart(containerRef.current, {
         width: containerRef.current.clientWidth,
         height: chartHeight,
-        layout: { background: { color: 'transparent' }, textColor: '#7a8a98' },
-        grid: { vertLines: { color: '#1c2730' }, horzLines: { color: '#1c2730' } },
+        layout: { background: { color: 'transparent' }, textColor: getTC().text2 },
+        grid: { vertLines: { color: getTC().gridLine }, horzLines: { color: getTC().gridLine } },
         crosshair: { mode: LW.CrosshairMode.Normal },
-        rightPriceScale: { borderColor: '#1c2730', textColor: '#7a8a98' },
-        timeScale: { borderColor: '#1c2730', timeVisible: true, secondsVisible: false },
+        rightPriceScale: { borderColor: getTC().gridLine, textColor: getTC().text2 },
+        timeScale: { borderColor: getTC().gridLine, timeVisible: true, secondsVisible: false },
         handleScroll: drawTool === 'none',
         handleScale:  drawTool === 'none',
       });
@@ -6763,7 +6794,7 @@ function StockDetail({ pos, onBack, transactions, onTransfer }) {
           if (v == null) { h = 2; }
           else if (hasNeg) { h = Math.max(Math.abs(v)/maxV*CHART_H, 3); }
           else { h = Math.max((v - minV * 0.8) / range2 * CHART_H, 4); }
-          const col = v==null ? '#1c2730' : v<0 ? '#ff4d6d' : color;
+          const col = v==null ? 'var(--border)' : v<0 ? 'var(--red)' : color;
           const opacity = isLatest ? 1 : 0.5 + (i / bdata.length) * 0.4;
           return (
             <div key={i} style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',gap:2,minWidth:0}}>
@@ -7405,7 +7436,7 @@ function GroupAllocBadge({ groupVal, positions }) {
   return <span className="mono" style={{fontSize:9,color:'var(--green)',marginLeft:6,background:'rgba(0,229,160,0.1)',padding:'1px 6px',borderRadius:3}}>{alloc.toFixed(1)}%</span>;
 }
 
-function PortfolioPage({ positions, transactions, wallets, onOpenStock, priceLoading, chartData, investedChartData, chartLoading, chartError, chartProgress, activeBM, setActiveBM, range, setRange, BENCHMARKS, perfStats, setManualResolvePos }) {
+function PortfolioPage({ positions, transactions, wallets, onOpenStock, priceLoading, chartData, investedChartData, chartLoading, chartError, chartProgress, activeBM, setActiveBM, range, setRange, BENCHMARKS, perfStats, setManualResolvePos, theme, tc }) {
   const [collapsedGroups, setCollapsedGroups] = useState(new Set(['stock','etf','crypto','derivative'])); // all collapsed by default
   const [expandedAccounts, setExpandedAccounts] = useState(new Set()); // By Account: empty = all collapsed
   const [tab, setTab] = React.useState('positions'); // positions | analysis
@@ -7731,15 +7762,15 @@ function PortfolioPage({ positions, transactions, wallets, onOpenStock, priceLoa
               <ComposedChart data={chartData?.some(r => r.portfolio > 0)?chartData:investedChartData} margin={{top:4,right:4,left:0,bottom:0}}>
                 <defs>
                   <linearGradient id="gPort2" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#00e5a0" stopOpacity={0.15}/><stop offset="95%" stopColor="#00e5a0" stopOpacity={0}/>
+                    <stop offset="5%" stopColor={tc.green} stopOpacity={0.15}/><stop offset="95%" stopColor={tc.green} stopOpacity={0}/>
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1c2730" vertical={false}/>
-                <XAxis dataKey="date" tick={{fontFamily:"IBM Plex Mono",fontSize:9,fill:"#3d4f5e"}} axisLine={false} tickLine={false} interval="preserveStartEnd"/>
-                <YAxis tick={{fontFamily:"IBM Plex Mono",fontSize:9,fill:"#3d4f5e"}} axisLine={false} tickLine={false} tickFormatter={v=>"€"+(v/1000).toFixed(0)+"k"} width={44}/>
+                <CartesianGrid strokeDasharray="3 3" stroke={tc.gridLine} vertical={false}/>
+                <XAxis dataKey="date" tick={{fontFamily:"IBM Plex Mono",fontSize:9,fill:tc.text3}} axisLine={false} tickLine={false} interval="preserveStartEnd"/>
+                <YAxis tick={{fontFamily:"IBM Plex Mono",fontSize:9,fill:tc.text3}} axisLine={false} tickLine={false} tickFormatter={v=>"€"+(v/1000).toFixed(0)+"k"} width={44}/>
                 <Tooltip contentStyle={{background:'var(--surface)',border:'1px solid var(--border2)',borderRadius:8,fontFamily:'IBM Plex Mono',fontSize:11}}/>
                 {activeBM?.map(id=>{const b=BENCHMARKS?.find(x=>x.id===id);return b?<Line key={id} type="linear" dataKey={id} name={b.label} stroke={b.color} strokeWidth={1.5} strokeOpacity={0.75} dot={false} connectNulls isAnimationActive={false}/>:null;})}
-                <Area type="linear" dataKey="portfolio" name="Portfolio" stroke="#00e5a0" strokeWidth={2.5} fill="url(#gPort2)" dot={false}/>
+                <Area type="linear" dataKey="portfolio" name="Portfolio" stroke={tc.green} strokeWidth={2.5} fill="url(#gPort2)" dot={false}/>
               </ComposedChart>
             </ResponsiveContainer>
           )}
@@ -7806,7 +7837,7 @@ function PortfolioPage({ positions, transactions, wallets, onOpenStock, priceLoa
                     style={{display:'grid',gridTemplateColumns:'2fr 0.7fr 0.9fr 0.9fr 0.7fr 0.9fr 0.9fr 0.9fr 1.8fr',
                       padding:'8px 18px',background:'var(--surface2)',borderBottom:'1px solid var(--border2)',
                       cursor:'pointer',gap:8,alignItems:'center',userSelect:'none'}}
-                    onMouseEnter={e=>e.currentTarget.style.background='#1c2730'}
+                    onMouseEnter={e=>e.currentTarget.style.background='var(--border)'}
                     onMouseLeave={e=>e.currentTarget.style.background='var(--surface2)'}>
                     <div style={{display:'flex',alignItems:'center',gap:6}}>
                       <span style={{fontSize:10,color:'var(--text3)',transition:'transform 0.15s',
@@ -8404,24 +8435,22 @@ export function AuthGate({ children }) {
 
   if (session && !keyReady) return (
     <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',
-      background:'#080c10',fontFamily:"'IBM Plex Mono',monospace"}}>
-      <div style={{width:380,background:'#0d1117',border:'1px solid #1c2730',borderRadius:12,padding:32}}>
+      background:'var(--bg)',fontFamily:"'IBM Plex Mono',monospace"}}>
+      <div style={{width:380,background:'var(--surface)',border:'1px solid var(--border)',borderRadius:12,padding:32}}>
         <div style={{textAlign:'center',marginBottom:24}}>
-          <div style={{fontFamily:"'DM Serif Display',serif",fontSize:22,color:'#e8edf2',marginBottom:6}}>foliologic</div>
-          <div style={{fontSize:11,color:'#3d4f5e',letterSpacing:'0.08em'}}>ENTER PASSWORD TO UNLOCK</div>
+          <div style={{fontFamily:"'DM Serif Display',serif",fontSize:22,color:'var(--text)',marginBottom:6}}>foliologic</div>
+          <div style={{fontSize:11,color:'var(--text3)',letterSpacing:'0.08em'}}>ENTER PASSWORD TO UNLOCK</div>
         </div>
         {msg && <div style={{padding:'8px 12px',borderRadius:6,marginBottom:16,fontSize:12,
-          background:msg.type==='error'?'rgba(255,77,109,0.1)':'rgba(0,229,160,0.1)',
-          color:msg.type==='error'?'#ff4d6d':'#00e5a0',border:`1px solid ${msg.type==='error'?'rgba(255,77,109,0.25)':'rgba(0,229,160,0.25)'}`}}>{msg.text}</div>}
+          background:msg.type==='error'?'var(--red-dim)':'var(--green-dim)',
+          color:msg.type==='error'?'var(--red)':'var(--green)',border:`1px solid ${msg.type==='error'?'var(--red)':'var(--green)'}`}}>{msg.text}</div>}
         <form onSubmit={handleUnlock}>
-          <div style={{fontSize:11,color:'#7a8a98',marginBottom:6}}>Password</div>
+          <div style={{fontSize:11,color:'var(--text2)',marginBottom:6}}>Password</div>
           <input type="password" value={pw} onChange={e=>setPw(e.target.value)} placeholder="••••••••"
-            style={{width:'100%',padding:'11px 14px',background:'#111c24',border:'1px solid #1e2d3d',
-              borderRadius:6,color:'#e8f0f7',fontSize:13,fontFamily:"'IBM Plex Mono',monospace",
-              outline:'none',boxSizing:'border-box',marginBottom:16}} autoFocus/>
+            className="inp" style={{marginBottom:16}} autoFocus/>
           <button type="submit" disabled={loading||!pw}
-            style={{width:'100%',padding:11,background:'#00e5a0',color:'#080c10',border:'none',
-              borderRadius:6,fontSize:12,fontWeight:700,cursor:'pointer',letterSpacing:'0.06em',
+            className="btn btn-primary"
+            style={{width:'100%',padding:11,fontSize:12,fontWeight:700,letterSpacing:'0.06em',
               opacity:loading||!pw?0.5:1}}>
             {loading ? 'UNLOCKING…' : 'UNLOCK'}
           </button>
@@ -8587,6 +8616,24 @@ export function AuthGate({ children }) {
 }
 
 
+// Theme color palettes — used in JS where CSS variables can't be accessed directly (charts, canvas etc.)
+const THEME_COLORS = {
+  light: {
+    bg: '#ffffff', surface: '#f5f7fa', surface2: '#edf0f5',
+    border: '#e2e8f0', border2: '#cbd5e1',
+    text: '#1a202c', text2: '#718096', text3: '#a0aec0',
+    green: '#16a34a', red: '#dc2626', gold: '#d97706', blue: '#2563eb', violet: '#7c3aed',
+    gridLine: '#e2e8f0', shadow: 'rgba(0,0,0,0.12)',
+  },
+  dark: {
+    bg: '#080c10', surface: '#0d1117', surface2: '#131920',
+    border: '#1c2730', border2: '#243040',
+    text: '#e8edf2', text2: '#7a8a98', text3: '#3d4f5e',
+    green: '#00e5a0', red: '#ff4d6d', gold: '#f0b429', blue: '#4d9fff', violet: '#a78bfa',
+    gridLine: '#1c2730', shadow: 'rgba(0,0,0,0.6)',
+  }
+};
+
 export default function App() {
   const [positions,    setPositions]    = useState([]);
   const [transactions, setTransactions] = useState([]);
@@ -8599,6 +8646,20 @@ export default function App() {
   const [priceLoading, setPriceLoading] = useState(true);
   const [priceStatus,  setPriceStatus]  = useState(null);
   const [lastUpdated,  setLastUpdated]  = useState(null);
+  // ── Theme ────────────────────────────────────
+  const [theme, setTheme] = useState(() => {
+    const saved = localStorage.getItem('folio_theme');
+    if (saved === 'dark' || saved === 'light') return saved;
+    // System preference detection
+    if (window.matchMedia?.('(prefers-color-scheme: dark)').matches) return 'dark';
+    return 'light';
+  });
+  useEffect(() => {
+    document.documentElement.classList.toggle('theme-dark', theme === 'dark');
+    localStorage.setItem('folio_theme', theme);
+  }, [theme]);
+  const tc = THEME_COLORS[theme]; // theme color palette for JS-only contexts (charts, canvas)
+
   const [nav,          setNav]          = useState("dashboard");
   const [prevNav,      setPrevNav]      = useState("dashboard");
   const [screenerTab,  setScreenerTab]  = useState('stock'); // 'stock' | 'etf'
@@ -9638,10 +9699,10 @@ export default function App() {
   // While loading cloud data, show a minimal splash to avoid empty flash
   if (cloudLoading) return (
     <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',
-      background:'#080c10',fontFamily:"'IBM Plex Mono',monospace",flexDirection:'column',gap:12}}>
-      <style>{FONTS}</style>
-      <div style={{fontFamily:"'DM Serif Display',serif",fontStyle:'italic',fontSize:28,color:'#e8edf2'}}>foliologic</div>
-      <div style={{fontSize:9,color:'#3d4f5e',letterSpacing:'0.15em'}}>LOADING YOUR PORTFOLIO…</div>
+      background:'var(--bg)',fontFamily:"'IBM Plex Mono',monospace",flexDirection:'column',gap:12}}>
+      <style>{FONTS}{CSS}</style>
+      <div style={{fontFamily:"'DM Serif Display',serif",fontStyle:'italic',fontSize:28,color:'var(--text)'}}>foliologic</div>
+      <div style={{fontSize:9,color:'var(--text3)',letterSpacing:'0.15em'}}>LOADING YOUR PORTFOLIO…</div>
     </div>
   );
 
@@ -9655,7 +9716,7 @@ export default function App() {
           <div style={{padding:"4px 14px 24px"}}>
             <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
             <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v120 · tickerSource tracking: badge for unresolved + name-fallback-with-no-price only</div>
+            <div className="mono" style={{fontSize:8,color:"var(--green)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v121 · Light theme default + dark toggle in Settings (L1.1)</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
@@ -9744,7 +9805,7 @@ export default function App() {
                     top: rect ? rect.bottom + 4 : 50,
                     background:'var(--surface)',border:'1px solid var(--border2)',
                     borderRadius:8,padding:6,zIndex:99999,minWidth:170,
-                    boxShadow:'0 12px 40px rgba(0,0,0,0.7)'}}>
+                    boxShadow:'var(--popover-shadow)'}}>
                     {[
                       {icon:'📈', label:'Buy Position',  mode:'buy'},
                       {icon:'📉', label:'Sell Position', mode:'sell'},
@@ -9868,7 +9929,7 @@ export default function App() {
                       <ComposedChart data={chartData.length ? chartData : investedChartData} margin={{top:4,right:4,left:0,bottom:0}}>
                         <defs>
                           <linearGradient id="gPort" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#00e5a0" stopOpacity={0.15}/><stop offset="95%" stopColor="#00e5a0" stopOpacity={0}/>
+                            <stop offset="5%" stopColor={tc.green} stopOpacity={0.15}/><stop offset="95%" stopColor={tc.green} stopOpacity={0}/>
                           </linearGradient>
                           {BENCHMARKS.map(b=>(
                             <linearGradient key={b.id} id={"g_"+b.id} x1="0" y1="0" x2="0" y2="1">
@@ -9876,9 +9937,9 @@ export default function App() {
                             </linearGradient>
                           ))}
                         </defs>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#1c2730" vertical={false}/>
-                        <XAxis dataKey="date" tick={{fontFamily:"IBM Plex Mono",fontSize:9,fill:"#3d4f5e"}} axisLine={false} tickLine={false} interval="preserveStartEnd"/>
-                        <YAxis tick={{fontFamily:"IBM Plex Mono",fontSize:9,fill:"#3d4f5e"}} axisLine={false} tickLine={false} tickFormatter={v=>v.toFixed(0)+"%"} width={38} domain={chartDomain}/>
+                        <CartesianGrid strokeDasharray="3 3" stroke={tc.gridLine} vertical={false}/>
+                        <XAxis dataKey="date" tick={{fontFamily:"IBM Plex Mono",fontSize:9,fill:tc.text3}} axisLine={false} tickLine={false} interval="preserveStartEnd"/>
+                        <YAxis tick={{fontFamily:"IBM Plex Mono",fontSize:9,fill:tc.text3}} axisLine={false} tickLine={false} tickFormatter={v=>v.toFixed(0)+"%"} width={38} domain={chartDomain}/>
                         <Tooltip content={<ChartTip/>}/>
                         {activeBM.map(id=>{
                           const b=BENCHMARKS.find(x=>x.id===id);
@@ -9993,7 +10054,7 @@ export default function App() {
             activeBM={activeBM} setActiveBM={setActiveBM}
             range={range} setRange={setRange}
             BENCHMARKS={BENCHMARKS} perfStats={perfStats}
-            setManualResolvePos={setManualResolvePos}/>}
+            setManualResolvePos={setManualResolvePos} theme={theme} tc={tc}/>}
           {/* Screener container — always mounted to preserve list state */}
           <div style={{display: nav==="screener" || (nav==="stock" && prevNav==="screener") ? 'block' : 'none'}}>
             {/* Tab bar */}
@@ -10030,6 +10091,24 @@ export default function App() {
           {nav==="news"&&<NewsFeed positions={positions}/> }
           {nav==="settings"&&(
             <div className="fu" style={{display:"flex",flexDirection:"column",gap:14}}>
+              {/* Appearance */}
+              <div className="card" style={{padding:28}}>
+                <div className="mono" style={{fontSize:10,color:"var(--text3)",letterSpacing:"0.12em",marginBottom:18}}>APPEARANCE</div>
+                <div style={{display:"flex",gap:10}}>
+                  {[
+                    {key:'light', label:'☀ Light', desc:'Clean & modern'},
+                    {key:'dark', label:'🌙 Dark', desc:'Easy on the eyes'},
+                  ].map(t=>(
+                    <div key={t.key} onClick={()=>setTheme(t.key)}
+                      style={{flex:1,padding:'16px 18px',borderRadius:8,cursor:'pointer',transition:'all 0.15s',
+                        border: theme===t.key ? '2px solid var(--green)' : '1px solid var(--border)',
+                        background: theme===t.key ? 'var(--green-dim)' : 'var(--surface2)'}}>
+                      <div style={{fontSize:14,fontWeight:600,marginBottom:4}}>{t.label}</div>
+                      <div style={{fontSize:11,color:'var(--text2)'}}>{t.desc}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
               {/* Import Card */}
               <div className="card" style={{padding:28}}>
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20}}>
@@ -10301,7 +10380,7 @@ export default function App() {
                       {txSearch.length>0 && (
                         <div style={{position:'absolute',top:'100%',left:0,right:0,zIndex:99,
                           background:'var(--surface)',border:'1px solid var(--border2)',
-                          borderRadius:6,boxShadow:'0 4px 20px rgba(0,0,0,0.5)',overflow:'hidden'}}>
+                          borderRadius:6,boxShadow:'var(--popover-shadow)',overflow:'hidden'}}>
                           {txSearch.map(r=>(
                             <div key={r.symbol} onClick={()=>{
                               setF('symbol',r.symbol); setF('name',r.name||r.companyName||r.symbol);

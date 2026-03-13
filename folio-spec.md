@@ -2123,10 +2123,15 @@ GET /api/dashboard-widget?token={device_token}
 
 **Implementation:**
 
-- [ ] CSS custom properties (`var(--bg)`, `var(--surface)`, etc.) already used throughout — swap values via a `.theme-dark` / `.theme-light` class on `<body>`
-- [ ] Toggle in Settings: "Appearance" → Light / Dark / System (auto-detect `prefers-color-scheme`)
-- [ ] Persist to `localStorage` for instant load, sync to Supabase `user_preferences` for cross-device
-- [ ] All charts (Recharts, TradingView) must respect theme colours — test thoroughly
+- [x] CSS custom properties (`var(--bg)`, `var(--surface)`, etc.) already used throughout — swap values via a `.theme-dark` / `.theme-light` class on `<body>`
+- [x] Toggle in Settings: "Appearance" → Light / Dark
+- [x] Persist to `localStorage` for instant load
+- [x] `getTC()` helper for chart components (TradingView, Recharts) that need JS color values
+- [x] `THEME_COLORS` palette object + `tc` shorthand in App for prop-drilled contexts
+- [ ] Sync to Supabase `user_preferences` for cross-device (pending L3 user profiles)
+- [ ] System (auto-detect `prefers-color-scheme`) option in toggle
+- [ ] Remaining hardcoded rgba accent colors (~30 refs) — functional but use dark-theme-specific opacity values
+- [ ] All charts (Recharts, TradingView) must respect theme colours — TradingView grid/text done, Recharts grid/axis done
 
 **Aesthetic:** Light = clean, trustworthy Parqet/Copilot vibe (great for onboarding). Dark = premium Bloomberg Terminal meets modern fintech (power users love it).
 
