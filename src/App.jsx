@@ -1500,12 +1500,20 @@ function inferType(ticker, isin, name, rawType) {
   const n = (name   || '').toLowerCase();
   const i = (isin   || '').toUpperCase();
   if (rawType === 'crypto') return 'crypto';
+  // ETC detection — commodity trackers, gold, silver, crypto ETPs
+  // Must check BEFORE derivative detection since some ETCs have DE000 ISINs
+  if (/xetra.gold|gold.*ihs|gold.*etc|silver.*etc|silber|physical.*gold|physical.*silver|physical.*platin|physical.*pallad|wisdomtree.*physical|xtrackers.*physical/i.test(n)) return 'etc';
+  if (/crypto.*etp|crypto.*etc|bitcoin.*etp|ethereum.*etp|21shares|coinshares|vaneck.*crypto|vaneck.*bitcoin|vaneck.*ethereum|invesco.*physical.*bitcoin|wisdomtree.*crypto/i.test(n)) return 'etc';
+  if (/^DE000A0S9GB/.test(i)) return 'etc'; // Xetra-Gold specifically
+  if (/^DE000A1E0HS/.test(i)) return 'etc'; // Xtrackers Physical Silver
+  if (/^(DE000A|CH|GB|JE)/.test(i) && /gold|silber|silver|platin|pallad|physical|commodity|rohstoff/i.test(n)) return 'etc';
+  // Derivative detection — structured products: warrants, knock-outs, turbos, factor certs, mini futures
   if (rawType === 'derivative') return 'derivative';
-  if (/derivat|warrant|zertifikat|knock.out|turbo|faktor/i.test(n)) return 'derivative';
+  if (/derivat|warrant|zertifikat|knock.out|turbo|faktor|mini.?future|call\s+\d|put\s+\d|optionsschein/i.test(n)) return 'derivative';
   // German structured products: DE000 + issuer code. Known derivative issuers:
   // UG=UBS, MM/MH=Morgan Stanley, HD=HSBC, VH/VJ=Vontobel, SB=Société Générale,
-  // HB=UniCredit/HVB, DW/DV=DZ Bank, GX/GK=Goldman Sachs, CU/CZ=Citigroup
-  if (/^DE000(UG|MM|MH|HD|VH|VJ|SB|HB|DW|DV|GX|GK|CU|CZ)[A-Z0-9]/.test(i)) return 'derivative';
+  // HB=UniCredit/HVB, DW/DV=DZ Bank, GX/GK=Goldman Sachs, CU/CZ=Citigroup, PK=BNP Paribas
+  if (/^DE000(UG|MM|MH|HD|VH|VJ|SB|HB|DW|DV|GX|GK|CU|CZ|PK)[A-Z0-9]/.test(i)) return 'derivative';
   // Issuer names in position name (Smartbroker activity CSV uses issuer as name for derivatives)
   if (/morgan stanley|unicredit|vontobel|hsbc trinkaus|société générale|goldman sachs.*warrant|bnp paribas.*turbo/i.test(n)) return 'derivative';
   if (STOCK_TICKERS.has(t)) return 'stock';
@@ -1517,6 +1525,7 @@ function inferType(ticker, isin, name, rawType) {
   }
   if (ETF_TICKERS.has(t)) return 'etf';
   if (/\betf\b|index fund|ishares|vanguard|xtrackers|amundi|lyxor|invesco|spdr|wisdomtree/i.test(n)) return 'etf';
+  if (/\betc\b|exchange.traded.commodit/i.test(n)) return 'etc';
   return rawType || 'stock';
 }
 function guessTypeFromISIN(isin, ticker) { return inferType(ticker, isin, '', 'stock'); }
@@ -7511,7 +7520,7 @@ function GroupAllocBadge({ groupVal, positions }) {
 }
 
 function PortfolioPage({ positions, transactions, wallets, onOpenStock, priceLoading, chartData, investedChartData, chartLoading, chartError, chartProgress, activeBM, setActiveBM, range, setRange, BENCHMARKS, perfStats, setManualResolvePos, theme, tc }) {
-  const [collapsedGroups, setCollapsedGroups] = useState(new Set(['stock','etf','crypto','derivative'])); // all collapsed by default
+  const [collapsedGroups, setCollapsedGroups] = useState(new Set(['stock','etf','etc','crypto','derivative'])); // all collapsed by default
   const [expandedAccounts, setExpandedAccounts] = useState(new Set()); // By Account: empty = all collapsed
   const [tab, setTab] = React.useState('positions'); // positions | analysis
   const [soldOpen, setSoldOpen] = React.useState(false); // sold positions collapsed by default
@@ -7892,8 +7901,8 @@ function PortfolioPage({ positions, transactions, wallets, onOpenStock, priceLoa
           </div>
 
           {/* Asset-class grouped rows */}
-          {(()=> { const typeLabel = t => t==='etf'?'ETF':t==='crypto'?'Crypto':t==='derivative'?'Derivative':'Stock';
-            const typeOrder = ['stock','etf','crypto','derivative'];
+          {(()=> { const typeLabel = t => t==='etf'?'ETF':t==='etc'?'ETC':t==='crypto'?'Crypto':t==='derivative'?'Derivative':'Stock';
+            const typeOrder = ['stock','etf','etc','crypto','derivative'];
             const groups = typeOrder.map(type => ({
               type, label: typeLabel(type),
               rows: displayRows.filter(p => (p.type||'stock') === type)
@@ -9735,7 +9744,7 @@ export default function App() {
   },[chartData,activeBM]);
 
   const allocData = useMemo(()=>vis.map((p,i)=>({name:p.symbol,value:+((p.qty*p.currentPrice/totalVal)*100).toFixed(2),color:ALLOC_COLORS[i%ALLOC_COLORS.length]})),[vis,totalVal]);
-  const byType    = useMemo(()=>["crypto","stock","etf"].map(t=>({name:t.toUpperCase(),value:+((vis.filter(p=>p.type===t).reduce((s,p)=>s+p.qty*p.currentPrice,0)/totalVal*100).toFixed(1)),color:t==="crypto"?"#f7931a":t==="stock"?"#4aaec0":"#627eea"})).filter(x=>x.value>0),[vis,totalVal]);
+  const byType    = useMemo(()=>["crypto","stock","etf","etc","derivative"].map(t=>({name:t==='etc'?'ETC':t==='etf'?'ETF':t.toUpperCase(),value:+((vis.filter(p=>p.type===t).reduce((s,p)=>s+p.qty*p.currentPrice,0)/totalVal*100).toFixed(1)),color:t==="crypto"?"#f7931a":t==="stock"?"#4aaec0":t==="etc"?"#b8a04c":t==="derivative"?"#e06060":"#627eea"})).filter(x=>x.value>0),[vis,totalVal]);
   const tableRows = useMemo(()=>{
     const rows = positions.filter(p=>(fBroker==="All"||p.broker===fBroker)&&(fType==="All"||p.type===fType));
     return [...rows].sort((a,b)=>{
@@ -10203,7 +10212,7 @@ export default function App() {
                         <div style={{fontSize:13,fontWeight:500,color:"var(--text)"}}>{pos.fmpTicker?.split('.')[0] || pos.symbol}</div>
                         <div style={{fontSize:11,color:"var(--text2)"}}>{pos.name}</div>
                       </div>
-                      <span className={`tag tag-${pos.type==="crypto"?"gold":pos.type==="etf"?"blue":pos.type==="derivative"?"red":"gray"}`}
+                      <span className={`tag tag-${pos.type==="crypto"?"gold":pos.type==="etf"?"blue":pos.type==="etc"?"gold":pos.type==="derivative"?"red":"gray"}`}
                         style={{marginLeft:2}}>{pos.type==="derivative"?"DERIV":pos.type.toUpperCase()}</span>
                     </div>
 
