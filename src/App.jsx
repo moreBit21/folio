@@ -9113,10 +9113,9 @@ export default function App() {
           : (q.exchange === 'NYSE' || q.exchange === 'NASDAQ' || q.exchange === 'AMEX')
             ? q.price / eurUsd  // US-listed ETF resolved from non-US ISIN → convert USD
             : q.price;          // EUR/other already in local currency
-        // Sanity check: if we have a prior CSV price and the FMP price is dramatically different,
-        // the ISIN may have resolved to the wrong ticker — keep the CSV price but take the % change.
-        // Use stricter 3× threshold for name-fallback resolutions (more error-prone),
-        // standard 5× for ISIN/map/manual resolutions.
+        // Sanity check: compare FMP price against BOTH currentPrice and avgPrice (CSV cost basis).
+        // This catches cases where currentPrice was already overwritten in a prior session (e.g. ARKX $30).
+        // Use stricter 3× threshold for name-fallback, standard 5× for other sources.
         const priorPrice = p.currentPrice;
         // Also apply any resolved ticker/type from this run
         const extra = resolvedTickerMap[p.isin]
@@ -9125,13 +9124,17 @@ export default function App() {
           : {};
         const source = extra.tickerSource || p.tickerSource;
         const sanityThreshold = (source === 'name') ? 3 : 5;
-        // Compare against both currentPrice and avgPrice (CSV cost basis) for robustness
-        const refPrice = priorPrice > 0 ? priorPrice : (p.avgPrice || 0);
-        const priceSuspicious = refPrice > 0 && rawPrice > 0 &&
-          (rawPrice / refPrice > sanityThreshold || refPrice / rawPrice > sanityThreshold);
-        const price = priceSuspicious ? (priorPrice > 0 ? priorPrice : rawPrice) : rawPrice;
-        // If name-fallback price is suspicious, mark for resolve badge
-        if (priceSuspicious && source === 'name') extra._priceSuspicious = true;
+        // Check against currentPrice
+        const priorSuspicious = priorPrice > 0 && rawPrice > 0 &&
+          (rawPrice / priorPrice > sanityThreshold || priorPrice / rawPrice > sanityThreshold);
+        // ALSO check against avgPrice — catches cases where currentPrice already equals the wrong FMP price
+        const avgPrice = p.avgPrice || 0;
+        const avgSuspicious = avgPrice > 0 && rawPrice > 0 &&
+          (rawPrice / avgPrice > sanityThreshold || avgPrice / rawPrice > sanityThreshold);
+        const priceSuspicious = priorSuspicious || avgSuspicious;
+        const price = priceSuspicious ? (avgPrice > 0 ? avgPrice : (priorPrice > 0 ? priorPrice : rawPrice)) : rawPrice;
+        // Mark for resolve badge if price is suspicious
+        if (priceSuspicious) extra._priceSuspicious = true;
         // Preserve existing _priceSuspicious from resolution phase
         if (p._priceSuspicious && !extra._priceSuspicious) extra._priceSuspicious = true;
         return {...p, ...extra, currentPrice: price, dailyChange: q.change ?? null};
