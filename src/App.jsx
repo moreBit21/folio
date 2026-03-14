@@ -1181,10 +1181,19 @@ function DangerZone({ positions, transactions, wallets, setPositions, setTransac
   const [deleteSelected, setDeleteSelected] = React.useState(new Set());
   const [deleteMode, setDeleteMode] = React.useState(false);
 
-  const brokersWithData = wallets.filter(w => {
-    if (w.type === 'cold_wallet') return positions.some(p => p.broker === w.name || p.walletId === w.id);
-    return positions.some(p => p.broker === w.name) || transactions.some(t => t.broker === w.name);
-  });
+  const brokersWithData = (() => {
+    // Start with wallets that have matching positions/transactions
+    const fromWallets = wallets.filter(w => {
+      if (w.type === 'cold_wallet') return positions.some(p => p.broker === w.name || p.walletId === w.id);
+      return positions.some(p => p.broker === w.name) || transactions.some(t => t.broker === w.name);
+    });
+    // Also find broker names from positions that have NO matching wallet entry
+    const walletNames = new Set(wallets.map(w => w.name));
+    const orphanBrokers = [...new Set(positions.map(p => p.broker).filter(Boolean))]
+      .filter(name => !walletNames.has(name))
+      .map(name => ({ id: 'auto_' + name.toLowerCase().replace(/\s+/g, '_'), name, type: 'broker', color: '#7a8a98' }));
+    return [...fromWallets, ...orphanBrokers];
+  })();
   const hasAnyData = positions.length > 0 || transactions.length > 0;
 
   const toggleSelect = (id) => setDeleteSelected(prev => {
@@ -9890,7 +9899,7 @@ export default function App() {
         {/* ── Sidebar ── */}
         <div className="sidebar" style={{width:220,flexShrink:0,background:"var(--surface)",borderRight:"1px solid var(--border)",display:"flex",flexDirection:"column",padding:"20px 12px"}}>
           <div style={{padding:"4px 14px 24px",display:"flex",alignItems:"center",gap:12}}>
-            <img src={FOLIOLOGIC_LOGO} width={48} height={48} alt="foliologic" style={{borderRadius:10}}/>
+            <img src={FOLIOLOGIC_LOGO} width={56} height={56} alt="foliologic" style={{borderRadius:12}}/>
             <div>
               <div className="serif" style={{fontSize:18,fontWeight:700,color:"var(--text)"}}>foliologic</div>
               <div className="mono" style={{fontSize:8,color:"var(--accent)",letterSpacing:"0.08em",opacity:0.7}}>v122f</div>
@@ -10273,8 +10282,8 @@ export default function App() {
                   ].map(t=>(
                     <div key={t.key} onClick={()=>setTheme(t.key)}
                       style={{flex:1,padding:'16px 18px',borderRadius:8,cursor:'pointer',transition:'all 0.15s',
-                        border: theme===t.key ? '2px solid var(--green)' : '1px solid var(--border)',
-                        background: theme===t.key ? 'var(--green-dim)' : 'var(--surface2)'}}>
+                        border: theme===t.key ? '2px solid var(--accent)' : '1px solid var(--border)',
+                        background: theme===t.key ? 'var(--accent-dim)' : 'var(--surface2)'}}>
                       <div style={{fontSize:14,fontWeight:600,marginBottom:4}}>{t.label}</div>
                       <div style={{fontSize:11,color:'var(--text2)'}}>{t.desc}</div>
                     </div>
@@ -10306,16 +10315,17 @@ export default function App() {
                   ))}
                 </div>
               </div>
-              {/* Broker connections */}
+              {/* Broker connections — only show when Tink is live */}
               <div className="card" style={{padding:28}}>
-                <div className="mono" style={{fontSize:10,color:"var(--text3)",letterSpacing:"0.12em",marginBottom:18}}>CONNECTED BROKERS</div>
-                {BROKERS_LIST.map(b=>(
-                  <div key={b} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"13px 0",borderBottom:"1px solid var(--border)"}}>
-                    <div style={{display:"flex",alignItems:"center",gap:8}}><span className="ldot"/><span>{b}</span></div>
-                    <span className="tag tag-green">CONNECTED</span>
+                <div className="mono" style={{fontSize:10,color:"var(--text3)",letterSpacing:"0.12em",marginBottom:18}}>BANK SYNC</div>
+                <div style={{display:"flex",alignItems:"center",gap:12,padding:"16px 0"}}>
+                  <span style={{fontSize:24}}>🏦</span>
+                  <div>
+                    <div style={{fontSize:13,fontWeight:500,color:"var(--text)"}}>Auto-sync coming soon</div>
+                    <div style={{fontSize:11,color:"var(--text3)",marginTop:2}}>Connect your broker via PSD2 Open Banking for automatic portfolio updates.</div>
                   </div>
-                ))}
-                <div style={{marginTop:14}}><button className="btn btn-ghost">+ Connect new broker</button></div>
+                </div>
+                <div className="mono" style={{fontSize:10,color:"var(--text3)",marginTop:8}}>For now, import your portfolio via CSV above.</div>
               </div>
 
               {/* Cold Wallets */}

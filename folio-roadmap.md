@@ -40,7 +40,7 @@
 | FMP API | Timo | ✅ Active | On current plan, Premium upgrade pending |
 | CoinGecko API | Timo | ✅ Active | Analyst plan |
 | Social media accounts | Sasan | ⬜ Not started | X/Twitter, LinkedIn, Instagram |
-| Brand assets (logo, colors, OG images) | Sasan + Timo | ⬜ Not started | Needed for landing page + social |
+| Brand assets (logo, colors, OG images) | Sasan + Timo | 🟡 In progress | Logo from Grok (tree+arrow), brand sheet from Gemini, colors applied |
 | Email domain (firstname@foliologic.app) | Paul | ⬜ Not started | For outreach and support |
 | Discord server | Sasan | ⬜ Not started | Community hub |
 | Datenschutz / Privacy policy | Paul | ⬜ Not started | Legal requirement |
@@ -60,14 +60,14 @@
 
 | # | Task | Owner | Est. Sessions | Status | Dependencies |
 |---|---|---|---|---|---|
-| L1.1 | Light theme (default) + dark toggle in Settings | Timo + Claude | 2–3 | 🚧 | None |
+| L1.1 | Light theme (default) + dark toggle + brand identity | Timo + Claude | 2–3 | ✅ | None — v122 deployed |
 | L1.2 | Landing page: hero, feature showcase, pricing table | Timo + Claude | 2–3 | ⬜ | L1.1 |
 | L1.3 | Security & trust section + competitive comparison | Timo + Claude | 1 | ⬜ | L1.2 |
 | L1.4 | Demo page with fake portfolio data (no login required) | Timo + Claude | 2 | ⬜ | L1.1, L1.2 |
 | L1.5 | Email signup: "Get notified when we launch" (Resend list) | Timo + Claude | 0.5 | ⬜ | L1.2 |
 | L1.6 | SEO fundamentals: meta tags, OG images, sitemap | Timo + Claude | 1 | ⬜ | L1.2 |
 | L1.7 | Version number visible in app | Timo + Claude | 0.5 | ⬜ | None |
-| L1.8 | Brand assets: logo variations, OG images, social banners | Sasan | — | ⬜ | None — start NOW |
+| L1.8 | Brand assets: logo variations, OG images, social banners | Sasan | — | 🟡 | Logo done (Grok tree+arrow), need SVG vector, OG images pending |
 | L1.9 | Create social accounts (X/Twitter, LinkedIn, Instagram) | Sasan | — | ⬜ | L1.8 |
 | L1.10 | Landing page copy: taglines, feature descriptions (German + English) | Sasan + Timo | — | ⬜ | L1.2 |
 
@@ -387,6 +387,11 @@
 | — | 2026-03-13 | Spec reorganisation, new features specced (3g, 3h, 3i, 4h, 4i, 4j, 6b, 2g, 2h, 2i, 9, 9b, 10), workflow defined | — | Spec-only session, no code changes |
 | — | 2026-03-13 | Ticker resolution: v105–v120 (ISIN pipeline, derivative detection, Supabase isin_ticker_map, manual resolve) | v120 | Debug session — ticker resolution now rock solid |
 | — | 2026-03-13 | L1.1 Light theme: CSS variables, theme toggle, chart colors, auth screens | v121 | Phase 1 of light theme — ~80% complete |
+| — | 2026-03-14 | foliologic brand identity: Gemini colors + Grok logo + Cormorant Garamond/Open Sans typography | v122 | Full brand reskin — 216 color replacements |
+| — | 2026-03-14 | ✏️ Ticker override on StockDetail + price sanity check (3× for name-fallback, avgPrice comparison) | v122b-d | Fixes Block Inc SQ→XYZ, ARKX EU/US mismatch |
+| — | 2026-03-14 | Sold positions section (Parqet-style Verkaufte Wertpapiere) | v122e | Collapsible, realized P&L, sorted by abs P&L |
+| — | 2026-03-14 | Logo + sidebar polish + nav icons + custom broker name input + DKB import fix | v122f-i | ai-import.js duplicate handler fix, German depot parser widened |
+| — | 2026-03-14 | Settings: hide fake Connected Brokers, fix delete portfolio showing all brokers, Phase 2j Finanzrechner specced | v122j | UX polish |
 
 -----
 
