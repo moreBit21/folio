@@ -1357,20 +1357,24 @@ function isSmartbrokerActivity(headers) {
   return headers.some(h=>/transaktionstyp/i.test(h)) && headers.some(h=>/valutadatum/i.test(h));
 }
 
-// ── Smartbroker+ depot snapshot parser (hardcoded — known reliable German format) ──
-function isSmartbrokerDepot(headers) {
-  return headers.some(h => /kundennummer|depotnummer|einstandskurs|marktkurs|stücke|kürzel/i.test(h));
+// ── German depot snapshot parser (Smartbroker+, DKB, ING — known reliable formats) ──
+function isGermanDepotSnapshot(headers) {
+  return headers.some(h => /kundennummer|depotnummer|einstandskurs|einstiegskurs|marktkurs|bewertungskurs|stücke|stückzahl/i.test(h));
 }
-function parseSmartbrokerDepot(rows, headers) {
+function parseGermanDepotSnapshot(rows, headers) {
   const hi = k => headers.findIndex(h => new RegExp(k,"i").test(h));
-  const iISIN=hi("isin"), iKuerzel=hi("kürzel|kurzel"), iName1=hi("name 1|name1"),
-        iName2=hi("name 2|name2"), iKlasse=hi("assetklasse"), iQty=hi("stücke|stucke"),
-        iAvg=hi("einstandskurs pro|einstandskurs"), iCurrent=hi("marktkurs pro|marktkurs");
-  const parseDE = s => s ? parseFloat(String(s).replace(/\./g,"").replace(",",".")) || 0 : 0;
+  const iISIN=hi("isin"), iKuerzel=hi("kürzel|kurzel|wkn"), iName1=hi("name 1|name1|wertpapierbezeichnung"),
+        iName2=hi("name 2|name2"), iKlasse=hi("assetklasse"), iQty=hi("stücke|stucke|stückzahl|stueckzahl|anzahl"),
+        iAvg=hi("einstandskurs|einstiegskurs"), iCurrent=hi("marktkurs|bewertungskurs");
+  const parseDE = s => s ? parseFloat(String(s).replace(/[€%]/g,"").replace(/\./g,"").replace(",",".").trim()) || 0 : 0;
   const typeMap = { "aktien":"stock","etfs":"etf","etf":"etf","derivate":"derivative","fonds":"etf","anleihen":"stock" };
+  // Detect broker from headers
+  const brokerName = headers.some(h => /kundennummer/i.test(h)) ? "Smartbroker+"
+    : headers.some(h => /einstiegskurs|bewertungskurs/i.test(h)) ? "DKB"
+    : "Imported";
   return rows.reduce((acc, r) => {
-    const isin=(r[iISIN]||"").trim(), kuerzel=(r[iKuerzel]||"").trim();
-    const name1=(r[iName1]||"").trim(), name2=(r[iName2]||"").trim();
+    const isin=(r[iISIN]||"").trim(), kuerzel=iKuerzel>=0?(r[iKuerzel]||"").trim():"";
+    const name1=(r[iName1]||"").trim(), name2=iName2>=0?(r[iName2]||"").trim():"";
     const klasse=(r[iKlasse]||"").toLowerCase().trim();
     const name = klasse==="derivate"&&name2 ? name2 : (name1||name2);
     const qty=parseDE(r[iQty]), avg=parseDE(r[iAvg]), current=parseDE(r[iCurrent]);
@@ -1379,7 +1383,7 @@ function parseSmartbrokerDepot(rows, headers) {
     const type = inferType(ISIN_MAP[isin], isin, name, typeMap[klasse]||"stock");
     const ex = acc.find(p=>p.isin===isin||p.symbol===isin);
     if (ex) { ex.avgPrice=(ex.avgPrice*ex.qty+avg*qty)/(ex.qty+qty); ex.qty+=qty; }
-    else acc.push({ symbol:isin, displaySymbol, name, type, qty, avgPrice:avg, currentPrice:current, broker:"Smartbroker+", color:"#00a4ef", isin });
+    else acc.push({ symbol:isin, displaySymbol, name, type, qty, avgPrice:avg, currentPrice:current, broker:brokerName, color:"#2A758D", isin });
     return acc;
   }, []);
 }
@@ -2318,18 +2322,23 @@ const KNOWN_BROKERS = [
   { id: "smartbroker",   label: "Smartbroker+",    color: "#00a4ef", flag: "🇩🇪", type: "broker" },
   { id: "trade_republic",label: "Trade Republic",  color: "#e63b2e", flag: "🇩🇪", type: "broker" },
   { id: "scalable",      label: "Scalable Capital",color: "#4aaec0", flag: "🇩🇪", type: "broker" },
+  { id: "dkb",           label: "DKB",             color: "#1a8fd1", flag: "🇩🇪", type: "broker" },
+  { id: "ing",           label: "ING",             color: "#ff6200", flag: "🇩🇪", type: "broker" },
+  { id: "consorsbank",   label: "Consorsbank",     color: "#003f72", flag: "🇩🇪", type: "broker" },
+  { id: "comdirect",     label: "Comdirect",       color: "#ffd200", flag: "🇩🇪", type: "broker" },
   { id: "degiro",        label: "DEGIRO",          color: "#ff6b00", flag: "🇳🇱", type: "broker" },
   { id: "flatex",        label: "Flatex",          color: "#004b8d", flag: "🇩🇪", type: "broker" },
   { id: "interactive_brokers", label: "Interactive Brokers", color: "#e31837", flag: "🌍", type: "broker" },
   { id: "coinbase",      label: "Coinbase",        color: "#0052ff", flag: "🇺🇸", type: "crypto" },
   { id: "binance",       label: "Binance",         color: "#f0b90b", flag: "🌍", type: "crypto" },
   { id: "kraken",        label: "Kraken",          color: "#5741d9", flag: "🇺🇸", type: "crypto" },
-  { id: "other",         label: "Other / Unknown", color: "#7a8a98", flag: "🏦", type: "other" },
+  { id: "other",         label: "Other broker…",   color: "#7a8a98", flag: "🏦", type: "other" },
 ];
 
 function ImportModal({ onClose, onImport, existingPositions = [], existingTransactions = [] }) {
   const [step, setStep] = useState("broker");
   const [selectedBroker, setSelectedBroker] = useState(null);
+  const [customBrokerName, setCustomBrokerName] = useState("");
   const [broker, setBroker] = useState(null);
   const [preview, setPreview] = useState([]);
   const [txPreview, setTxPreview] = useState(null);
@@ -2400,8 +2409,8 @@ function ImportModal({ onClose, onImport, existingPositions = [], existingTransa
         }
 
         // Smartbroker+ depot snapshot (positions)
-        if (isSmartbrokerDepot(headers)) {
-          let parsed = parseSmartbrokerDepot(rows, headers).map((p,i) => ({
+        if (isGermanDepotSnapshot(headers)) {
+          let parsed = parseGermanDepotSnapshot(rows, headers).map((p,i) => ({
             ...p, id: Date.now()+i, color: ALLOC_COLORS_EXT[i % ALLOC_COLORS_EXT.length]
           }));
           if (parsed.length > 0) {
@@ -2703,24 +2712,59 @@ function ImportModal({ onClose, onImport, existingPositions = [], existingTransa
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 20 }}>
               {KNOWN_BROKERS.map(b => (
-                <button key={b.id} onClick={() => { setSelectedBroker(b); setStep("upload"); }}
+                <button key={b.id} onClick={() => {
+                  if (b.id === "other") {
+                    setSelectedBroker(b);
+                    setCustomBrokerName("");
+                    // Stay on broker step to show name input
+                  } else {
+                    setSelectedBroker(b);
+                    setCustomBrokerName("");
+                    setStep("upload");
+                  }
+                }}
                   style={{
                     display: "flex", alignItems: "center", gap: 10, padding: "12px 14px",
                     borderRadius: 8, cursor: "pointer", textAlign: "left",
-                    border: `1px solid ${b.color}44`, background: `${b.color}0d`,
+                    border: `1px solid ${selectedBroker?.id === b.id ? b.color + '88' : b.color + '44'}`,
+                    background: selectedBroker?.id === b.id ? `${b.color}22` : `${b.color}0d`,
                     color: "var(--text)", transition: "all 0.15s",
                   }}
                   onMouseEnter={e => e.currentTarget.style.background = `${b.color}22`}
-                  onMouseLeave={e => e.currentTarget.style.background = `${b.color}0d`}
+                  onMouseLeave={e => e.currentTarget.style.background = selectedBroker?.id === b.id ? `${b.color}22` : `${b.color}0d`}
                 >
                   <span style={{ fontSize: 18 }}>{b.flag}</span>
                   <div>
                     <div style={{ fontSize: 12, fontWeight: 600, color: b.color }}>{b.label}</div>
-                    <div style={{ fontSize: 10, color: "var(--text3)", marginTop: 1 }}>{b.type === "crypto" ? "Crypto exchange" : b.type === "broker" ? "Stock broker" : "Any format"}</div>
+                    <div style={{ fontSize: 10, color: "var(--text3)", marginTop: 1 }}>{b.type === "crypto" ? "Crypto exchange" : b.type === "broker" ? "Stock broker" : "Type broker name below"}</div>
                   </div>
                 </button>
               ))}
             </div>
+            {/* Custom broker name input — shown when "Other" is selected */}
+            {selectedBroker?.id === "other" && (
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 12, color: "var(--text2)", marginBottom: 6 }}>Enter broker name (helps AI parse correctly & saves for future users):</div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input
+                    className="inp"
+                    type="text"
+                    placeholder="e.g. Postbank, Targobank, eToro..."
+                    value={customBrokerName}
+                    onChange={e => setCustomBrokerName(e.target.value)}
+                    onKeyDown={e => { if (e.key === "Enter" && customBrokerName.trim()) { setSelectedBroker({ ...selectedBroker, label: customBrokerName.trim(), id: customBrokerName.trim().toLowerCase().replace(/\s+/g, '_') }); setStep("upload"); }}}
+                    autoFocus
+                    style={{ flex: 1 }}
+                  />
+                  <button
+                    className="btn btn-primary"
+                    disabled={!customBrokerName.trim()}
+                    onClick={() => { setSelectedBroker({ ...selectedBroker, label: customBrokerName.trim(), id: customBrokerName.trim().toLowerCase().replace(/\s+/g, '_') }); setStep("upload"); }}
+                    style={{ opacity: customBrokerName.trim() ? 1 : 0.4 }}
+                  >Continue →</button>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
