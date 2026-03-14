@@ -1178,7 +1178,7 @@ function TransferModal({ modal, wallets, positions, onClose, onSave }) {
 }
 
 
-function DangerZone({ positions, transactions, wallets, setPositions, setTransactions, setWallets, setNav }) {
+function DangerZone({ positions, transactions, wallets, setPositions, setTransactions, setWallets, setNav, setChartData }) {
   const [deleteSelected, setDeleteSelected] = React.useState(new Set());
   const [deleteMode, setDeleteMode] = React.useState(false);
 
@@ -1214,6 +1214,7 @@ function DangerZone({ positions, transactions, wallets, setPositions, setTransac
       setPositions([]);
       setTransactions([]);
       setWallets(prev => prev.filter(w => w.type !== 'cold_wallet'));
+      if (setChartData) setChartData([]);
     } else {
       const selectedWallets = brokersWithData.filter(w => deleteSelected.has(w.id));
       const selectedNames = new Set(selectedWallets.map(w => w.name));
@@ -10404,7 +10405,7 @@ export default function App() {
               <DangerZone
                 positions={positions} transactions={transactions} wallets={wallets}
                 setPositions={setPositions} setTransactions={setTransactions} setWallets={setWallets}
-                setNav={setNav}
+                setNav={setNav} setChartData={setChartData}
               />
             </div>
           )}
