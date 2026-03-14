@@ -3681,7 +3681,7 @@ function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
           return fetch('/api/fundamentals?lite=1&symbol=' + sym.split('.')[0])
             .then(r => r.json())
             .then(d => {
-              const score = d.healthScore ?? null;
+              const score = calcCanonicalHealthScore(d) ?? d.healthScore ?? null;
               const pe = d.peRatio ?? null;
               const peg = d.pegRatio ?? null;
               const fwdPE = d.forwardPE ?? null;
