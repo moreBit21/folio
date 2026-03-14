@@ -24,15 +24,18 @@
 
 ## 💰 Pricing Tiers
 
-|Tier         |Price    |Sync                                                 |Features                                               |AI                                              |
-|-------------|---------|-----------------------------------------------------|-------------------------------------------------------|------------------------------------------------|
-|**Free**     |€0       |AI file import (5 files/mo)                          |Raw prices · basic portfolio                           |AI file parser only                             |
-|**Starter**  |€5.99/mo |Tink auto-sync (bank + broker) + unlimited AI imports|Charts · health scores · screener · ETF analyser · news|AI imports (unlimited) · news summaries (cached)|
-|**Premium**  |€10.99/mo|Everything in Starter                                |Everything + portfolio analysis · spending · budgets   |Full AI with monthly quota (see below)          |
-|**Premium+** |€13.99/mo|Everything in Premium                                |Everything + tax reports · crypto FIFO/LIFO · Anlage SO|Full AI + tax report generation                 |
+|Tier         |Price    |Portfolios|Bank Sync |Watchlists|Sync                                     |Features                                               |AI                                              |
+|-------------|---------|----------|----------|----------|-----------------------------------------|-------------------------------------------------------|------------------------------------------------|
+|**Free**     |€0       |1         |0         |Unlimited |AI file import (5 files/mo)              |Raw prices · basic portfolio                           |AI file parser only                             |
+|**Starter**  |€5.99/mo |5         |2         |Unlimited |Tink auto-sync + unlimited AI imports    |Charts · health scores · screener · ETF analyser · news|AI imports (unlimited) · news summaries (cached)|
+|**Premium**  |€10.99/mo|Unlimited |6         |Unlimited |Everything in Starter                    |Everything + portfolio analysis · spending · budgets   |Full AI with monthly quota (see below)          |
+|**Premium+** |€13.99/mo|Unlimited |6         |Unlimited |Everything in Premium                    |Everything + tax reports · crypto FIFO/LIFO · Anlage SO|Full AI + tax report generation                 |
 
 ### Important distinctions
 
+- **Portfolios** — separate portfolios for different accounts/family members. Each portfolio has its own positions, transactions, and performance chart. Stored in the same encrypted blob — zero additional Supabase cost per portfolio.
+- **Bank Sync connections** — each Tink-connected bank/broker account costs ~€0.50/user/month. Free: 0 (CSV only), Starter: 2 (e.g. broker + crypto exchange), Premium/Premium+: 6. Multiple portfolios can share a single bank connection, but each distinct bank/broker requires its own connection.
+- **Watchlists** — unlimited on all tiers (Parqet limits to 15 on their highest tier). Zero cost — stored in the encrypted blob.
 - **AI file import** — Claude parses any file (PDF, CSV, Excel) from any broker, any language. 5/month on Free, unlimited on Starter+. ~€0.03/file cost. The Free tier's only AI feature — and a key acquisition mechanic.
 - **Health scores, screener, ETF overlap** — purely algorithmic (FMP data + scoring logic). No Claude calls. Available on Starter+.
 - **AI research** — actual Claude calls: DCF, moat ratings, balance sheet grades, portfolio analysis, portfolio chat. Premium only.
@@ -854,6 +857,39 @@ Verify the webhook secret (Supabase sends a `x-supabase-signature` header) to en
 - Rebalancing calculator can link to the user's actual portfolio if logged in
 - Dividendenkalender links into the app's stock detail view
 - All in German + English (i18n)
+
+-----
+
+## 🔧 Phase 2k — Multi-Portfolio Support
+
+> Track multiple portfolios per account — your own, your partner's, your parents', a play-money account, etc. Each portfolio is independent with its own positions, transactions, performance chart, and broker assignments.
+
+**Tier limits:**
+
+| Tier | Portfolios |
+|---|---|
+| Free | 1 |
+| Starter | 5 |
+| Premium / Premium+ | Unlimited |
+
+**Architecture:**
+- Stored in the existing encrypted Supabase blob — zero additional cost per portfolio
+- Current blob structure: `{ positions, transactions, watchlists, coldWallets }`
+- New structure: `{ portfolios: [{ name, positions, transactions, coldWallets }], watchlists }`
+- Watchlists remain global (shared across portfolios) — unlimited on all tiers
+- Migration: existing single portfolio becomes `portfolios[0]` with name "My Portfolio"
+
+**UI:**
+- Portfolio selector dropdown in the sidebar (below logo, above nav)
+- "Create Portfolio" button (respects tier limit)
+- Each portfolio has its own dashboard, performance chart, allocation, positions
+- Import modal asks which portfolio to import into
+- Settings → Manage Portfolios (rename, delete, reorder)
+
+**Cost analysis:**
+- 10,000 users × 2.5 portfolios avg × 30KB = 732MB → fits in Supabase Pro (8GB)
+- Zero additional API calls (FMP, Anthropic) per portfolio — prices are shared
+- Only storage cost, which is negligible
 
 -----
 
