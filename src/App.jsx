@@ -3722,7 +3722,8 @@ function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
     try {
       const res = await fetch('/api/fundamentals?lite=1&symbol=' + symbol.split('.')[0]);
       const d = await res.json();
-      const score = d.healthScore ?? null;
+      // Recalculate health score client-side to ensure it matches StockDetail exactly
+      const score = calcCanonicalHealthScore(d) ?? d.healthScore ?? null;
       const pe = d.peRatio ?? null;
       const peg = d.pegRatio ?? null;
       const fwdPE = d.forwardPE ?? null;
@@ -9931,7 +9932,7 @@ export default function App() {
             <img src={FOLIOLOGIC_LOGO} width={56} height={56} alt="foliologic" style={{borderRadius:12}}/>
             <div>
               <div className="serif" style={{fontSize:18,fontWeight:700,color:"var(--text)"}}>foliologic</div>
-              <div className="mono" style={{fontSize:8,color:"var(--accent)",letterSpacing:"0.08em",opacity:0.7}}>v122f</div>
+              <div className="mono" style={{fontSize:8,color:"var(--accent)",letterSpacing:"0.08em",opacity:0.7}}>v122s</div>
             </div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
@@ -10284,8 +10285,25 @@ export default function App() {
             {/* Screener list — hidden (not unmounted) when viewing a stock */}
             <div style={{display: nav==="stock" && prevNav==="screener" ? 'none' : 'block'}}>
               {screenerTab==='stock'
-                ? <ScreenerPage onOpenStock={pos=>{setPrevNav('screener');setSelectedPos(pos);setNav('stock');}} watchlists={watchlists} setWatchlists={setWatchlists}/>
-                : <ETFScreenerPage onOpenStock={pos=>{setPrevNav('screener');setSelectedPos(pos);setNav('stock');}} watchlists={watchlists} setWatchlists={setWatchlists}/>
+                ? <ScreenerPage onOpenStock={pos=>{
+                    // Try to find matching portfolio position to get qty, avgPrice, transactions etc.
+                    const match = positions.find(p =>
+                      (pos.symbol && (p.symbol === pos.symbol || p.fmpTicker === pos.symbol || p.fmpTicker?.split('.')[0] === pos.symbol)) ||
+                      (pos.isin && p.isin === pos.isin)
+                    );
+                    setPrevNav('screener');
+                    setSelectedPos(match ? { ...match, ...pos, qty: match.qty, avgPrice: match.avgPrice, currentPrice: match.currentPrice, broker: match.broker, isin: match.isin || pos.isin, id: match.id } : pos);
+                    setNav('stock');
+                  }} watchlists={watchlists} setWatchlists={setWatchlists}/>
+                : <ETFScreenerPage onOpenStock={pos=>{
+                    const match = positions.find(p =>
+                      (pos.symbol && (p.symbol === pos.symbol || p.fmpTicker === pos.symbol || p.fmpTicker?.split('.')[0] === pos.symbol)) ||
+                      (pos.isin && p.isin === pos.isin)
+                    );
+                    setPrevNav('screener');
+                    setSelectedPos(match ? { ...match, ...pos, qty: match.qty, avgPrice: match.avgPrice, currentPrice: match.currentPrice, broker: match.broker, isin: match.isin || pos.isin, id: match.id } : pos);
+                    setNav('stock');
+                  }} watchlists={watchlists} setWatchlists={setWatchlists}/>
               }
             </div>
             {/* StockDetail overlaid when coming from screener */}
