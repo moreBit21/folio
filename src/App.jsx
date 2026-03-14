@@ -1691,7 +1691,6 @@ function derivePositionsFromTxs(normalizedTxs, brokerName) {
         h.qty = Math.max(0, h.qty - qty);
       }
       if (t.type === 'sell') h.totalSellRevenue += cost;
-      }
     } else if (t.type === 'transfer_in' || t.type === 'reward') {
       h.qty += qty; // no cost basis for free/transferred-in coins
     } else if (t.type === 'margin_borrow') {
