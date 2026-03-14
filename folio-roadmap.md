@@ -150,6 +150,33 @@
 | L3-P8 | Draft AGB (terms of service) | Paul | ⬜ | Week 6 |
 | L3-P9 | Draft Impressum | Paul | ⬜ | After L3-P1 |
 | L3-P10 | Research tax obligations for SaaS subscriptions (USt, Kleinunternehmerregelung) | Paul | ⬜ | Week 5 |
+| L3-P11 | **Financial data provider: commercial license research** | Paul + Timo | ⬜ | **Week 4 (CRITICAL)** |
+
+> **⚠️ L3-P11 — Financial Data Provider Decision (Critical Path)**
+>
+> folio. currently uses FMP (Financial Modeling Prep) on a personal-use Starter plan ($22/mo).
+> FMP's personal plans explicitly prohibit displaying/redistributing data to end users.
+> **Commercial use requires an Enterprise plan (custom pricing, contact sales only).**
+>
+> **Action items for Paul:**
+> 1. Contact FMP sales for commercial/Enterprise pricing (expect $300-1,000+/mo)
+> 2. Get commercial quotes from alternatives: **Twelve Data** (~$79/mo commercial), **Finnhub** (free tier + commercial)
+> 3. Evaluate European coverage: folio. needs XETRA, gettex, Lang & Schwarz prices for European ETFs — most US-centric APIs (Alpha Vantage, Polygon) don't cover these well
+> 4. Check **OpenFIGI** (free Bloomberg ISIN→ticker mapping) as supplementary source
+> 5. Research **wealthAPI** (Rentablo/Qplix) — used by Parqet, Finanzfluss Copilot, ExtraETF. Provides BaFin-licensed depot connections AND market data. Could replace both Tink and FMP long-term.
+>
+> **Competitor intelligence:**
+> - **Parqet** (largest DACH portfolio tracker): Uses direct exchange connections via Qplix partnership (BaFin KID license). Now sells their own data APIs.
+> - **Finanzfluss Copilot / ExtraETF / Rentablo**: All built on **wealthAPI** infrastructure with BaFin licenses.
+> - **TradingView**: Direct exchange data agreements (different league, not comparable).
+>
+> **Recommendation:**
+> - Short-term (dev): Stay on FMP Starter ($22/mo)
+> - Launch: Need commercial license. Get 3 quotes (FMP Enterprise, Twelve Data, Finnhub) by Week 6
+> - Medium-term: Consider hybrid (FMP for US fundamentals + European source for XETRA/ETF prices)
+> - Long-term (1,000+ users): Evaluate wealthAPI partnership to replace Tink + data source with one BaFin-licensed solution
+>
+> **Medium-case cost assumption for business plan: €200/mo** (commercial data provider, could be $150-500 depending on negotiation)
 
 -----
 
