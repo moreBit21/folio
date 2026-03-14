@@ -7815,7 +7815,7 @@ function PortfolioPage({ positions, transactions, wallets, onOpenStock, priceLoa
       </div>
 
       {/* ══════════ POSITIONS TAB ══════════ */}
-      {tab==='positions' && (
+      {tab==='positions' && (<>
         <div className="card" style={{padding:0,overflow:'hidden'}}>
           {/* Table header */}
           <div style={{display:'grid',
@@ -8083,7 +8083,7 @@ function PortfolioPage({ positions, transactions, wallets, onOpenStock, priceLoa
             </div>
           );
         })()}
-      )}
+      </>)}
 
       {/* ══════════ ANALYSIS TAB ══════════ */}
       {tab==='wallets' && (() => {
