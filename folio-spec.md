@@ -2104,6 +2104,23 @@ GET /api/dashboard-widget?token={device_token}
 |Open Banking   |Tink (PSD2 — bank + broker sync)                      |~€0.50/user/mo  |
 |Cron Jobs      |Vercel Cron                                           |Free            |
 
+### Sold Positions (Collapsible) — ✅ DONE v122e
+
+> Inspired by Parqet's "Verkaufte Wertpapiere" section. Shows fully sold positions with realized P&L.
+
+**Implementation:**
+- [x] `derivePositionsFromTxs` now returns positions with `qty ≈ 0` if they have sell revenue
+- [x] Sold positions marked with `sold: true`, `realizedPnL`, `totalSellRevenue`, `totalBuyCost`
+- [x] Collapsible "Sold Positions" card below the main portfolio table
+- [x] Header shows: count, winners (↑), losers (↓), total realized P&L
+- [x] Mini logo row when expanded (like Parqet)
+- [x] Table with columns: Name, Buy Cost, Sell Revenue, Realized P&L (€ + %)
+- [x] Sorted by largest absolute P&L first
+- [x] Clickable rows → open StockDetail
+- [x] Collapsed by default (click to expand)
+
+**Limitation:** Only works for positions imported via transaction history (Smartbroker+ activity export, Bitvavo, AI-parsed transactions). Depot snapshot imports (Smartbroker+ Depotübersicht) only show current holdings — no sold position data available.
+
 -----
 
 ## 🎨 Design System

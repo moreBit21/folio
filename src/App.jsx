@@ -1677,17 +1677,20 @@ function derivePositionsFromTxs(normalizedTxs, brokerName) {
   for (const t of sorted) {
     const sym = (t.symbol || '').toUpperCase();
     if (!sym || sym === 'EUR') continue;
-    if (!hMap[sym]) hMap[sym] = { symbol: sym, isin: t.isin || null, name: t.name || sym, qty: 0, totalCost: 0 };
+    if (!hMap[sym]) hMap[sym] = { symbol: sym, isin: t.isin || null, name: t.name || sym, qty: 0, totalCost: 0, totalBuyCost: 0, totalSellRevenue: 0, lastAvgPrice: 0 };
     const h = hMap[sym];
     const qty = Math.abs(t.qty || 0);
     const cost = Math.abs(t.amountEur || 0);
     if (t.type === 'buy') {
-      h.qty += qty; h.totalCost += cost;
+      h.qty += qty; h.totalCost += cost; h.totalBuyCost += cost;
+      if (h.qty > 0) h.lastAvgPrice = h.totalCost / h.qty;
     } else if (t.type === 'sell' || t.type === 'transfer_out') {
       if (h.qty > 0) {
         const frac = Math.min(qty, h.qty) / h.qty;
         h.totalCost *= (1 - frac);
         h.qty = Math.max(0, h.qty - qty);
+      }
+      if (t.type === 'sell') h.totalSellRevenue += cost;
       }
     } else if (t.type === 'transfer_in' || t.type === 'reward') {
       h.qty += qty; // no cost basis for free/transferred-in coins
@@ -1703,16 +1706,22 @@ function derivePositionsFromTxs(normalizedTxs, brokerName) {
     // 'ignore' → skip
   }
   return Object.values(hMap)
-    .filter(h => h.qty > 0.01)
+    .filter(h => h.qty > 0.01 || h.totalSellRevenue > 0) // Keep sold positions too
     .map(h => ({
       symbol: h.symbol,
       isin: h.isin,
       name: h.name,
       qty: Math.round(h.qty * 1e8) / 1e8,
-      avgPrice: h.qty > 0 && h.totalCost > 0 ? h.totalCost / h.qty : 0,
+      avgPrice: h.qty > 0 && h.totalCost > 0 ? h.totalCost / h.qty : (h.lastAvgPrice || 0),
       type: inferType(h.symbol, h.isin, h.name, h.isin ? 'stock' : 'crypto'),
       broker: brokerName || 'Imported',
       coinId: getCoinId(h.symbol),
+      ...(h.qty <= 0.01 && h.totalSellRevenue > 0 ? {
+        sold: true,
+        realizedPnL: h.totalSellRevenue - h.totalBuyCost,
+        totalSellRevenue: h.totalSellRevenue,
+        totalBuyCost: h.totalBuyCost,
+      } : {}),
     }));
 }
 
@@ -7451,6 +7460,7 @@ function PortfolioPage({ positions, transactions, wallets, onOpenStock, priceLoa
   const [collapsedGroups, setCollapsedGroups] = useState(new Set(['stock','etf','crypto','derivative'])); // all collapsed by default
   const [expandedAccounts, setExpandedAccounts] = useState(new Set()); // By Account: empty = all collapsed
   const [tab, setTab] = React.useState('positions'); // positions | analysis
+  const [soldOpen, setSoldOpen] = React.useState(false); // sold positions collapsed by default
   const [analysisView, setAnalysisView] = React.useState('asset'); // asset|sector|region|cagr|volatility|alloc
   const [drillFilter, setDrillFilter] = React.useState(null); // {type, value} for click-through
   const [fundamentals, setFundamentals] = React.useState({});
@@ -7992,6 +8002,88 @@ function PortfolioPage({ positions, transactions, wallets, onOpenStock, priceLoa
             </span>
           </div>
         </div>
+
+        {/* ── Sold Positions (collapsible) ── */}
+        {(() => {
+          const soldPositions = positions.filter(p => p.sold && p.realizedPnL != null);
+          if (!soldPositions.length) return null;
+          const totalRealized = soldPositions.reduce((s, p) => s + (p.realizedPnL || 0), 0);
+          const winners = soldPositions.filter(p => p.realizedPnL > 0).length;
+          const losers = soldPositions.filter(p => p.realizedPnL < 0).length;
+          return (
+            <div className="card" style={{marginTop:12,overflow:'hidden'}}>
+              <div
+                onClick={() => setSoldOpen(prev => !prev)}
+                style={{padding:'12px 18px',cursor:'pointer',display:'flex',alignItems:'center',gap:10,
+                  borderBottom: soldOpen ? '1px solid var(--border)' : 'none',
+                  transition:'background 0.15s'}}
+                onMouseEnter={e=>e.currentTarget.style.background='var(--surface2)'}
+                onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                <span style={{fontSize:12,transition:'transform 0.2s',transform:soldOpen?'rotate(90deg)':'rotate(0deg)',display:'inline-block'}}>›</span>
+                <span style={{fontSize:13,fontWeight:600}}>Sold Positions</span>
+                <span className="mono" style={{fontSize:11,color:'var(--text2)'}}>
+                  {soldPositions.length} positions
+                </span>
+                {winners > 0 && <span className="tag tag-green" style={{fontSize:9}}>↑ {winners}</span>}
+                {losers > 0 && <span className="tag tag-red" style={{fontSize:9}}>↓ {losers}</span>}
+                <span className="mono" style={{fontSize:12,fontWeight:600,marginLeft:'auto',
+                  color:totalRealized>=0?'var(--green)':'var(--red)'}}>
+                  {totalRealized>=0?'+':''}€{totalRealized.toFixed(0)}
+                </span>
+              </div>
+              {soldOpen && (
+                <div>
+                  {/* Mini logo row */}
+                  <div style={{padding:'8px 18px',display:'flex',gap:4,flexWrap:'wrap',borderBottom:'1px solid var(--border)'}}>
+                    {soldPositions.slice(0, 20).map((p, i) => (
+                      <AssetLogo key={i} pos={p} size={28}/>
+                    ))}
+                    {soldPositions.length > 20 && <span className="mono" style={{fontSize:10,color:'var(--text3)',alignSelf:'center'}}>+{soldPositions.length-20}</span>}
+                  </div>
+                  {/* Header */}
+                  <div style={{display:'grid',gridTemplateColumns:'2.2fr 1fr 1fr 1fr',padding:'8px 18px',
+                    borderBottom:'1px solid var(--border)'}}>
+                    {['NAME','BUY COST','SELL REVENUE','REALIZED P&L'].map(h=>(
+                      <span key={h} className="mono" style={{fontSize:9,color:'var(--text3)',letterSpacing:'0.1em'}}>{h}</span>
+                    ))}
+                  </div>
+                  {/* Rows */}
+                  {soldPositions
+                    .sort((a,b) => Math.abs(b.realizedPnL||0) - Math.abs(a.realizedPnL||0))
+                    .map((p, i) => {
+                      const up = (p.realizedPnL || 0) >= 0;
+                      const pct = p.totalBuyCost > 0 ? ((p.realizedPnL / p.totalBuyCost) * 100) : 0;
+                      return (
+                        <div key={i} style={{display:'grid',gridTemplateColumns:'2.2fr 1fr 1fr 1fr',padding:'10px 18px',
+                          borderBottom:'1px solid var(--border)',cursor:'pointer',transition:'background 0.12s'}}
+                          onMouseEnter={e=>e.currentTarget.style.background='var(--surface2)'}
+                          onMouseLeave={e=>e.currentTarget.style.background='transparent'}
+                          onClick={() => onOpenStock({...p, qty: 0})}>
+                          <div style={{display:'flex',alignItems:'center',gap:8,minWidth:0}}>
+                            <AssetLogo pos={p}/>
+                            <div style={{minWidth:0}}>
+                              <div style={{fontSize:12,fontWeight:500}}>{displayTicker(p)}</div>
+                              <div style={{fontSize:10,color:'var(--text3)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:140}}>{p.name}</div>
+                            </div>
+                          </div>
+                          <div className="mono" style={{fontSize:11,color:'var(--text2)'}}>€{(p.totalBuyCost||0).toFixed(0)}</div>
+                          <div className="mono" style={{fontSize:11,color:'var(--text2)'}}>€{(p.totalSellRevenue||0).toFixed(0)}</div>
+                          <div>
+                            <div className="mono" style={{fontSize:11,fontWeight:600,color:up?'var(--green)':'var(--red)'}}>
+                              {up?'+':''}€{(p.realizedPnL||0).toFixed(0)}
+                            </div>
+                            <div className="mono" style={{fontSize:10,color:up?'var(--green)':'var(--red)',opacity:0.7}}>
+                              {up?'↑':'↓'} {Math.abs(pct).toFixed(1)}%
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              )}
+            </div>
+          );
+        })()}
       )}
 
       {/* ══════════ ANALYSIS TAB ══════════ */}
