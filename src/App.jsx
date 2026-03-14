@@ -265,6 +265,7 @@ const NAV_ITEMS     = [
   {id:"screener",  label:"Screener",   icon:"🔍"},
   {id:"compare",   label:"Compare",    icon:"⇌"},
   {id:"news",      label:"News Feed",  icon:"📰"},
+  {id:"landing",   label:"Landing Page",icon:"🌐"},
   {id:"settings",  label:"Settings",   icon:"⚙"},
 ];
 
@@ -10297,6 +10298,15 @@ export default function App() {
           )}
           {nav==="compare"&&<CompareView/>}
           {nav==="news"&&<NewsFeed positions={positions}/> }
+          {nav==="landing"&&(
+            <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden'}}>
+              <div style={{padding:'12px 18px',background:'var(--surface)',borderBottom:'1px solid var(--border)',display:'flex',alignItems:'center',gap:12}}>
+                <span style={{fontSize:11,color:'var(--text3)'}}>🌐 Landing Page Preview (only visible to logged-in users)</span>
+                <a href="/landing.html" target="_blank" style={{fontSize:11,color:'var(--accent)',textDecoration:'none',marginLeft:'auto'}}>Open in new tab ↗</a>
+              </div>
+              <iframe src="/landing.html" style={{flex:1,border:'none',width:'100%'}} title="Landing Page Preview"/>
+            </div>
+          )}
           {nav==="settings"&&(
             <div className="fu" style={{display:"flex",flexDirection:"column",gap:14}}>
               {/* Appearance */}
