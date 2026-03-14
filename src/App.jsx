@@ -3511,7 +3511,8 @@ function calcCanonicalHealthScore(d) {
 
   // Growth
   const g = (last.revenue&&prev.revenue&&prev.revenue>0)?(last.revenue/prev.revenue-1):null;
-  const growthGood=isTech?0.15:0.07, growthOk=isTech?0.05:0.02;
+  const growthGood=isTech?0.10:isFinance?0.05:isRetail?0.03:isEnergy?0.05:0.05;
+  const growthOk  =isTech?0.02:isFinance?0.00:isRetail?0.00:isEnergy?0.00:0.00;
   const growthColor = g==null?'gray':g>growthGood?'green':g>growthOk?'gold':'red';
 
   // Moat
@@ -7129,8 +7130,7 @@ function StockDetail({ pos, onBack, transactions, onTransfer, setManualResolvePo
               </div>
             </div>
           )}
-          </>)}  {/* end stock scorecard */}
-          )}  {/* end crypto/etf/stock branch */}
+          </>)}  {/* end stock scorecard / ternary */}
         </>)}
 
         {/* ══ CHARTS TAB ══ */}
