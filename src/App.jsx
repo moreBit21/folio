@@ -9053,7 +9053,17 @@ export default function App() {
                 if (pick?.symbol) {
                   const resolvedTk = pick.symbol.split('.')[0].toUpperCase();
                   const correctedType = inferType(resolvedTk, isin, rep.name, rep.type);
-                  resolvedTickerMap[isin] = { ticker: pick.symbol, type: correctedType, source: 'name' };
+                  // Price sanity: if the resolved result has a price, compare to CSV avgPrice
+                  // If >3× different, this is likely the wrong product (e.g. US ARKX $30 vs EU UCITS €4)
+                  const csvPrice = rep.avgPrice || rep.currentPrice || 0;
+                  const fmpPrice = pick.price || 0;
+                  const priceSuspicious = csvPrice > 0 && fmpPrice > 0 &&
+                    (fmpPrice / csvPrice > 3 || csvPrice / fmpPrice > 3);
+                  resolvedTickerMap[isin] = { ticker: pick.symbol, type: correctedType, source: 'name', priceSuspicious };
+                  if (priceSuspicious) {
+                    console.log('[folio] name fallback WARNING: price mismatch for', rep.name, '→', pick.symbol,
+                      '(CSV:', csvPrice.toFixed(2), 'FMP:', fmpPrice.toFixed(2), 'ratio:', (fmpPrice/csvPrice).toFixed(1) + '×)');
+                  }
                   saveISINTicker(isin, pick.symbol, pick.name || rep.name, 'name');
                   console.log('[folio] name fallback resolved:', rep.name, '→', pick.symbol);
                 } else {
@@ -9070,6 +9080,7 @@ export default function App() {
           if (resolvedTickerMap[p.isin]) {
             p.fmpTicker = resolvedTickerMap[p.isin].ticker;
             p.tickerSource = resolvedTickerMap[p.isin].source;
+            if (resolvedTickerMap[p.isin].priceSuspicious) p._priceSuspicious = true;
           }
         });
         const resolvedEntries = Object.entries(resolvedTickerMap);
@@ -9109,15 +9120,20 @@ export default function App() {
         const priorPrice = p.currentPrice;
         // Also apply any resolved ticker/type from this run
         const extra = resolvedTickerMap[p.isin]
-          ? { fmpTicker: resolvedTickerMap[p.isin].ticker, type: resolvedTickerMap[p.isin].type, tickerSource: resolvedTickerMap[p.isin].source }
+          ? { fmpTicker: resolvedTickerMap[p.isin].ticker, type: resolvedTickerMap[p.isin].type, tickerSource: resolvedTickerMap[p.isin].source,
+              ...(resolvedTickerMap[p.isin].priceSuspicious ? { _priceSuspicious: true } : {}) }
           : {};
         const source = extra.tickerSource || p.tickerSource;
         const sanityThreshold = (source === 'name') ? 3 : 5;
-        const priceSuspicious = priorPrice > 0 && rawPrice > 0 &&
-          (rawPrice / priorPrice > sanityThreshold || priorPrice / rawPrice > sanityThreshold);
-        const price = priceSuspicious ? priorPrice : rawPrice;
+        // Compare against both currentPrice and avgPrice (CSV cost basis) for robustness
+        const refPrice = priorPrice > 0 ? priorPrice : (p.avgPrice || 0);
+        const priceSuspicious = refPrice > 0 && rawPrice > 0 &&
+          (rawPrice / refPrice > sanityThreshold || refPrice / rawPrice > sanityThreshold);
+        const price = priceSuspicious ? (priorPrice > 0 ? priorPrice : rawPrice) : rawPrice;
         // If name-fallback price is suspicious, mark for resolve badge
         if (priceSuspicious && source === 'name') extra._priceSuspicious = true;
+        // Preserve existing _priceSuspicious from resolution phase
+        if (p._priceSuspicious && !extra._priceSuspicious) extra._priceSuspicious = true;
         return {...p, ...extra, currentPrice: price, dailyChange: q.change ?? null};
       }));
       setLastUpdated(new Date());
