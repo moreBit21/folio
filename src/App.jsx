@@ -3,49 +3,51 @@ import ReactDOM from "react-dom";
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, AreaChart, ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid } from "recharts";
 
-const FONTS = `@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=IBM+Plex+Mono:wght@300;400;500;600&family=DM+Sans:wght@300;400;500&display=swap');`;
+const FONTS = `@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400;1,600&family=Open+Sans:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@300;400;500;600&display=swap');`;
 
 // Helper: read current theme colors from DOM — works in any component without prop drilling
 function getTC() {
   const dark = document.documentElement.classList.contains('theme-dark');
   return dark ? {
-    bg:'#080c10',surface:'#0d1117',border:'#1c2730',text:'#e8edf2',text2:'#7a8a98',text3:'#3d4f5e',
-    green:'#00e5a0',red:'#ff4d6d',gold:'#f0b429',blue:'#4d9fff',gridLine:'#1c2730'
+    bg:'#0f1a28',surface:'#162033',border:'#243548',text:'#e0ddd6',text2:'#7a8a98',text3:'#3d5060',
+    green:'#4aaec0',red:'#e06060',gold:'#d4c06a',blue:'#5ab8cc',gridLine:'#1e3245',accent:'#3a9ab5'
   } : {
-    bg:'#ffffff',surface:'#f5f7fa',border:'#e2e8f0',text:'#1a202c',text2:'#718096',text3:'#a0aec0',
-    green:'#16a34a',red:'#dc2626',gold:'#d97706',blue:'#2563eb',gridLine:'#e2e8f0'
+    bg:'#f7f4ee',surface:'#ffffff',border:'#d4cbb5',text:'#1A314E',text2:'#5e7082',text3:'#94a3b4',
+    green:'#2d8a5e',red:'#c92a2a',gold:'#b8a04c',blue:'#2A758D',gridLine:'#e4ddd0',accent:'#2A758D'
   };
 }
 
 const CSS = `
   * { box-sizing: border-box; margin: 0; padding: 0; }
   :root {
-    /* Light theme (default) — clean, trustworthy Parqet/Copilot vibe */
-    --bg: #ffffff; --surface: #f5f7fa; --surface2: #edf0f5;
-    --border: #e2e8f0; --border2: #cbd5e1;
-    --text: #1a202c; --text2: #718096; --text3: #a0aec0;
-    --green: #16a34a; --green-dim: rgba(22,163,74,0.08);
-    --red: #dc2626;   --red-dim: rgba(220,38,38,0.08);
-    --gold: #d97706;  --blue: #2563eb; --violet: #7c3aed;
-    --modal-shadow: rgba(0,0,0,0.15);
-    --chart-grid: #e2e8f0;
-    --popover-shadow: 0 12px 40px rgba(0,0,0,0.12);
+    /* Light theme — foliologic warm paper + teal brand */
+    --bg: #f7f4ee; --surface: #ffffff; --surface2: #f0ebe1;
+    --border: #d4cbb5; --border2: #c4b9a0;
+    --text: #1A314E; --text2: #5e7082; --text3: #94a3b4;
+    --accent: #2A758D; --accent-dim: rgba(42,117,141,0.07); --accent-border: rgba(42,117,141,0.2);
+    --green: #2d8a5e; --green-dim: rgba(45,138,94,0.07);
+    --red: #c92a2a;   --red-dim: rgba(201,42,42,0.06);
+    --gold: #b8a04c;  --blue: #2A758D; --violet: #7c5cbf;
+    --modal-shadow: rgba(0,0,0,0.12);
+    --chart-grid: #e4ddd0;
+    --popover-shadow: 0 12px 40px rgba(0,0,0,0.10);
   }
   .theme-dark {
-    /* Dark theme — premium Bloomberg meets modern fintech */
-    --bg: #080c10; --surface: #0d1117; --surface2: #131920;
-    --border: #1c2730; --border2: #243040;
-    --text: #e8edf2; --text2: #7a8a98; --text3: #3d4f5e;
-    --green: #00e5a0; --green-dim: rgba(0,229,160,0.10);
-    --red: #ff4d6d;   --red-dim: rgba(255,77,109,0.10);
-    --gold: #f0b429;  --blue: #4d9fff; --violet: #a78bfa;
-    --modal-shadow: rgba(0,0,0,0.6);
-    --chart-grid: #1c2730;
-    --popover-shadow: 0 12px 40px rgba(0,0,0,0.7);
+    /* Dark theme — foliologic navy + teal brand */
+    --bg: #0f1a28; --surface: #162033; --surface2: #1a2d42;
+    --border: #243548; --border2: #2e4158;
+    --text: #e0ddd6; --text2: #7a8a98; --text3: #3d5060;
+    --accent: #3a9ab5; --accent-dim: rgba(58,154,181,0.1); --accent-border: rgba(58,154,181,0.25);
+    --green: #4aaec0; --green-dim: rgba(74,174,192,0.08);
+    --red: #e06060;   --red-dim: rgba(224,96,96,0.08);
+    --gold: #d4c06a;  --blue: #5ab8cc; --violet: #a78bfa;
+    --modal-shadow: rgba(0,0,0,0.5);
+    --chart-grid: #1e3245;
+    --popover-shadow: 0 12px 40px rgba(0,0,0,0.6);
   }
-  body { background:var(--bg); color:var(--text); font-family:'DM Sans',sans-serif; }
+  body { background:var(--bg); color:var(--text); font-family:'Open Sans',sans-serif; }
   .mono { font-family:'IBM Plex Mono',monospace; }
-  .serif { font-family:'DM Serif Display',serif; }
+  .serif { font-family:'Cormorant Garamond',serif; }
   ::-webkit-scrollbar{width:4px} ::-webkit-scrollbar-track{background:transparent} ::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
   @keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}
@@ -58,27 +60,27 @@ const CSS = `
   .shimmer{animation:shimmer 1.5s ease-in-out infinite}
   .nav-item{display:flex;align-items:center;gap:10px;padding:9px 14px;border-radius:6px;cursor:pointer;font-size:13px;color:var(--text2);transition:all 0.15s;border:1px solid transparent}
   .nav-item:hover{color:var(--text);background:var(--surface2)}
-  .nav-item.active{color:var(--green);background:var(--green-dim);border-color:rgba(0,229,160,0.15)}
+  .nav-item.active{color:var(--accent);background:var(--accent-dim);border-color:var(--accent-border)}
   .card{background:var(--surface);border:1px solid var(--border);border-radius:10px;transition:border-color 0.2s}
   .card:hover{border-color:var(--border2)}
   .pill{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:0.07em;padding:4px 10px;border-radius:4px;cursor:pointer;border:1px solid var(--border);background:transparent;color:var(--text3);transition:all 0.15s;font-weight:500}
   .pill:hover{color:var(--text2);border-color:var(--border2)}
   .tag{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:0.06em;padding:3px 8px;border-radius:3px;font-weight:500}
   .tag-green{background:var(--green-dim);color:var(--green)} .tag-red{background:var(--red-dim);color:var(--red)}
-  .tag-gold{background:rgba(240,180,41,0.12);color:var(--gold)} .tag-gray{background:var(--surface2);color:var(--text2)}
-  .tag-blue{background:rgba(77,159,255,0.12);color:var(--blue)}
+  .tag-gold{background:rgba(184,160,76,0.12);color:var(--gold)} .tag-gray{background:var(--surface2);color:var(--text2)}
+  .tag-blue{background:rgba(42,117,141,0.12);color:var(--blue)}
   .btn{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border-radius:6px;font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:0.06em;font-weight:500;cursor:pointer;transition:all 0.15s;border:none}
-  .btn-primary{background:var(--green);color:#fff} .btn-primary:hover{filter:brightness(1.1)}
+  .btn-primary{background:var(--accent);color:#fff} .btn-primary:hover{filter:brightness(1.1)}
   .btn-ghost{background:transparent;color:var(--text2);border:1px solid var(--border2)} .btn-ghost:hover{color:var(--text);border-color:var(--text3)}
   .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:100;backdrop-filter:blur(4px);animation:fadeUp 0.2s ease}
   .theme-dark .modal-overlay{background:rgba(0,0,0,0.75)}
   .modal{background:var(--surface);border:1px solid var(--border2);border-radius:12px;padding:28px;width:440px;box-shadow:0 24px 80px var(--modal-shadow)}
   .inp{width:100%;background:var(--bg);border:1px solid var(--border2);border-radius:6px;color:var(--text);font-family:'IBM Plex Mono',monospace;font-size:13px;padding:10px 12px;outline:none;transition:border 0.15s}
-  .inp:focus{border-color:var(--green)} .inp::placeholder{color:var(--text3)}
+  .inp:focus{border-color:var(--accent)} .inp::placeholder{color:var(--text3)}
   .trow{display:grid;grid-template-columns:2.2fr 0.8fr 1fr 1fr 0.8fr 1fr 0.8fr;align-items:center;padding:13px 18px;border-bottom:1px solid var(--border);transition:background 0.12s;cursor:pointer}
   .trow:hover{background:var(--surface2)} .trow:last-child{border-bottom:none}
   .btog{display:flex;align-items:center;gap:7px;padding:6px 12px;border-radius:6px;border:1px solid var(--border);background:transparent;cursor:pointer;transition:all 0.15s;font-family:'IBM Plex Mono',monospace;font-size:10px}
-  .btog.on{border-color:rgba(0,229,160,0.3);background:var(--green-dim)} .btog.off{opacity:0.4}
+  .btog.on{border-color:var(--accent-border);background:var(--accent-dim)} .btog.off{opacity:0.4}
   .ctt{background:var(--surface);border:1px solid var(--border2);border-radius:8px;padding:12px 16px;font-family:'IBM Plex Mono',monospace;font-size:11px;box-shadow:0 8px 32px var(--modal-shadow)}
   .logo-wrap{width:36px;height:36px;border-radius:9px;overflow:hidden;display:flex;align-items:center;justify-content:center;flex-shrink:0;position:relative}
   .logo-img{width:100%;height:100%;object-fit:cover;border-radius:9px}
@@ -243,14 +245,14 @@ const getAccountType = (name, isCold) => {
 
 
 const BENCHMARKS    = [
-  {id:"sp500", label:"S&P 500",   color:"#4d9fff"},
-  {id:"nasdaq",label:"Nasdaq 100",color:"#f0b429"},
+  {id:"sp500", label:"S&P 500",   color:"#5ab8cc"},
+  {id:"nasdaq",label:"Nasdaq 100",color:"#d4c06a"},
   {id:"dax",   label:"DAX",       color:"#a78bfa"},
   {id:"btc",   label:"BTC",       color:"#f7931a"},
 ];
 const RANGES        = ["1M","3M","6M","YTD","1Y","ALL"];
 const RANGE_MONTHS  = {"1M":1,"3M":3,"6M":6,"YTD":2,"1Y":12,"ALL":999};
-const ALLOC_COLORS  = ["#00e5a0","#627eea","#f7931a","#9945ff","#f0b429","#76b900","#e84142"];
+const ALLOC_COLORS  = ["#4aaec0","#627eea","#f7931a","#9945ff","#d4c06a","#76b900","#e84142"];
 const BROKERS_OPT   = ["Bitvavo","Smartbroker+","Trade Republic","Manual"];
 const ASSET_TYPES   = ["stock","etf","crypto"];
 const NAV_ITEMS     = [
@@ -529,8 +531,8 @@ const EUR_USD = 1.085;
 
 // ── AI News Feed ──────────────────────────────────────────────
 const SENTIMENT_STYLE = {
-  bullish:  { color:"#00e5a0", bg:"rgba(0,229,160,0.10)",  border:"rgba(0,229,160,0.25)",  label:"BULLISH"  },
-  bearish:  { color:"#ff4d6d", bg:"rgba(255,77,109,0.10)", border:"rgba(255,77,109,0.25)", label:"BEARISH"  },
+  bullish:  { color:"#4aaec0", bg:"rgba(58,154,181,0.10)",  border:"rgba(58,154,181,0.25)",  label:"BULLISH"  },
+  bearish:  { color:"#e06060", bg:"rgba(224,96,96,0.10)", border:"rgba(224,96,96,0.25)", label:"BEARISH"  },
   neutral:  { color:"#7a8a98", bg:"rgba(122,138,152,0.10)",border:"rgba(122,138,152,0.2)", label:"NEUTRAL"  },
 };
 
@@ -646,7 +648,7 @@ Return 6-8 items total. Prioritize market-moving news. RETURN ONLY THE JSON ARRA
                 display:"flex",alignItems:"center",gap:6,
                 padding:"6px 12px",borderRadius:6,cursor:"pointer",
                 fontFamily:"IBM Plex Mono,monospace",fontSize:11,fontWeight:500,
-                border:`1px solid ${active?"rgba(0,229,160,0.35)":pos?`${pos.color}33`:"var(--border)"}`,
+                border:`1px solid ${active?"rgba(58,154,181,0.35)":pos?`${pos.color}33`:"var(--border)"}`,
                 background:active?"var(--green-dim)":pos?`${pos.color}0d`:"transparent",
                 color:active?"var(--green)":pos?pos.color:"var(--text2)",
                 transition:"all 0.15s"
@@ -901,7 +903,7 @@ function ColdWalletModal({ transfers, existingWallets, existingPositions, source
                 const decimals = t.qty < 1 ? 6 : 4;
                 return (
                   <div key={t.symbol} style={{ borderRadius: 8, border: `1px solid ${isOverAllocated ? 'var(--red)' : entries.length > 0 ? 'var(--border-active, #2a3a4a)' : 'var(--border)'}`,
-                    background: isOverAllocated ? 'rgba(255,77,109,0.05)' : 'var(--surface2)', overflow: 'hidden' }}>
+                    background: isOverAllocated ? 'rgba(224,96,96,0.05)' : 'var(--surface2)', overflow: 'hidden' }}>
 
                     {/* Coin header */}
                     <div style={{ display: 'flex', alignItems: 'center', padding: '8px 14px', gap: 10, borderBottom: '1px solid var(--border)' }}>
@@ -1132,7 +1134,7 @@ function TransferModal({ modal, wallets, positions, onClose, onSave }) {
             </div>
           )}
           {isToCold && coldWallets.length === 0 && (
-            <div className="mono" style={{ fontSize: 11, color: 'var(--red)', padding: '8px 12px', background: 'rgba(255,77,109,0.1)', borderRadius: 6 }}>
+            <div className="mono" style={{ fontSize: 11, color: 'var(--red)', padding: '8px 12px', background: 'rgba(224,96,96,0.1)', borderRadius: 6 }}>
               No cold wallets added yet. Add one first via the + ADD menu.
             </div>
           )}
@@ -1157,7 +1159,7 @@ function TransferModal({ modal, wallets, positions, onClose, onSave }) {
             <input type="date" value={date} onChange={e => setDate(e.target.value)} style={labelInput} />
           </div>
 
-          {err && <div className="mono" style={{ fontSize: 11, color: 'var(--red)', padding: '6px 10px', background: 'rgba(255,77,109,0.1)', borderRadius: 6 }}>{err}</div>}
+          {err && <div className="mono" style={{ fontSize: 11, color: 'var(--red)', padding: '6px 10px', background: 'rgba(224,96,96,0.1)', borderRadius: 6 }}>{err}</div>}
 
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 4 }}>
             <button className="btn btn-ghost" onClick={onClose}>CANCEL</button>
@@ -1214,7 +1216,7 @@ function DangerZone({ positions, transactions, wallets, setPositions, setTransac
   };
 
   return (
-    <div className="card" style={{padding:28,borderColor:"rgba(255,77,109,0.2)"}}>
+    <div className="card" style={{padding:28,borderColor:"rgba(224,96,96,0.2)"}}>
       <div className="mono" style={{fontSize:10,color:"var(--red)",letterSpacing:"0.12em",marginBottom:18}}>DANGER ZONE</div>
       {!deleteMode ? (
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
@@ -1236,7 +1238,7 @@ function DangerZone({ positions, transactions, wallets, setPositions, setTransac
             <button className="btn btn-ghost" style={{fontSize:11,padding:'3px 10px'}} onClick={selectNone}>Clear</button>
           </div>
           <label style={{display:'flex',alignItems:'center',gap:10,padding:'10px 12px',borderRadius:8,
-            background:deleteSelected.has('__all__')?'rgba(255,77,109,0.08)':'var(--surface2)',
+            background:deleteSelected.has('__all__')?'rgba(224,96,96,0.08)':'var(--surface2)',
             border:`1px solid ${deleteSelected.has('__all__')?'var(--red)':'var(--border)'}`,
             cursor:'pointer',marginBottom:8,userSelect:'none'}}>
             <input type="checkbox" checked={deleteSelected.has('__all__')} onChange={()=>toggleSelect('__all__')} style={{accentColor:'var(--red)',width:14,height:14}} />
@@ -1252,8 +1254,8 @@ function DangerZone({ positions, transactions, wallets, setPositions, setTransac
                 const disabled = deleteSelected.has('__all__');
                 return (
                   <label key={w.id} style={{display:'flex',alignItems:'center',gap:10,padding:'9px 12px',borderRadius:8,
-                    background:checked?'rgba(255,77,109,0.06)':'var(--surface2)',
-                    border:`1px solid ${checked?'rgba(255,77,109,0.4)':'var(--border)'}`,
+                    background:checked?'rgba(224,96,96,0.06)':'var(--surface2)',
+                    border:`1px solid ${checked?'rgba(224,96,96,0.4)':'var(--border)'}`,
                     cursor:disabled?'default':'pointer',opacity:disabled?0.5:1,userSelect:'none'}}>
                     <input type="checkbox" checked={checked} disabled={disabled} onChange={()=>!disabled&&toggleSelect(w.id)} style={{accentColor:'var(--red)',width:14,height:14}} />
                     <div style={{width:8,height:8,borderRadius:'50%',background:w.color,flexShrink:0}} />
@@ -1308,7 +1310,7 @@ function DevModeToggle() {
         <div style={{fontSize:11,color:"var(--text3)"}}>Unlimited AI imports for testing. Disable before launch.</div>
       </div>
       <button className="btn" style={{flexShrink:0,marginLeft:16,
-        ...(devMode?{background:'var(--green-dim)',color:'var(--green)',borderColor:'rgba(0,229,160,0.3)'}:{})}}
+        ...(devMode?{background:'var(--green-dim)',color:'var(--green)',borderColor:'rgba(58,154,181,0.3)'}:{})}}
         onClick={toggle}>
         {devMode ? '✓ Dev Mode ON' : 'Dev Mode OFF'}
       </button>
@@ -1381,7 +1383,7 @@ function parseSmartbrokerDepot(rows, headers) {
 }
 
 
-const ALLOC_COLORS_EXT = ["#00e5a0","#627eea","#f7931a","#9945ff","#f0b429","#76b900","#e84142","#4d9fff","#a78bfa","#ff4d6d"];
+const ALLOC_COLORS_EXT = ["#4aaec0","#627eea","#f7931a","#9945ff","#d4c06a","#76b900","#e84142","#5ab8cc","#a78bfa","#e06060"];
 
 // ISIN detection
 const isISIN = s => /^[A-Z]{2}[A-Z0-9]{9}[0-9]$/.test(s);
@@ -2274,7 +2276,7 @@ function ImportModeButtons({ mode, onToggle, hasExisting, existingCount, incomin
           </span>
           <div style={{ display: "flex", borderRadius: 5, overflow: "hidden", border: "1px solid var(--border)", fontSize: 11 }}>
             <button onClick={()=>onToggle("replace")} style={{ padding: "3px 9px", background: !isAppend ? "var(--surface2)" : "transparent", color: !isAppend ? "var(--text)" : "var(--text3)", border: "none", cursor: "pointer", fontFamily: "inherit", borderRight: "1px solid var(--border)" }}>Replace</button>
-            <button onClick={()=>onToggle("append")} style={{ padding: "3px 9px", background: isAppend ? "rgba(0,229,160,0.12)" : "transparent", color: isAppend ? "var(--green)" : "var(--text3)", border: "none", cursor: "pointer", fontFamily: "inherit" }}>+ Append</button>
+            <button onClick={()=>onToggle("append")} style={{ padding: "3px 9px", background: isAppend ? "rgba(58,154,181,0.12)" : "transparent", color: isAppend ? "var(--green)" : "var(--text3)", border: "none", cursor: "pointer", fontFamily: "inherit" }}>+ Append</button>
           </div>
         </div>
       )}
@@ -2305,7 +2307,7 @@ const KNOWN_BROKERS = [
   { id: "bitvavo",        label: "Bitvavo",         color: "#1a6aff", flag: "🇳🇱", type: "crypto" },
   { id: "smartbroker",   label: "Smartbroker+",    color: "#00a4ef", flag: "🇩🇪", type: "broker" },
   { id: "trade_republic",label: "Trade Republic",  color: "#e63b2e", flag: "🇩🇪", type: "broker" },
-  { id: "scalable",      label: "Scalable Capital",color: "#00e5a0", flag: "🇩🇪", type: "broker" },
+  { id: "scalable",      label: "Scalable Capital",color: "#4aaec0", flag: "🇩🇪", type: "broker" },
   { id: "degiro",        label: "DEGIRO",          color: "#ff6b00", flag: "🇳🇱", type: "broker" },
   { id: "flatex",        label: "Flatex",          color: "#004b8d", flag: "🇩🇪", type: "broker" },
   { id: "interactive_brokers", label: "Interactive Brokers", color: "#e31837", flag: "🌍", type: "broker" },
@@ -2673,7 +2675,7 @@ function ImportModal({ onClose, onImport, existingPositions = [], existingTransa
                 <button onClick={()=>toggleMode("replace")} style={{ padding: "4px 10px", background: importMode === "replace" ? "var(--surface2)" : "transparent", color: importMode === "replace" ? "var(--text)" : "var(--text3)", border: "none", cursor: "pointer", fontFamily: "inherit", borderRight: "1px solid var(--border)" }}>
                   Replace
                 </button>
-                <button onClick={()=>toggleMode("append")} style={{ padding: "4px 10px", background: importMode === "append" ? "rgba(0,229,160,0.12)" : "transparent", color: importMode === "append" ? "var(--green)" : "var(--text3)", border: "none", cursor: "pointer", fontFamily: "inherit" }}>
+                <button onClick={()=>toggleMode("append")} style={{ padding: "4px 10px", background: importMode === "append" ? "rgba(58,154,181,0.12)" : "transparent", color: importMode === "append" ? "var(--green)" : "var(--text3)", border: "none", cursor: "pointer", fontFamily: "inherit" }}>
                   + Append
                 </button>
               </div>
@@ -2756,7 +2758,7 @@ function ImportModal({ onClose, onImport, existingPositions = [], existingTransa
           </div>
 
           {error && (
-            <div style={{ marginTop: 14, padding: "10px 14px", borderRadius: 6, background: "var(--red-dim)", border: "1px solid rgba(255,77,109,0.3)", color: "var(--red)", fontSize: 12 }}>{error}</div>
+            <div style={{ marginTop: 14, padding: "10px 14px", borderRadius: 6, background: "var(--red-dim)", border: "1px solid rgba(224,96,96,0.3)", color: "var(--red)", fontSize: 12 }}>{error}</div>
           )}
 
           {/* AI quota + learned parser status */}
@@ -2816,7 +2818,7 @@ function ImportModal({ onClose, onImport, existingPositions = [], existingTransa
 
         {/* ── STANDARD CSV PREVIEW ───────────────────────────────────────── */}
         {step === "preview" && (<>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18, padding: "10px 14px", borderRadius: 8, background: "var(--green-dim)", border: "1px solid rgba(0,229,160,0.25)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18, padding: "10px 14px", borderRadius: 8, background: "var(--green-dim)", border: "1px solid rgba(58,154,181,0.25)" }}>
             <span>✓</span>
             <div>
               <div style={{ fontSize: 13, color: "var(--green)", fontWeight: 500 }}>
@@ -2867,7 +2869,7 @@ function ImportModal({ onClose, onImport, existingPositions = [], existingTransa
               </div>
             )}
             {aiResult.confidence < 0.75 && (
-              <div style={{ marginTop: 10, padding: "8px 10px", borderRadius: 6, background: "rgba(240,180,41,0.08)", border: "1px solid rgba(240,180,41,0.2)", fontSize: 11, color: "var(--gold)" }}>
+              <div style={{ marginTop: 10, padding: "8px 10px", borderRadius: 6, background: "rgba(184,160,76,0.08)", border: "1px solid rgba(184,160,76,0.2)", fontSize: 11, color: "var(--gold)" }}>
                 ⚠ Review the positions below before importing.
               </div>
             )}
@@ -2886,7 +2888,7 @@ function ImportModal({ onClose, onImport, existingPositions = [], existingTransa
 
         {/* ── TRANSACTION HISTORY ─────────────────────────────────────────── */}
         {step === "activity" && txPreview && (<>
-          <div style={{ padding: "10px 14px", borderRadius: 8, background: "var(--green-dim)", border: "1px solid rgba(0,229,160,0.25)", marginBottom: 16, display: "flex", gap: 10, alignItems: "center" }}>
+          <div style={{ padding: "10px 14px", borderRadius: 8, background: "var(--green-dim)", border: "1px solid rgba(58,154,181,0.25)", marginBottom: 16, display: "flex", gap: 10, alignItems: "center" }}>
             <span>📈</span>
             <div>
               <div style={{ fontSize: 13, color: "var(--green)", fontWeight: 500 }}>
@@ -2915,7 +2917,7 @@ function ImportModal({ onClose, onImport, existingPositions = [], existingTransa
           </div>
           {/* ── Derived positions section ── */}
           {derivedPositions.length > 0 && (
-            <div style={{ padding: "10px 14px", borderRadius: 8, background: "rgba(0,229,160,0.04)", border: "1px solid rgba(0,229,160,0.2)", marginBottom: 16 }}>
+            <div style={{ padding: "10px 14px", borderRadius: 8, background: "rgba(58,154,181,0.04)", border: "1px solid rgba(58,154,181,0.2)", marginBottom: 16 }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
                 <div style={{ fontSize: 12, color: "var(--green)", fontWeight: 500 }}>
                   📊 {derivedPositions.length} positions derived from transactions
@@ -3134,7 +3136,7 @@ function TVChart({ ticker, txs = [], currentPrice, compact = false }) {
           const isTransOutDom = dominant === 'transfer_out';
           const isTransInDom  = dominant === 'transfer_in';
 
-          const color    = isBuyDom ? GREEN : isSellDom ? RED : isTransOutDom ? '#ffb432' : '#4d9fff';
+          const color    = isBuyDom ? GREEN : isSellDom ? RED : isTransOutDom ? '#d4c06a' : '#5ab8cc';
           const position = (isBuyDom || isTransInDom) ? 'belowBar' : 'aboveBar';
           const shape    = (isBuyDom || isTransInDom) ? 'arrowUp' : 'arrowDown';
 
@@ -3185,8 +3187,8 @@ function TVChart({ ticker, txs = [], currentPrice, compact = false }) {
             <button key={label} onClick={() => setRange(label)}
               className="mono"
               style={{fontSize:9, padding:'3px 8px', borderRadius:4, cursor:'pointer', border:'1px solid',
-                borderColor: range===label ? 'rgba(0,229,160,0.4)' : 'var(--border)',
-                background:  range===label ? 'rgba(0,229,160,0.1)' : 'transparent',
+                borderColor: range===label ? 'rgba(58,154,181,0.4)' : 'var(--border)',
+                background:  range===label ? 'rgba(58,154,181,0.1)' : 'transparent',
                 color:       range===label ? 'var(--green)' : 'var(--text3)',
                 letterSpacing: '0.06em', fontWeight: range===label ? 700 : 400,
                 transition: 'all 0.15s',
@@ -3202,8 +3204,8 @@ function TVChart({ ticker, txs = [], currentPrice, compact = false }) {
               <button key={m} onClick={() => setMode(m)}
                 className="mono"
                 style={{fontSize:9, padding:'3px 8px', borderRadius:4, cursor:'pointer', border:'1px solid',
-                  borderColor: mode===m ? 'rgba(77,159,255,0.4)' : 'var(--border)',
-                  background:  mode===m ? 'rgba(77,159,255,0.1)' : 'transparent',
+                  borderColor: mode===m ? 'rgba(42,117,141,0.4)' : 'var(--border)',
+                  background:  mode===m ? 'rgba(42,117,141,0.1)' : 'transparent',
                   color:       mode===m ? 'var(--blue)' : 'var(--text3)',
                   letterSpacing: '0.05em', transition: 'all 0.15s',
                 }}>
@@ -3218,7 +3220,7 @@ function TVChart({ ticker, txs = [], currentPrice, compact = false }) {
       {/* Legend */}
       {txs.length > 0 && mode !== 'candle' && (
         <div style={{display:'flex', gap:16, marginTop:8, flexWrap:'wrap'}}>
-          {[['#00e5a0','BUY / IN'],['#ff4d6d','SELL / OUT'],['#ffb432','TRANSFER OUT'],['#4d9fff','TRANSFER IN']].map(([col,lbl]) => (
+          {[['#4aaec0','BUY / IN'],['#e06060','SELL / OUT'],['#d4c06a','TRANSFER OUT'],['#5ab8cc','TRANSFER IN']].map(([col,lbl]) => (
             <div key={lbl} style={{display:'flex', alignItems:'center', gap:5}}>
               <div style={{width:7, height:7, borderRadius:'50%', background:col}}/>
               <span className="mono" style={{fontSize:9, color:'var(--text3)'}}>{lbl}</span>
@@ -3339,10 +3341,10 @@ function TickerDropdown({ results, searching, onSelect, highlightIdx = -1 }) {
 
 // ── Watchlist utilities ──────────────────────────────────────────────────────
 const FLAG_COLORS = {
-  red:    { bg:'rgba(255,77,109,0.15)',  border:'rgba(255,77,109,0.4)',  dot:'#ff4d6d' },
-  green:  { bg:'rgba(0,229,160,0.12)',  border:'rgba(0,229,160,0.35)',  dot:'#00e5a0' },
-  gold:   { bg:'rgba(240,180,41,0.12)', border:'rgba(240,180,41,0.35)', dot:'#f0b429' },
-  blue:   { bg:'rgba(77,159,255,0.12)', border:'rgba(77,159,255,0.35)', dot:'#4d9fff' },
+  red:    { bg:'rgba(224,96,96,0.15)',  border:'rgba(224,96,96,0.4)',  dot:'#e06060' },
+  green:  { bg:'rgba(58,154,181,0.12)',  border:'rgba(58,154,181,0.35)',  dot:'#4aaec0' },
+  gold:   { bg:'rgba(184,160,76,0.12)', border:'rgba(184,160,76,0.35)', dot:'#d4c06a' },
+  blue:   { bg:'rgba(42,117,141,0.12)', border:'rgba(42,117,141,0.35)', dot:'#5ab8cc' },
   violet: { bg:'rgba(167,139,250,0.12)',border:'rgba(167,139,250,0.35)',dot:'#a78bfa' },
 };
 
@@ -3926,8 +3928,8 @@ function ScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
                             <span title="Strong fundamentals, price pulling back — possible opportunity" style={{
                               marginLeft:6,fontSize:9,fontFamily:"'IBM Plex Mono',monospace",
                               fontWeight:700,letterSpacing:'0.05em',padding:'2px 5px',
-                              borderRadius:3,background:'rgba(0,229,160,0.10)',
-                              color:'var(--green)',border:'1px solid rgba(0,229,160,0.22)',
+                              borderRadius:3,background:'rgba(58,154,181,0.10)',
+                              color:'var(--green)',border:'1px solid rgba(58,154,181,0.22)',
                               verticalAlign:'middle',whiteSpace:'nowrap',cursor:'default'
                             }}>🎯 DEAL?</span>
                           )}
@@ -4302,7 +4304,7 @@ function ETFScreenerPage({ onOpenStock, watchlists = [], setWatchlists }) {
                 const divYield = r.lastAnnualDividend && r.price ? (r.lastAnnualDividend / r.price * 100) : null;
                 const dayPct = r.changesPercentage;
                 return (
-                  <tr key={r.symbol} onClick={()=>onOpenStock({symbol:r.symbol,name:r.companyName,type:'etf',qty:0,avgPrice:0,broker:'',color:'#4d9fff'})}
+                  <tr key={r.symbol} onClick={()=>onOpenStock({symbol:r.symbol,name:r.companyName,type:'etf',qty:0,avgPrice:0,broker:'',color:'#5ab8cc'})}
                     style={{borderBottom:'1px solid var(--border)', cursor:'pointer',
                       background: i%2===0 ? 'transparent' : 'rgba(255,255,255,0.015)'}}
                     onMouseEnter={e=>e.currentTarget.style.background='var(--surface2)'}
@@ -4635,7 +4637,7 @@ function WatchlistPage({ watchlists, setWatchlists, activeWLId, setActiveWLId, o
           <button key={w.id} onClick={() => setActiveWLId(w.id)} className="mono"
             style={{ textAlign:'left', padding:'7px 10px', borderRadius:6, cursor:'pointer',
               border:'1px solid', fontSize:11, letterSpacing:'0.04em', transition:'all 0.12s',
-              borderColor: activeWLId===w.id ? 'rgba(0,229,160,0.35)' : 'var(--border)',
+              borderColor: activeWLId===w.id ? 'rgba(58,154,181,0.35)' : 'var(--border)',
               background:  activeWLId===w.id ? 'var(--green-dim)' : 'transparent',
               color:       activeWLId===w.id ? 'var(--green)' : 'var(--text2)' }}>
             {w.name}
@@ -4725,7 +4727,7 @@ function WatchlistPage({ watchlists, setWatchlists, activeWLId, setActiveWLId, o
                 </div>
               ) : (
                 <button onClick={()=>setAddingTocat('top')}
-                  style={{padding:'7px 14px',borderRadius:6,border:'1px solid rgba(0,229,160,0.35)',
+                  style={{padding:'7px 14px',borderRadius:6,border:'1px solid rgba(58,154,181,0.35)',
                     background:'var(--green-dim)',color:'var(--green)',cursor:'pointer',
                     fontSize:11,fontFamily:'IBM Plex Mono,monospace',letterSpacing:'0.04em'}}>
                   + Add Item
@@ -4857,7 +4859,7 @@ function WatchlistPage({ watchlists, setWatchlists, activeWLId, setActiveWLId, o
               )}
               {cat.items.length===0 && (
                 <div className="mono" style={{padding:'14px 20px',fontSize:10,color:'var(--text3)',fontStyle:'italic',
-                  background:dragOverCat===cat.id?'rgba(0,229,160,0.04)':'transparent',
+                  background:dragOverCat===cat.id?'rgba(58,154,181,0.04)':'transparent',
                   borderBottom:'1px solid var(--border)'}}>
                   Drop items here or click + Add
                 </div>
@@ -4924,7 +4926,7 @@ function WLRow({ item, catId, fundamentals, loadingFund, getHealthScore, getEPSG
         padding:'10px 20px', borderBottom:'1px solid var(--border)', gap:8,
         cursor: catId ? 'grab' : 'pointer', transition:'background 0.1s, opacity 0.15s',
         opacity: isDragging ? 0.35 : 1,
-        background: isDropTarget ? 'rgba(0,229,160,0.06)' : flagCol ? flagCol.bg : 'transparent',
+        background: isDropTarget ? 'rgba(58,154,181,0.06)' : flagCol ? flagCol.bg : 'transparent',
         borderLeft: flagCol ? '3px solid '+flagCol.dot : '3px solid transparent' }}
       onMouseEnter={e=>{if(!isDragging)e.currentTarget.style.background=flagCol?flagCol.bg:'var(--surface2)';}}
       onMouseLeave={e=>{e.currentTarget.style.background=flagCol?flagCol.bg:'transparent';}}>
@@ -5052,8 +5054,8 @@ function calcEMA(data, period) {
 }
 
 const MA_DEFS = [
-  { key: 'sma20',  label: 'SMA 20',  color: '#f0b429', calc: d => calcSMA(d, 20)  },
-  { key: 'sma50',  label: 'SMA 50',  color: '#4d9fff', calc: d => calcSMA(d, 50)  },
+  { key: 'sma20',  label: 'SMA 20',  color: '#d4c06a', calc: d => calcSMA(d, 20)  },
+  { key: 'sma50',  label: 'SMA 50',  color: '#5ab8cc', calc: d => calcSMA(d, 50)  },
   { key: 'sma200', label: 'SMA 200', color: '#a78bfa', calc: d => calcSMA(d, 200) },
   { key: 'ema9',   label: 'EMA 9',   color: '#ff6b9d', calc: d => calcEMA(d, 9)   },
   { key: 'ema21',  label: 'EMA 21',  color: '#00d4ff', calc: d => calcEMA(d, 21)  },
@@ -5250,7 +5252,7 @@ function ChartsPage({ positions, watchlists, setWatchlists, activeWLId, setActiv
               const times = [p1.time, param.time].sort();
               const prices = [p1.price, price].sort((a, b) => a - b);
               [[prices[0], prices[1]], [prices[1], prices[0]]].forEach(([y1, y2]) => {
-                const s = chart.addLineSeries({ color: 'rgba(77,159,255,0.5)', lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+                const s = chart.addLineSeries({ color: 'rgba(42,117,141,0.5)', lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
                 s.setData([{ time: times[0], value: y1 }, { time: times[1], value: y1 }]);
                 drawingsRef.current.push(s);
               });
@@ -5346,7 +5348,7 @@ function ChartsPage({ positions, watchlists, setWatchlists, activeWLId, setActiv
 
           {/* Current ticker badge */}
           {ticker && (
-            <div className="mono" style={{ fontSize: 14, fontWeight: 700, color: 'var(--green)', padding: '4px 10px', borderRadius: 6, background: 'var(--green-dim)', border: '1px solid rgba(0,229,160,0.2)', letterSpacing: '0.04em' }}>
+            <div className="mono" style={{ fontSize: 14, fontWeight: 700, color: 'var(--green)', padding: '4px 10px', borderRadius: 6, background: 'var(--green-dim)', border: '1px solid rgba(58,154,181,0.2)', letterSpacing: '0.04em' }}>
               {ticker}
             </div>
           )}
@@ -5357,8 +5359,8 @@ function ChartsPage({ positions, watchlists, setWatchlists, activeWLId, setActiv
           {[['area', '▲ Area'], ['line', '― Line'], ['candle', '┤ Candle']].map(([m, lbl]) => (
             <button key={m} onClick={() => setMode(m)} className="mono"
               style={{ fontSize: 10, padding: '4px 10px', borderRadius: 5, cursor: 'pointer', border: '1px solid', letterSpacing: '0.05em', transition: 'all 0.15s',
-                borderColor: mode === m ? 'rgba(77,159,255,0.4)' : 'var(--border)',
-                background: mode === m ? 'rgba(77,159,255,0.1)' : 'transparent',
+                borderColor: mode === m ? 'rgba(42,117,141,0.4)' : 'var(--border)',
+                background: mode === m ? 'rgba(42,117,141,0.1)' : 'transparent',
                 color: mode === m ? 'var(--blue)' : 'var(--text3)' }}>
               {lbl}
             </button>
@@ -5386,8 +5388,8 @@ function ChartsPage({ positions, watchlists, setWatchlists, activeWLId, setActiv
             {DRAW_TOOLS.map(dt => (
               <button key={dt.key} onClick={() => setDrawTool(dt.key === drawTool ? 'none' : dt.key)} title={dt.label} className="mono"
                 style={{ fontSize: 12, width: 28, height: 28, borderRadius: 5, cursor: 'pointer', border: '1px solid', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.15s',
-                  borderColor: drawTool === dt.key ? 'rgba(240,180,41,0.5)' : 'var(--border)',
-                  background: drawTool === dt.key ? 'rgba(240,180,41,0.12)' : 'transparent',
+                  borderColor: drawTool === dt.key ? 'rgba(184,160,76,0.5)' : 'var(--border)',
+                  background: drawTool === dt.key ? 'rgba(184,160,76,0.12)' : 'transparent',
                   color: drawTool === dt.key ? 'var(--gold)' : 'var(--text3)' }}>
                 {dt.icon}
               </button>
@@ -5405,8 +5407,8 @@ function ChartsPage({ positions, watchlists, setWatchlists, activeWLId, setActiv
             {RANGES.map(([lbl]) => (
               <button key={lbl} onClick={() => setRange(lbl)} className="mono"
                 style={{ fontSize: 9, padding: '3px 7px', borderRadius: 4, cursor: 'pointer', border: '1px solid', letterSpacing: '0.06em', transition: 'all 0.15s',
-                  borderColor: range === lbl ? 'rgba(0,229,160,0.4)' : 'var(--border)',
-                  background: range === lbl ? 'rgba(0,229,160,0.1)' : 'transparent',
+                  borderColor: range === lbl ? 'rgba(58,154,181,0.4)' : 'var(--border)',
+                  background: range === lbl ? 'rgba(58,154,181,0.1)' : 'transparent',
                   color: range === lbl ? 'var(--green)' : 'var(--text3)', fontWeight: range === lbl ? 700 : 400 }}>
                 {lbl}
               </button>
@@ -5416,7 +5418,7 @@ function ChartsPage({ positions, watchlists, setWatchlists, activeWLId, setActiv
 
         {/* ── Draw mode hint ── */}
         {drawTool !== 'none' && (
-          <div className="mono" style={{ padding: '5px 14px', fontSize: 10, color: 'var(--gold)', background: 'rgba(240,180,41,0.06)', borderBottom: '1px solid rgba(240,180,41,0.15)', flexShrink: 0 }}>
+          <div className="mono" style={{ padding: '5px 14px', fontSize: 10, color: 'var(--gold)', background: 'rgba(184,160,76,0.06)', borderBottom: '1px solid rgba(184,160,76,0.15)', flexShrink: 0 }}>
             {drawTool === 'hline' ? '⊕ Click on chart to place a horizontal line' :
               drawTool === 'trendline' ? (drawStateRef.current?.active ? '⊕ Click second point to complete trend line' : '⊕ Click first point of trend line') :
               drawTool === 'rect' ? (drawStateRef.current?.active ? '⊕ Click second corner to complete rectangle' : '⊕ Click first corner of rectangle') : ''}
@@ -5461,7 +5463,7 @@ function ChartsPage({ positions, watchlists, setWatchlists, activeWLId, setActiv
               {watchlists.map(wl => (
                 <button key={wl.id} onClick={() => setActiveWL(wl.id)} className="mono"
                   style={{ fontSize: 10, padding: '4px 9px', borderRadius: 4, cursor: 'pointer', border: '1px solid', letterSpacing: '0.04em', transition: 'all 0.15s',
-                    borderColor: activeWL === wl.id ? 'rgba(0,229,160,0.35)' : 'var(--border)',
+                    borderColor: activeWL === wl.id ? 'rgba(58,154,181,0.35)' : 'var(--border)',
                     background: activeWL === wl.id ? 'var(--green-dim)' : 'transparent',
                     color: activeWL === wl.id ? 'var(--green)' : 'var(--text3)' }}>
                   {wl.name}
@@ -5497,7 +5499,7 @@ function ChartsPage({ positions, watchlists, setWatchlists, activeWLId, setActiv
               className="mono"
               style={{ fontSize: 9, padding: '2px 7px', borderRadius: 3, border: '1px solid', cursor: 'pointer',
                 background: wlSort !== 'default' ? 'var(--green-dim)' : 'transparent',
-                borderColor: wlSort !== 'default' ? 'rgba(0,229,160,0.35)' : 'var(--border)',
+                borderColor: wlSort !== 'default' ? 'rgba(58,154,181,0.35)' : 'var(--border)',
                 color: wlSort !== 'default' ? 'var(--green)' : 'var(--text3)', letterSpacing: '0.04em' }}>
               {wlSort === 'change_desc' ? '↓ Change%' : wlSort === 'change_asc' ? '↑ Change%' : '⇅ Sort'}
             </button>
@@ -5653,7 +5655,7 @@ function ChartsPage({ positions, watchlists, setWatchlists, activeWLId, setActiv
 }
 
 // ── CompareView — 3c Stock Comparison ─────────────────────────────────────────
-const COMPARE_COLORS = ['#00e5a0','#4d9fff','#f0b429','#a78bfa'];
+const COMPARE_COLORS = ['#4aaec0','#5ab8cc','#d4c06a','#a78bfa'];
 
 function CompareBar({ label, stocks, valueKey, format='pct', good, bad, invert=false }) {
   const vals = stocks.map(s => s?.data?.[valueKey] ?? null);
@@ -5681,9 +5683,9 @@ function CompareBar({ label, stocks, valueKey, format='pct', good, bad, invert=f
     if (good != null && bad != null) {
       const good_ = invert ? v <= good : v >= good;
       const bad_  = invert ? v >= bad  : v <= bad;
-      if (good_) return '#00e5a0';
-      if (bad_)  return '#ff4d6d';
-      return '#f0b429';
+      if (good_) return '#4aaec0';
+      if (bad_)  return '#e06060';
+      return '#d4c06a';
     }
     return COMPARE_COLORS[i];
   };
@@ -5704,8 +5706,8 @@ function CompareBar({ label, stocks, valueKey, format='pct', good, bad, invert=f
               <div style={{
                 position:'absolute', top:0, bottom:0, left:0,
                 width: pct+'%',
-                background: neg ? '#ff4d6d44' : barColor(v, i)+'55',
-                borderRight: `2px solid ${neg ? '#ff4d6d' : barColor(v, i)}`,
+                background: neg ? '#e0606044' : barColor(v, i)+'55',
+                borderRight: `2px solid ${neg ? '#e06060' : barColor(v, i)}`,
                 borderRadius:3,
                 transition:'width 0.6s ease',
               }}/>
@@ -5968,9 +5970,9 @@ function CompareView() {
             if (v == null) return 'var(--text3)';
             const isGood = invert ? v <= good : v >= good;
             const isBad  = invert ? v >= bad  : v <= bad;
-            if (isGood) return '#00e5a0';
-            if (isBad)  return '#ff4d6d';
-            return '#f0b429';
+            if (isGood) return '#4aaec0';
+            if (isBad)  return '#e06060';
+            return '#d4c06a';
           };
           const colorX = (v, good, bad) => colorPct(v, good, bad, true);
 
@@ -6376,7 +6378,7 @@ function EtfOverview({ pos }) {
         <div className="card" style={{padding:'18px 20px'}}>
           <div className="mono" style={{fontSize:10,letterSpacing:'0.12em',color:'var(--text2)',marginBottom:14}}>TOP 5 COUNTRIES</div>
           {etf.countries?.length > 0 ? etf.countries.map((c, i) => (
-            <WeightBar key={i} name={c.name} weight={c.weight} maxWeight={maxCountry} color='#4d9fff'/>
+            <WeightBar key={i} name={c.name} weight={c.weight} maxWeight={maxCountry} color='#5ab8cc'/>
           )) : <div style={{fontSize:11,color:'var(--text3)',textAlign:'center',padding:'20px 0'}}>No country data</div>}
         </div>
 
@@ -6579,8 +6581,8 @@ function StockDetail({ pos, onBack, transactions, onTransfer }) {
   const prev = yrs[yrs.length - 2] || {};
 
   // ── Scorecard ──
-  const SCORE_COLOR = { green:'#00e5a0', gold:'#f0b429', red:'#ff4d6d', gray:'#3d4f5e' };
-  const SCORE_BG    = { green:'rgba(0,229,160,0.08)', gold:'rgba(240,180,41,0.08)', red:'rgba(255,77,109,0.08)', gray:'rgba(61,79,94,0.08)' };
+  const SCORE_COLOR = { green:'#4aaec0', gold:'#d4c06a', red:'#e06060', gray:'#3d5060' };
+  const SCORE_BG    = { green:'rgba(58,154,181,0.08)', gold:'rgba(184,160,76,0.08)', red:'rgba(224,96,96,0.08)', gray:'rgba(61,79,94,0.08)' };
   const SCORE_LABEL = { green:'STRONG', gold:'OK', red:'WEAK', gray:'N/A' };
 
   // ── Sector-adjusted thresholds (Damodaran NYU Stern sector averages) ──────
@@ -6651,7 +6653,7 @@ function StockDetail({ pos, onBack, transactions, onTransfer }) {
     return avg >= 1.5 ? 'green' : avg >= 0.8 ? 'gold' : 'red';
   })();
   const pegColor = pegRatio == null ? 'var(--text2)'
-    : pegRatio <= 1 ? '#00e5a0' : pegRatio <= 2 ? '#f0b429' : '#ff4d6d';
+    : pegRatio <= 1 ? '#4aaec0' : pegRatio <= 2 ? '#d4c06a' : '#e06060';
 
   // ── Economic Moat (proxy scoring — no AI yet) ─────────────────────────────
   // Based on Buffett/Morningstar framework: wide moat = durable competitive advantage
@@ -6771,7 +6773,7 @@ function StockDetail({ pos, onBack, transactions, onTransfer }) {
 
   // ── Mini bar chart ──
   // Uses baseline from min value so small changes are visible between adjacent bars
-  function BarChart({ data: bdata, getVal, color='#00e5a0', fmtFn=fmtB, labelKey }) {
+  function BarChart({ data: bdata, getVal, color='#4aaec0', fmtFn=fmtB, labelKey }) {
     const vals = bdata.map(getVal).filter(v=>v!=null);
     const getXLabel = yr => labelKey ? labelKey(yr) : (yr.year?.slice(-2) ?? '');
     if (!vals.length) return <div style={{height:90,display:'flex',alignItems:'center',justifyContent:'center'}}><span style={{fontSize:9,color:'var(--text3)'}}>—</span></div>;
@@ -6880,7 +6882,7 @@ function StockDetail({ pos, onBack, transactions, onTransfer }) {
         ).map(([id,label])=>(
           <button key={id} className="btn" onClick={()=>setTab(id)}
             style={{fontSize:11,padding:'5px 14px',
-              ...(tab===id?{background:'var(--green-dim)',color:'var(--green)',borderColor:'rgba(0,229,160,0.3)'}:{})}}>
+              ...(tab===id?{background:'var(--green-dim)',color:'var(--green)',borderColor:'rgba(58,154,181,0.3)'}:{})}}>
             {label}
           </button>
         ))}
@@ -6917,7 +6919,7 @@ function StockDetail({ pos, onBack, transactions, onTransfer }) {
             if (!priceTrendDown || !fundStrong) return null;
             return (
               <div className="card" style={{padding:'14px 18px',marginBottom:12,
-                borderColor:'rgba(0,229,160,0.3)',background:'rgba(0,229,160,0.06)',
+                borderColor:'rgba(58,154,181,0.3)',background:'rgba(58,154,181,0.06)',
                 display:'flex',alignItems:'center',gap:12}}>
                 <span style={{fontSize:22}}>🎯</span>
                 <div>
@@ -7106,12 +7108,12 @@ function StockDetail({ pos, onBack, transactions, onTransfer }) {
             </div>
             <div style={{display:'grid',gridTemplateColumns:'1fr',gap:12,marginBottom:12}}>
               {[
-                {label:'REVENUE',         getVal:y=>y.revenue,        color:'#4d9fff'},
-                {label:'GROSS PROFIT',    getVal:y=>y.grossProfit,    color:'#00e5a0'},
+                {label:'REVENUE',         getVal:y=>y.revenue,        color:'#5ab8cc'},
+                {label:'GROSS PROFIT',    getVal:y=>y.grossProfit,    color:'#4aaec0'},
                 {label:'OPERATING INCOME',getVal:y=>y.operatingIncome,color:'#a78bfa'},
-                {label:'NET INCOME',      getVal:y=>y.netIncome,      color:'#00e5a0'},
-                {label:'EPS',             getVal:y=>y.eps,            color:'#f0b429', fmtFn:v=>v==null?'—':v.toFixed(2)},
-                {label:'EBITDA',          getVal:y=>y.ebitda,         color:'#4d9fff'},
+                {label:'NET INCOME',      getVal:y=>y.netIncome,      color:'#4aaec0'},
+                {label:'EPS',             getVal:y=>y.eps,            color:'#d4c06a', fmtFn:v=>v==null?'—':v.toFixed(2)},
+                {label:'EBITDA',          getVal:y=>y.ebitda,         color:'#5ab8cc'},
               ].map(({label,getVal,color,fmtFn})=>(
                 <div key={label} className="card" style={{padding:14}}>
                   <div className="mono" style={{fontSize:9,color:'var(--text3)',letterSpacing:'0.1em',marginBottom:10}}>{label}</div>
@@ -7121,10 +7123,10 @@ function StockDetail({ pos, onBack, transactions, onTransfer }) {
             </div>
             <div style={{display:'grid',gridTemplateColumns:'1fr',gap:12,marginBottom:12}}>
               {[
-                {label:'OPERATING CASH FLOW', getVal:y=>y.operatingCF,  color:'#4d9fff'},
-                {label:'FREE CASH FLOW',      getVal:y=>y.freeCashFlow, color:'#f0b429'},
-                {label:'CAPEX',               getVal:y=>y.capex,        color:'#ff4d6d'},
-                ...(finPeriod==='annual' ? [{label:'TOTAL DEBT', getVal:y=>y.totalDebt, color:'#ff4d6d'}] : []),
+                {label:'OPERATING CASH FLOW', getVal:y=>y.operatingCF,  color:'#5ab8cc'},
+                {label:'FREE CASH FLOW',      getVal:y=>y.freeCashFlow, color:'#d4c06a'},
+                {label:'CAPEX',               getVal:y=>y.capex,        color:'#e06060'},
+                ...(finPeriod==='annual' ? [{label:'TOTAL DEBT', getVal:y=>y.totalDebt, color:'#e06060'}] : []),
               ].map(({label,getVal,color})=>(
                 <div key={label} className="card" style={{padding:14}}>
                   <div className="mono" style={{fontSize:9,color:'var(--text3)',letterSpacing:'0.1em',marginBottom:10}}>{label}</div>
@@ -7137,9 +7139,9 @@ function StockDetail({ pos, onBack, transactions, onTransfer }) {
               <div className="mono" style={{fontSize:9,color:'var(--text3)',letterSpacing:'0.1em',marginBottom:12}}>MARGIN TRENDS</div>
               <div style={{display:'grid',gridTemplateColumns:'1fr',gap:12}}>
                 {[
-                  {label:'GROSS MARGIN',    getVal:y=>y.grossMargin,    color:'#4d9fff'},
+                  {label:'GROSS MARGIN',    getVal:y=>y.grossMargin,    color:'#5ab8cc'},
                   {label:'OPERATING MARGIN',getVal:y=>y.operatingMargin,color:'#a78bfa'},
-                  {label:'NET MARGIN',      getVal:y=>y.netMargin,      color:'#00e5a0'},
+                  {label:'NET MARGIN',      getVal:y=>y.netMargin,      color:'#4aaec0'},
                 ].map(({label,getVal,color})=>(
                   <div key={label}>
                     <div className="mono" style={{fontSize:8,color:'var(--text3)',letterSpacing:'0.1em',marginBottom:8}}>{label}</div>
@@ -7193,8 +7195,8 @@ function StockDetail({ pos, onBack, transactions, onTransfer }) {
             <div className="mono" style={{fontSize:9,color:'var(--text3)',letterSpacing:'0.1em',marginBottom:14}}>BALANCE SHEET TREND</div>
             <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
               {[
-                {label:'TOTAL ASSETS', getVal:y=>y.totalAssets, color:'#4d9fff'},
-                {label:'EQUITY',       getVal:y=>y.equity,      color:'#00e5a0'},
+                {label:'TOTAL ASSETS', getVal:y=>y.totalAssets, color:'#5ab8cc'},
+                {label:'EQUITY',       getVal:y=>y.equity,      color:'#4aaec0'},
               ].map(({label,getVal,color})=>(
                 <div key={label}>
                   <div className="mono" style={{fontSize:8,color:'var(--text3)',letterSpacing:'0.1em',marginBottom:8}}>{label}</div>
@@ -7283,10 +7285,10 @@ function StockDetail({ pos, onBack, transactions, onTransfer }) {
                   const pnlUp = pnl >= 0;
 
                   // Badge config per type
-                  const badge = isBuy      ? { label: 'BUY',         bg: 'rgba(0,229,160,0.12)',  color: 'var(--green)' }
-                              : isSell     ? { label: 'SELL',        bg: 'rgba(255,77,109,0.12)', color: 'var(--red)'   }
-                              : isTransOut ? { label: 'TRANSFER OUT',bg: 'rgba(255,180,50,0.12)', color: '#ffb432'      }
-                              : isTransIn  ? { label: 'TRANSFER IN', bg: 'rgba(77,159,255,0.12)', color: 'var(--blue)'  }
+                  const badge = isBuy      ? { label: 'BUY',         bg: 'rgba(58,154,181,0.12)',  color: 'var(--green)' }
+                              : isSell     ? { label: 'SELL',        bg: 'rgba(224,96,96,0.12)', color: 'var(--red)'   }
+                              : isTransOut ? { label: 'TRANSFER OUT',bg: 'rgba(255,180,50,0.12)', color: '#d4c06a'      }
+                              : isTransIn  ? { label: 'TRANSFER IN', bg: 'rgba(42,117,141,0.12)', color: 'var(--blue)'  }
                               :              { label: tx.type?.toUpperCase() || '—', bg: 'rgba(120,120,120,0.12)', color: 'var(--text3)' };
 
                   return (
@@ -7369,13 +7371,13 @@ function PortfolioOutlook({ positions }) {
   const fmt = v => v >= 1e6 ? '€'+(v/1e6).toFixed(2)+'M' : '€'+(v/1000).toFixed(1)+'k';
   const fmtPct2 = v => (v>=0?'+':'')+v.toFixed(0)+'%';
   const scenarios = [
-    { label:'BEAR', icon:'🐻', color:'#ff4d6d', bg:'rgba(255,77,109,0.07)', border:'rgba(255,77,109,0.2)',
+    { label:'BEAR', icon:'🐻', color:'#e06060', bg:'rgba(224,96,96,0.07)', border:'rgba(224,96,96,0.2)',
       desc:'Recession / rate shock / sector rotation',
       yr1: totalVal*0.70, yr5: totalVal*Math.pow(0.93,5), yr10: totalVal*Math.pow(0.95,10) },
-    { label:'BASE', icon:'⚖️', color:'var(--gold)', bg:'rgba(240,180,41,0.07)', border:'rgba(240,180,41,0.2)',
+    { label:'BASE', icon:'⚖️', color:'var(--gold)', bg:'rgba(184,160,76,0.07)', border:'rgba(184,160,76,0.2)',
       desc:'Moderate growth, historical avg returns',
       yr1: totalVal*1.08, yr5: totalVal*Math.pow(1.08,5), yr10: totalVal*Math.pow(1.08,10) },
-    { label:'BULL', icon:'🐂', color:'var(--green)', bg:'rgba(0,229,160,0.07)', border:'rgba(0,229,160,0.2)',
+    { label:'BULL', icon:'🐂', color:'var(--green)', bg:'rgba(58,154,181,0.07)', border:'rgba(58,154,181,0.2)',
       desc:'Strong growth, AI & tech cycle tailwind',
       yr1: totalVal*1.20, yr5: totalVal*Math.pow(1.15,5), yr10: totalVal*Math.pow(1.15,10) },
   ];
@@ -7433,7 +7435,7 @@ function CostBasisCell({ pos }) {
 function GroupAllocBadge({ groupVal, positions }) {
   const totalPortVal = positions.reduce((s,p)=>s+p.qty*(p.currentPrice||0),0);
   const alloc = totalPortVal > 0 ? (groupVal/totalPortVal*100) : 0;
-  return <span className="mono" style={{fontSize:9,color:'var(--green)',marginLeft:6,background:'rgba(0,229,160,0.1)',padding:'1px 6px',borderRadius:3}}>{alloc.toFixed(1)}%</span>;
+  return <span className="mono" style={{fontSize:9,color:'var(--green)',marginLeft:6,background:'rgba(58,154,181,0.1)',padding:'1px 6px',borderRadius:3}}>{alloc.toFixed(1)}%</span>;
 }
 
 function PortfolioPage({ positions, transactions, wallets, onOpenStock, priceLoading, chartData, investedChartData, chartLoading, chartError, chartProgress, activeBM, setActiveBM, range, setRange, BENCHMARKS, perfStats, setManualResolvePos, theme, tc }) {
@@ -7568,9 +7570,9 @@ function PortfolioPage({ positions, transactions, wallets, onOpenStock, priceLoa
   }) : sorted;
 
   // ── Pie chart data builders ──
-  const PIE_PALETTE   = ['#00e5a0','#4d9fff','#f0b429','#a78bfa','#ff6b9d','#00d4ff','#ff4d6d','#7cfc00','#ff8c00','#9370db','#20b2aa','#dc143c'];
-  const ASSET_COLORS  = { stock:'#00e5a0', etf:'#4d9fff', crypto:'#f0b429', derivative:'#ff4d6d' };
-  const REGION_COLORS = { 'North America':'#4d9fff','Europe':'#00e5a0','Global':'#f0b429','Mixed':'#a78bfa','Asia':'#ff6b9d' };
+  const PIE_PALETTE   = ['#4aaec0','#5ab8cc','#d4c06a','#a78bfa','#ff6b9d','#00d4ff','#e06060','#7cfc00','#ff8c00','#9370db','#20b2aa','#dc143c'];
+  const ASSET_COLORS  = { stock:'#4aaec0', etf:'#5ab8cc', crypto:'#d4c06a', derivative:'#e06060' };
+  const REGION_COLORS = { 'North America':'#5ab8cc','Europe':'#4aaec0','Global':'#d4c06a','Mixed':'#a78bfa','Asia':'#ff6b9d' };
 
   const makePie = (groupFn, colorMap) => {
     const groups = {};
@@ -7592,7 +7594,7 @@ function PortfolioPage({ positions, transactions, wallets, onOpenStock, priceLoa
   const sectorPie    = makePie(getSector, {});
   const regionPie    = makePie(getRegion, REGION_COLORS);
   const allocPie     = makePie(p => p.symbol || p.name, {});
-  const currencyPie  = makePie(getCurrency, {'USD':'#4d9fff','EUR':'#00e5a0','GBP':'#a78bfa','JPY':'#f0b429','USD/Crypto':'#ff9f43','HKD':'#ff6b9d'});
+  const currencyPie  = makePie(getCurrency, {'USD':'#5ab8cc','EUR':'#4aaec0','GBP':'#a78bfa','JPY':'#d4c06a','USD/Crypto':'#ff9f43','HKD':'#ff6b9d'});
 
 
   const cagrPie = (() => {
@@ -7606,7 +7608,7 @@ function PortfolioPage({ positions, transactions, wallets, onOpenStock, priceLoa
       else                  groups.low    += val;
     });
     const total = Object.values(groups).reduce((a,b)=>a+b,0) || 1;
-    const cols = {high:'#00e5a0',medium:'#f0b429',low:'#ff4d6d','n/a':'#3d4f5e'};
+    const cols = {high:'#4aaec0',medium:'#d4c06a',low:'#e06060','n/a':'#3d5060'};
     return Object.entries(groups).filter(([,v])=>v>0).map(([name,val])=>({
       name, value: Math.round(val/total*1000)/10, rawVal: val, color: cols[name]
     }));
@@ -7623,7 +7625,7 @@ function PortfolioPage({ positions, transactions, wallets, onOpenStock, priceLoa
       else                 groups.medium += val;
     });
     const total = Object.values(groups).reduce((a,b)=>a+b,0) || 1;
-    const cols = {high:'#ff4d6d',medium:'#f0b429',low:'#00e5a0','n/a':'#3d4f5e'};
+    const cols = {high:'#e06060',medium:'#d4c06a',low:'#4aaec0','n/a':'#3d5060'};
     return Object.entries(groups).filter(([,v])=>v>0).map(([name,val])=>({
       name, value: Math.round(val/total*1000)/10, rawVal: val, color: cols[name]
     }));
@@ -7746,7 +7748,7 @@ function PortfolioPage({ positions, transactions, wallets, onOpenStock, priceLoa
                   style={{fontSize:9,padding:'2px 8px',
                     borderColor:range===r?'var(--green)':'var(--border)',
                     color:range===r?'var(--green)':'var(--text3)',
-                    background:range===r?'rgba(0,229,160,0.08)':'transparent'}}>
+                    background:range===r?'rgba(58,154,181,0.08)':'transparent'}}>
                   {r}
                 </button>
               ))}
@@ -7786,7 +7788,7 @@ function PortfolioPage({ positions, transactions, wallets, onOpenStock, priceLoa
           <button key={id} onClick={()=>{setTab(id);setDrillFilter(null);}} className="mono"
             style={{padding:'7px 16px',borderRadius:6,cursor:'pointer',fontSize:11,letterSpacing:'0.06em',
               border:'1px solid',transition:'all 0.15s',
-              borderColor: tab===id?'rgba(0,229,160,0.35)':'var(--border)',
+              borderColor: tab===id?'rgba(58,154,181,0.35)':'var(--border)',
               background:  tab===id?'var(--green-dim)':'transparent',
               color:       tab===id?'var(--green)':'var(--text2)'}}>
             {label}
@@ -8113,7 +8115,7 @@ function PortfolioPage({ positions, transactions, wallets, onOpenStock, priceLoa
               <button key={v.id} onClick={()=>{setAnalysisView(v.id);setDrillFilter(null);}} className="mono"
                 style={{padding:'6px 14px',borderRadius:6,cursor:'pointer',fontSize:10,letterSpacing:'0.06em',
                   border:'1px solid',transition:'all 0.15s',
-                  borderColor:analysisView===v.id?'rgba(0,229,160,0.35)':'var(--border)',
+                  borderColor:analysisView===v.id?'rgba(58,154,181,0.35)':'var(--border)',
                   background:analysisView===v.id?'var(--green-dim)':'transparent',
                   color:analysisView===v.id?'var(--green)':'var(--text2)'}}>
                 {v.label}
@@ -8180,10 +8182,10 @@ function PortfolioPage({ positions, transactions, wallets, onOpenStock, priceLoa
                         style={{display:'flex',alignItems:'center',gap:8,padding:'5px 8px',borderRadius:6,
                           cursor: pv.id==='alloc'?'default':'pointer', transition:'background 0.1s',
                           background: drillFilter?.value===d.name ? 'var(--green-dim)' : 'transparent',
-                          border: '1px solid', borderColor: drillFilter?.value===d.name ? 'rgba(0,229,160,0.25)' : 'transparent'}}
+                          border: '1px solid', borderColor: drillFilter?.value===d.name ? 'rgba(58,154,181,0.25)' : 'transparent'}}
                         onMouseEnter={e=>{if(pv.id!=='alloc')e.currentTarget.style.background='var(--surface2)';}}
                         onMouseLeave={e=>{e.currentTarget.style.background=drillFilter?.value===d.name?'var(--green-dim)':'transparent';
-                          e.currentTarget.style.borderColor=drillFilter?.value===d.name?'rgba(0,229,160,0.25)':'transparent';}}>
+                          e.currentTarget.style.borderColor=drillFilter?.value===d.name?'rgba(58,154,181,0.25)':'transparent';}}>
                         <div style={{width:10,height:10,borderRadius:3,background:d.color,flexShrink:0}}/>
                         <span className="mono" style={{fontSize:11,color:'var(--text2)',flex:1,
                           overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{d.name}</span>
@@ -8403,7 +8405,7 @@ export function AuthGate({ children }) {
     return (
       <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',
         background:'#0a0f14',fontFamily:"'IBM Plex Mono',monospace"}}>
-        <span style={{color:'#3d4f5e',fontSize:12,letterSpacing:'0.1em'}}>LOADING…</span>
+        <span style={{color:'#3d5060',fontSize:12,letterSpacing:'0.1em'}}>LOADING…</span>
       </div>
     );
   }
@@ -8438,7 +8440,7 @@ export function AuthGate({ children }) {
       background:'var(--bg)',fontFamily:"'IBM Plex Mono',monospace"}}>
       <div style={{width:380,background:'var(--surface)',border:'1px solid var(--border)',borderRadius:12,padding:32}}>
         <div style={{textAlign:'center',marginBottom:24}}>
-          <div style={{fontFamily:"'DM Serif Display',serif",fontSize:22,color:'var(--text)',marginBottom:6}}>foliologic</div>
+          <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:22,color:'var(--text)',marginBottom:6}}>foliologic</div>
           <div style={{fontSize:11,color:'var(--text3)',letterSpacing:'0.08em'}}>ENTER PASSWORD TO UNLOCK</div>
         </div>
         {msg && <div style={{padding:'8px 12px',borderRadius:6,marginBottom:16,fontSize:12,
@@ -8457,7 +8459,7 @@ export function AuthGate({ children }) {
         </form>
         <div style={{textAlign:'center',marginTop:16}}>
           <button onClick={async()=>{await supabase.auth.signOut();setPw('');setMsg(null);}}
-            style={{background:'none',border:'none',color:'#3d4f5e',fontSize:11,cursor:'pointer'}}>
+            style={{background:'none',border:'none',color:'#3d5060',fontSize:11,cursor:'pointer'}}>
             Sign out instead
           </button>
         </div>
@@ -8543,17 +8545,17 @@ export function AuthGate({ children }) {
       background:'#0a0f14',fontFamily:"'IBM Plex Mono',monospace",padding:24}}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@1&family=IBM+Plex+Mono:wght@300;400;500;600&display=swap');
-        .auth-inp:focus { border-color:#00e5a0 !important; }
+        .auth-inp:focus { border-color:#4aaec0 !important; }
         .auth-btn { transition:opacity 0.15s,transform 0.1s; }
         .auth-btn:hover:not(:disabled) { opacity:0.88; transform:translateY(-1px); }
-        .auth-link { color:#00e5a0; cursor:pointer; background:none; border:none; font:inherit; padding:0; }
+        .auth-link { color:#4aaec0; cursor:pointer; background:none; border:none; font:inherit; padding:0; }
         .auth-link:hover { text-decoration:underline; }
       `}</style>
       <div style={{width:'100%',maxWidth:400}}>
         <div style={{textAlign:'center',marginBottom:36}}>
-          <div style={{fontFamily:"'DM Serif Display',serif",fontStyle:'italic',
+          <div style={{fontFamily:"'Cormorant Garamond',serif",fontStyle:'italic',
             fontSize:32,color:'#e8f0f7',letterSpacing:'-0.02em',marginBottom:4}}>foliologic</div>
-          <div style={{fontSize:9,color:'#3d4f5e',letterSpacing:'0.18em'}}>EU INVESTOR PLATFORM</div>
+          <div style={{fontSize:9,color:'#3d5060',letterSpacing:'0.18em'}}>EU INVESTOR PLATFORM</div>
         </div>
         <div style={{background:'#0d1821',border:'1px solid #1e2d3d',borderRadius:12,padding:32}}>
           <div style={{fontSize:11,color:'#7a9ab5',letterSpacing:'0.1em',marginBottom:24}}>
@@ -8574,21 +8576,21 @@ export function AuthGate({ children }) {
                 value={invite} onChange={e=>setInvite(e.target.value)} required/>
             )}
             {mode==='signup' && (
-              <div style={{fontSize:9,color:'#3d4f5e',lineHeight:1.7,padding:'8px 0'}}>
+              <div style={{fontSize:9,color:'#3d5060',lineHeight:1.7,padding:'8px 0'}}>
                 🔐 Your portfolio will be <strong style={{color:'#7a9ab5'}}>end-to-end encrypted</strong> using your password.
                 If you forget it, your data cannot be recovered.
               </div>
             )}
             {msg && (
               <div style={{fontSize:11,padding:'10px 12px',borderRadius:6,
-                background:msg.type==='error'?'rgba(255,77,109,0.12)':'rgba(0,229,160,0.1)',
-                color:msg.type==='error'?'#ff4d6d':'#00e5a0',
-                border:`1px solid ${msg.type==='error'?'rgba(255,77,109,0.3)':'rgba(0,229,160,0.2)'}`}}>
+                background:msg.type==='error'?'rgba(224,96,96,0.12)':'rgba(58,154,181,0.1)',
+                color:msg.type==='error'?'#e06060':'#4aaec0',
+                border:`1px solid ${msg.type==='error'?'rgba(224,96,96,0.3)':'rgba(58,154,181,0.2)'}`}}>
                 {msg.text}
               </div>
             )}
             <button type="submit" disabled={loading} className="auth-btn"
-              style={{padding:'12px',background:'#00e5a0',color:'#0a0f14',border:'none',
+              style={{padding:'12px',background:'#4aaec0',color:'#0a0f14',border:'none',
                 borderRadius:6,fontSize:12,fontWeight:600,fontFamily:'inherit',
                 letterSpacing:'0.08em',cursor:loading?'not-allowed':'pointer',opacity:loading?0.6:1}}>
               {loading?'…':mode==='login'?'SIGN IN':mode==='signup'?'CREATE ACCOUNT':'SEND RESET LINK'}
@@ -8597,11 +8599,11 @@ export function AuthGate({ children }) {
           <div style={{marginTop:20,display:'flex',flexDirection:'column',gap:8,alignItems:'center'}}>
             {mode==='login' && (<>
               <button className="auth-link" style={{fontSize:10}} onClick={()=>{setMode('forgot');setMsg(null);}}>Forgot password?</button>
-              <div style={{fontSize:10,color:'#3d4f5e'}}>No account?{' '}
+              <div style={{fontSize:10,color:'#3d5060'}}>No account?{' '}
                 <button className="auth-link" onClick={()=>{setMode('signup');setMsg(null);}}>Request access</button>
               </div>
             </>)}
-            {mode==='signup' && <div style={{fontSize:10,color:'#3d4f5e'}}>Already have an account?{' '}
+            {mode==='signup' && <div style={{fontSize:10,color:'#3d5060'}}>Already have an account?{' '}
               <button className="auth-link" onClick={()=>{setMode('login');setMsg(null);}}>Sign in</button></div>}
             {mode==='forgot' && <button className="auth-link" style={{fontSize:10}}
               onClick={()=>{setMode('login');setMsg(null);}}>← Back to sign in</button>}
@@ -8619,18 +8621,18 @@ export function AuthGate({ children }) {
 // Theme color palettes — used in JS where CSS variables can't be accessed directly (charts, canvas etc.)
 const THEME_COLORS = {
   light: {
-    bg: '#ffffff', surface: '#f5f7fa', surface2: '#edf0f5',
-    border: '#e2e8f0', border2: '#cbd5e1',
-    text: '#1a202c', text2: '#718096', text3: '#a0aec0',
-    green: '#16a34a', red: '#dc2626', gold: '#d97706', blue: '#2563eb', violet: '#7c3aed',
-    gridLine: '#e2e8f0', shadow: 'rgba(0,0,0,0.12)',
+    bg: '#ffffff', surface: '#f7f4ee', surface2: '#f0ebe1',
+    border: '#d4cbb5', border2: '#c4b9a0',
+    text: '#1A314E', text2: '#5e7082', text3: '#94a3b4',
+    green: '#2d8a5e', red: '#c92a2a', gold: '#b8a04c', blue: '#2A758D', violet: '#7c5cbf',
+    gridLine: '#d4cbb5', shadow: 'rgba(0,0,0,0.12)',
   },
   dark: {
-    bg: '#080c10', surface: '#0d1117', surface2: '#131920',
-    border: '#1c2730', border2: '#243040',
-    text: '#e8edf2', text2: '#7a8a98', text3: '#3d4f5e',
-    green: '#00e5a0', red: '#ff4d6d', gold: '#f0b429', blue: '#4d9fff', violet: '#a78bfa',
-    gridLine: '#1c2730', shadow: 'rgba(0,0,0,0.6)',
+    bg: '#0f1a28', surface: '#162033', surface2: '#1a2d42',
+    border: '#243548', border2: '#2e4158',
+    text: '#e0ddd6', text2: '#7a8a98', text3: '#3d5060',
+    green: '#4aaec0', red: '#e06060', gold: '#d4c06a', blue: '#5ab8cc', violet: '#a78bfa',
+    gridLine: '#243548', shadow: 'rgba(0,0,0,0.6)',
   }
 };
 
@@ -8639,7 +8641,7 @@ export default function App() {
   const [transactions, setTransactions] = useState([]);
   const [wallets,      setWallets]      = useState([
     { id: 'bitvavo',      name: 'Bitvavo',       type: 'broker',      color: '#1a73e8' },
-    { id: 'smartbroker',  name: 'Smartbroker+',  type: 'broker',      color: '#00e5a0' },
+    { id: 'smartbroker',  name: 'Smartbroker+',  type: 'broker',      color: '#4aaec0' },
     { id: 'trade_rep',    name: 'Trade Republic', type: 'broker',     color: '#00b386' },
   ]);
   const [showColdWalletModal, setShowColdWalletModal] = useState(null); // { transfers: [{symbol,qty,name}] }
@@ -9533,7 +9535,7 @@ export default function App() {
   },[chartData,activeBM]);
 
   const allocData = useMemo(()=>vis.map((p,i)=>({name:p.symbol,value:+((p.qty*p.currentPrice/totalVal)*100).toFixed(2),color:ALLOC_COLORS[i%ALLOC_COLORS.length]})),[vis,totalVal]);
-  const byType    = useMemo(()=>["crypto","stock","etf"].map(t=>({name:t.toUpperCase(),value:+((vis.filter(p=>p.type===t).reduce((s,p)=>s+p.qty*p.currentPrice,0)/totalVal*100).toFixed(1)),color:t==="crypto"?"#f7931a":t==="stock"?"#00e5a0":"#627eea"})).filter(x=>x.value>0),[vis,totalVal]);
+  const byType    = useMemo(()=>["crypto","stock","etf"].map(t=>({name:t.toUpperCase(),value:+((vis.filter(p=>p.type===t).reduce((s,p)=>s+p.qty*p.currentPrice,0)/totalVal*100).toFixed(1)),color:t==="crypto"?"#f7931a":t==="stock"?"#4aaec0":"#627eea"})).filter(x=>x.value>0),[vis,totalVal]);
   const tableRows = useMemo(()=>{
     const rows = positions.filter(p=>(fBroker==="All"||p.broker===fBroker)&&(fType==="All"||p.type===fType));
     return [...rows].sort((a,b)=>{
@@ -9701,7 +9703,7 @@ export default function App() {
     <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',
       background:'var(--bg)',fontFamily:"'IBM Plex Mono',monospace",flexDirection:'column',gap:12}}>
       <style>{FONTS}{CSS}</style>
-      <div style={{fontFamily:"'DM Serif Display',serif",fontStyle:'italic',fontSize:28,color:'var(--text)'}}>foliologic</div>
+      <div style={{fontFamily:"'Cormorant Garamond',serif",fontStyle:'italic',fontSize:28,color:'var(--text)'}}>foliologic</div>
       <div style={{fontSize:9,color:'var(--text3)',letterSpacing:'0.15em'}}>LOADING YOUR PORTFOLIO…</div>
     </div>
   );
@@ -9735,7 +9737,7 @@ export default function App() {
                 </div>
               ))}
             </div>
-            <div style={{background:"var(--green-dim)",border:"1px solid rgba(0,229,160,0.2)",borderRadius:6,padding:"8px 10px"}}>
+            <div style={{background:"var(--green-dim)",border:"1px solid rgba(58,154,181,0.2)",borderRadius:6,padding:"8px 10px"}}>
               <div className="mono" style={{fontSize:9,color:"var(--green)",letterSpacing:"0.1em"}}>PRO PLAN</div>
               <div style={{fontSize:11,color:"var(--text2)",marginTop:2}}>All features unlocked</div>
             </div>
@@ -9744,11 +9746,11 @@ export default function App() {
           {supabase && (
             <button onClick={()=>supabase.auth.signOut()}
               style={{width:"100%",marginTop:8,padding:"7px 0",background:"none",
-                border:"1px solid #1e2d3d",borderRadius:6,color:"#3d4f5e",fontSize:10,
+                border:"1px solid #1e2d3d",borderRadius:6,color:"#3d5060",fontSize:10,
                 fontFamily:"'IBM Plex Mono',monospace",letterSpacing:"0.08em",cursor:"pointer",
                 transition:"color 0.15s,border-color 0.15s"}}
-              onMouseEnter={e=>{e.currentTarget.style.color="#ff4d6d";e.currentTarget.style.borderColor="#ff4d6d";}}
-              onMouseLeave={e=>{e.currentTarget.style.color="#3d4f5e";e.currentTarget.style.borderColor="#1e2d3d";}}
+              onMouseEnter={e=>{e.currentTarget.style.color="#e06060";e.currentTarget.style.borderColor="#e06060";}}
+              onMouseLeave={e=>{e.currentTarget.style.color="#3d5060";e.currentTarget.style.borderColor="#1e2d3d";}}
             >SIGN OUT</button>
           )}
         </div>
@@ -9893,7 +9895,7 @@ export default function App() {
                   <div style={{width:1,background:"var(--border)",margin:"0 2px"}}/>
                   {["1M","3M","6M","YTD","1Y","ALL"].map(r=>(
                     <button key={r} onClick={()=>setRange(r)} className="btn"
-                      style={{fontSize:10,padding:"3px 10px",borderColor:range===r?"var(--green)":"var(--border)",color:range===r?"var(--green)":"var(--text3)",background:range===r?"rgba(0,229,160,0.08)":"transparent"}}>
+                      style={{fontSize:10,padding:"3px 10px",borderColor:range===r?"var(--green)":"var(--border)",color:range===r?"var(--green)":"var(--text3)",background:range===r?"rgba(58,154,181,0.08)":"transparent"}}>
                       {r}
                     </button>
                   ))}
@@ -9902,8 +9904,8 @@ export default function App() {
 
               {chartError && (
                 <div style={{padding:"8px 12px",marginBottom:8,
-                  background:chartError.includes('Partial')?"rgba(240,180,41,0.08)":"rgba(255,77,109,0.1)",
-                  border:"1px solid "+(chartError.includes('Partial')?"rgba(240,180,41,0.3)":"rgba(255,77,109,0.3)"),
+                  background:chartError.includes('Partial')?"rgba(184,160,76,0.08)":"rgba(224,96,96,0.1)",
+                  border:"1px solid "+(chartError.includes('Partial')?"rgba(184,160,76,0.3)":"rgba(224,96,96,0.3)"),
                   borderRadius:6,fontSize:11,color:chartError.includes('Partial')?"var(--gold)":"var(--red)",fontFamily:"IBM Plex Mono"}}>
                   ⚠ {chartError}
                 </div>
@@ -9945,7 +9947,7 @@ export default function App() {
                           const b=BENCHMARKS.find(x=>x.id===id);
                           return <Line key={id} type="linear" dataKey={id} name={b.label} stroke={b.color} strokeWidth={1.5} strokeOpacity={0.75} dot={false} connectNulls isAnimationActive={false}/>;
                         })}
-                        <Area type="linear" dataKey="portfolio" name="Portfolio" stroke="#00e5a0" strokeWidth={2.5} fill="url(#gPort)" dot={false}/>
+                        <Area type="linear" dataKey="portfolio" name="Portfolio" stroke="#4aaec0" strokeWidth={2.5} fill="url(#gPort)" dot={false}/>
                       </ComposedChart>
                     </ResponsiveContainer>
                   )}
@@ -9968,12 +9970,12 @@ export default function App() {
                 <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
                   {["All",...BROKERS_LIST].map(b=>(
                     <button key={b} className="pill" onClick={()=>setFBroker(b)}
-                      style={{padding:"3px 9px",fontSize:9,...(fBroker===b?{color:"var(--green)",background:"var(--green-dim)",borderColor:"rgba(0,229,160,0.3)"}:{})}}>{b}</button>
+                      style={{padding:"3px 9px",fontSize:9,...(fBroker===b?{color:"var(--green)",background:"var(--green-dim)",borderColor:"rgba(58,154,181,0.3)"}:{})}}>{b}</button>
                   ))}
                   <div style={{width:1,background:"var(--border)",margin:"0 2px"}}/>
                   {["All","stock","etf","crypto"].map(t=>(
                     <button key={t} className="pill" onClick={()=>setFType(t)}
-                      style={{padding:"3px 9px",fontSize:9,textTransform:"uppercase",...(fType===t?{color:"var(--green)",background:"var(--green-dim)",borderColor:"rgba(0,229,160,0.3)"}:{})}}>{t}</button>
+                      style={{padding:"3px 9px",fontSize:9,textTransform:"uppercase",...(fType===t?{color:"var(--green)",background:"var(--green-dim)",borderColor:"rgba(58,154,181,0.3)"}:{})}}>{t}</button>
                   ))}
                 </div>
               </div>
@@ -10453,7 +10455,7 @@ export default function App() {
                   </div>
                   {txForm.cashType==='withdraw' && txForm.amount && parseFloat(txForm.amount) > cashBalance && (
                     <div className="mono" style={{fontSize:11,color:'var(--red)',padding:'6px 10px',
-                      background:'rgba(255,77,109,0.1)',borderRadius:6,marginBottom:8}}>
+                      background:'rgba(224,96,96,0.1)',borderRadius:6,marginBottom:8}}>
                       ⚠ Insufficient cash — balance is €{cashBalance.toFixed(2)}
                     </div>
                   )}
@@ -10468,7 +10470,7 @@ export default function App() {
 
               {txFormErr && (
                 <div className="mono" style={{fontSize:11,color:'var(--red)',marginBottom:12,
-                  padding:'6px 10px',background:'rgba(255,77,109,0.1)',borderRadius:6}}>
+                  padding:'6px 10px',background:'rgba(224,96,96,0.1)',borderRadius:6}}>
                   {txFormErr}
                 </div>
               )}
@@ -10675,9 +10677,9 @@ export default function App() {
                     unique.slice(0, 8).forEach((c, idx) => {
                       const rec = isRecommended(c, idx);
                       const row = document.createElement('div');
-                      row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:8px 10px;margin:4px 0;border-radius:6px;cursor:pointer;border:1px solid ' + (rec ? 'var(--green)' : 'var(--border)') + ';font-size:12px;transition:background 0.1s' + (rec ? ';background:rgba(0,229,160,0.06)' : '');
-                      row.onmouseenter = () => row.style.background = rec ? 'rgba(0,229,160,0.12)' : 'var(--surface2)';
-                      row.onmouseleave = () => row.style.background = rec ? 'rgba(0,229,160,0.06)' : 'transparent';
+                      row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:8px 10px;margin:4px 0;border-radius:6px;cursor:pointer;border:1px solid ' + (rec ? 'var(--green)' : 'var(--border)') + ';font-size:12px;transition:background 0.1s' + (rec ? ';background:rgba(58,154,181,0.06)' : '');
+                      row.onmouseenter = () => row.style.background = rec ? 'rgba(58,154,181,0.12)' : 'var(--surface2)';
+                      row.onmouseleave = () => row.style.background = rec ? 'rgba(58,154,181,0.06)' : 'transparent';
                       const exchangeLabel = (c.exchange || '').replace('Stock Exchange', 'SE');
                       const currLabel = c.currency ? ' · ' + c.currency : '';
                       const recBadge = rec ? '<span style="font-size:8px;background:var(--green);color:#000;padding:1px 5px;border-radius:3px;margin-left:6px;font-weight:700">RECOMMENDED</span>' : '';

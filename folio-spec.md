@@ -2105,58 +2105,73 @@ GET /api/dashboard-widget?token={device_token}
 
 ### Theme: Light (Default) + Dark (User Toggle)
 
-> The current dark design is loved and stays — but the **default** for new users should be a clean,
-> modern light theme inspired by Parqet and Finanzfluss Copilot. Users can switch to dark mode
-> in Settings. Preference persisted to localStorage + Supabase user profile.
+> **v122 Brand Update:** Applied foliologic brand identity from Gemini brand sheet.
+> Warm paper tones (light), deep navy (dark), teal `#2A758D` as primary accent,
+> gold `#b8a04c` as secondary accent. Typography: Cormorant Garamond headings,
+> Open Sans body, IBM Plex Mono data. Logo: Gemini circular leaf mark (PNG placeholder,
+> awaiting final SVG vector from Sasan/Gemini).
 
 **Light theme (default):**
 
 |Token         |Value           |
 |--------------|----------------|
-|Background    |`#f8f9fb`       |
-|Surface       |`#f0f2f5`       |
-|Border        |`#e2e8f0`       |
-|Text primary  |`#1a202c`       |
-|Text secondary|`#718096`       |
-|Green (profit)|`#16a34a`       |
-|Red (loss)    |`#dc2626`       |
-|Gold (crypto) |`#d97706`       |
-|Blue (info)   |`#2563eb`       |
-
-> **TODO (v122):** `#ffffff` background is too harsh — change to `#f8f9fb` (soft off-white). Also update Surface from `#f5f7fa` to `#f0f2f5` for more contrast between bg and cards.
+|Background    |`#f7f4ee` (warm paper)|
+|Surface       |`#ffffff`       |
+|Surface2      |`#f0ebe1` (cream)|
+|Border        |`#d4cbb5` (warm beige)|
+|Border2       |`#c4b9a0`       |
+|Text primary  |`#1A314E` (navy)|
+|Text secondary|`#5e7082`       |
+|Text tertiary |`#94a3b4`       |
+|Accent (teal) |`#2A758D`       |
+|Green (profit)|`#2d8a5e`       |
+|Red (loss)    |`#c92a2a`       |
+|Gold (secondary)|`#b8a04c`     |
+|Blue (info)   |`#2A758D` (same as accent)|
 
 **Dark theme (toggle in Settings):**
 
 |Token         |Value           |
 |--------------|----------------|
-|Background    |`#080c10`       |
-|Surface       |`#0f1923`       |
-|Green (profit)|`#00e5a0`       |
-|Red (loss)    |`#ff4d6d`       |
-|Gold (crypto) |`#f5c842`       |
-|Blue (info)   |`#4da6ff`       |
+|Background    |`#0f1a28` (deep navy)|
+|Surface       |`#162033`       |
+|Surface2      |`#1a2d42`       |
+|Border        |`#243548`       |
+|Border2       |`#2e4158`       |
+|Text primary  |`#e0ddd6` (warm white)|
+|Text secondary|`#7a8a98`       |
+|Text tertiary |`#3d5060`       |
+|Accent (teal) |`#3a9ab5`       |
+|Green (profit)|`#4aaec0`       |
+|Red (loss)    |`#e06060`       |
+|Gold (secondary)|`#d4c06a`     |
+|Blue (info)   |`#5ab8cc`       |
 
 **Shared across themes:**
 
-|Token         |Value           |
-|--------------|----------------|
-|Heading font  |DM Serif Display|
-|Data font     |IBM Plex Mono   |
-|Body font     |DM Sans         |
+|Token         |Value              |
+|--------------|-------------------|
+|Heading font  |Cormorant Garamond |
+|Data font     |IBM Plex Mono      |
+|Body font     |Open Sans          |
+
+**Brand colors (from Gemini brand sheet):**
+- Primary: `#1A314E` (navy) + `#2A758D` (teal) — logo circle stroke is `#2A758D`
+- Secondary: `#b8a04c` (gold) — CTAs, badges, premium feel
+- Logo mark: circular teal ring + stylized leaf plant + geometric blocks behind
 
 **Implementation:**
 
-- [x] CSS custom properties (`var(--bg)`, `var(--surface)`, etc.) already used throughout — swap values via a `.theme-dark` / `.theme-light` class on `<body>`
+- [x] CSS custom properties (`var(--bg)`, `var(--surface)`, `var(--accent)`, etc.)
 - [x] Toggle in Settings: "Appearance" → Light / Dark
 - [x] Persist to `localStorage` for instant load
-- [x] `getTC()` helper for chart components (TradingView, Recharts) that need JS color values
-- [x] `THEME_COLORS` palette object + `tc` shorthand in App for prop-drilled contexts
+- [x] `getTC()` helper for chart components — updated with new palette + `accent` key
+- [x] All 216 hardcoded color references migrated to new brand (v122)
+- [x] `--accent`, `--accent-dim`, `--accent-border` CSS vars for UI accent (nav, buttons, inputs)
+- [x] `.nav-item.active`, `.btn-primary`, `.btog.on`, `.inp:focus` use `--accent` not `--green`
+- [ ] Logo: replace PNG placeholder with final SVG when available
 - [ ] Sync to Supabase `user_preferences` for cross-device (pending L3 user profiles)
 - [ ] System (auto-detect `prefers-color-scheme`) option in toggle
-- [ ] Remaining hardcoded rgba accent colors (~30 refs) — functional but use dark-theme-specific opacity values
-- [ ] All charts (Recharts, TradingView) must respect theme colours — TradingView grid/text done, Recharts grid/axis done
-
-**Aesthetic:** Light = clean, trustworthy Parqet/Copilot vibe (great for onboarding). Dark = premium Bloomberg Terminal meets modern fintech (power users love it).
 
 -----
 

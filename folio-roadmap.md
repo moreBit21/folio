@@ -161,7 +161,8 @@
 > **Action items for Paul:**
 > 1. Contact FMP sales for commercial/Enterprise pricing (expect $300-1,000+/mo)
 > 2. Get commercial quotes from alternatives: **Twelve Data** (~$79/mo commercial), **Finnhub** (free tier + commercial)
-> 3. Evaluate European coverage: folio. needs XETRA, gettex, Lang & Schwarz prices for European ETFs — most US-centric APIs (Alpha Vantage, Polygon) don't cover these well
+> 3. **CoinGecko**: Current free Demo tier has no commercial rights. Analyst plan ($129/mo) required for launch — includes commercial use with mandatory attribution ("Data provided by CoinGecko" + link). Verify if our current usage fits within 500K calls/mo.
+> 4. Evaluate European coverage: folio. needs XETRA, gettex, Lang & Schwarz prices for European ETFs — most US-centric APIs (Alpha Vantage, Polygon) don't cover these well
 > 4. Check **OpenFIGI** (free Bloomberg ISIN→ticker mapping) as supplementary source
 > 5. Research **wealthAPI** (Rentablo/Qplix) — used by Parqet, Finanzfluss Copilot, ExtraETF. Provides BaFin-licensed depot connections AND market data. Could replace both Tink and FMP long-term.
 >
@@ -176,7 +177,7 @@
 > - Medium-term: Consider hybrid (FMP for US fundamentals + European source for XETRA/ETF prices)
 > - Long-term (1,000+ users): Evaluate wealthAPI partnership to replace Tink + data source with one BaFin-licensed solution
 >
-> **Medium-case cost assumption for business plan: €200/mo** (commercial data provider, could be $150-500 depending on negotiation)
+> **Medium-case cost assumption for business plan: €200/mo financial data + €129/mo CoinGecko = €329/mo for data providers alone**
 
 -----
 
