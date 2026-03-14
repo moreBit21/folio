@@ -833,6 +833,30 @@ Verify the webhook secret (Supabase sends a `x-supabase-signature` header) to en
 
 -----
 
+## 🔧 Phase 2j — Finanzrechner (Financial Calculators)
+
+> Inspired by Finanzfluss. Free tools that drive SEO traffic and establish foliologic as a go-to resource for German investors. All calculators are client-side (no API calls), work without login, and serve as top-of-funnel acquisition.
+
+**Calculators (post-launch, L4+):**
+
+| Calculator | Description | SEO keyword |
+|---|---|---|
+| **ETF Sparplanrechner** | Simulate ETF savings plan growth with compound interest | "ETF Sparplan Rechner" |
+| **Zinseszinsrechner** | Compound interest calculator with variable intervals | "Zinseszinsrechner" |
+| **Finanzielle Freiheit** | When can you retire? Target wealth vs. passive income | "finanzielle Freiheit Rechner" |
+| **Entnahmerechner** | Retirement withdrawal planner — how long does your capital last | "Entnahmeplan Rechner" |
+| **Portfolio Rebalancing** | Calculate optimal rebalancing trades for target allocation | "Portfolio Rebalancing Rechner" |
+| **Dividendenkalender** | Upcoming dividend dates for 35,000+ stocks and ETFs (FMP data) | "Dividendenkalender" |
+
+**Implementation notes:**
+- All calculators are React components, no backend needed (except Dividendenkalender which uses FMP)
+- Can be embedded on the landing page as free tools (no login required)
+- Rebalancing calculator can link to the user's actual portfolio if logged in
+- Dividendenkalender links into the app's stock detail view
+- All in German + English (i18n)
+
+-----
+
 ## ✅ Phase 3 — Fundamentals & Stock Research (MOSTLY COMPLETE)
 
 ### ✅ 3a — Financial Data Layer (FMP Integration) (COMPLETE)

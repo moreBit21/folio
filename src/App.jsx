@@ -9890,7 +9890,7 @@ export default function App() {
         {/* ── Sidebar ── */}
         <div className="sidebar" style={{width:220,flexShrink:0,background:"var(--surface)",borderRight:"1px solid var(--border)",display:"flex",flexDirection:"column",padding:"20px 12px"}}>
           <div style={{padding:"4px 14px 24px",display:"flex",alignItems:"center",gap:12}}>
-            <img src={FOLIOLOGIC_LOGO} width={36} height={36} alt="foliologic" style={{borderRadius:8}}/>
+            <img src={FOLIOLOGIC_LOGO} width={48} height={48} alt="foliologic" style={{borderRadius:10}}/>
             <div>
               <div className="serif" style={{fontSize:18,fontWeight:700,color:"var(--text)"}}>foliologic</div>
               <div className="mono" style={{fontSize:8,color:"var(--accent)",letterSpacing:"0.08em",opacity:0.7}}>v122f</div>
