@@ -6517,7 +6517,7 @@ function CryptoOverview({ pos }) {
   );
 }
 
-function StockDetail({ pos, onBack, transactions, onTransfer }) {
+function StockDetail({ pos, onBack, transactions, onTransfer, setManualResolvePos }) {
   const [data, setData]     = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError]   = useState(null);
@@ -6834,7 +6834,16 @@ function StockDetail({ pos, onBack, transactions, onTransfer }) {
         <div style={{flex:1}}>
           <div style={{display:'flex',alignItems:'baseline',gap:10}}>
             <span className="serif" style={{fontSize:22}}>{pos.name}</span>
-            <span className="mono" style={{fontSize:13,color:'var(--text3)'}}>{ticker}</span>
+            <span className="mono" style={{fontSize:13,color:'var(--text3)',display:'inline-flex',alignItems:'center',gap:4}}>
+              {ticker}
+              {pos.type !== 'crypto' && setManualResolvePos && (
+                <span title="Change ticker mapping" onClick={() => setManualResolvePos(pos)}
+                  style={{cursor:'pointer',fontSize:12,opacity:0.5,transition:'opacity 0.15s'}}
+                  onMouseEnter={e=>e.target.style.opacity=1} onMouseLeave={e=>e.target.style.opacity=0.5}>
+                  ✏️
+                </span>
+              )}
+            </span>
             {data?.sector && <span className="mono" style={{fontSize:10,color:'var(--text3)',background:'var(--surface2)',border:'1px solid var(--border)',padding:'2px 8px',borderRadius:4}}>{data.sector}</span>}
           </div>
           {data?.industry && <div style={{fontSize:11,color:'var(--text3)',marginTop:2}}>{data.industry}</div>}
@@ -7889,9 +7898,10 @@ function PortfolioPage({ positions, transactions, wallets, onOpenStock, priceLoa
                       {/* Manual resolve badge:
                            - No fmpTicker at all → show
                            - fmpTicker from name fallback + no price → show (possibly wrong resolution)
+                           - fmpTicker from name fallback + price suspicious (>3× off CSV price) → show
                            - fmpTicker from ISIN/map/manual + no price → don't show (FMP plan limit, not wrong) */}
                       {pos.type !== 'derivative' && pos.type !== 'crypto' &&
-                        (!pos.fmpTicker || (pos.tickerSource === 'name' && (pos.currentPrice === 0 || !pos.currentPrice))) && (
+                        (!pos.fmpTicker || (pos.tickerSource === 'name' && (pos.currentPrice === 0 || !pos.currentPrice)) || pos._priceSuspicious) && (
                         <span
                           title="Click to enter ticker symbol manually"
                           onClick={e => { e.stopPropagation(); setManualResolvePos(pos); }}
@@ -9092,16 +9102,22 @@ export default function App() {
           : (q.exchange === 'NYSE' || q.exchange === 'NASDAQ' || q.exchange === 'AMEX')
             ? q.price / eurUsd  // US-listed ETF resolved from non-US ISIN → convert USD
             : q.price;          // EUR/other already in local currency
-        // Sanity check: if we have a prior CSV price and the FMP price is >5× different,
-        // the ISIN resolved to the wrong (e.g. US) ticker — keep the CSV price but take the % change
+        // Sanity check: if we have a prior CSV price and the FMP price is dramatically different,
+        // the ISIN may have resolved to the wrong ticker — keep the CSV price but take the % change.
+        // Use stricter 3× threshold for name-fallback resolutions (more error-prone),
+        // standard 5× for ISIN/map/manual resolutions.
         const priorPrice = p.currentPrice;
-        const price = (priorPrice > 0 && rawPrice > 0 && (rawPrice / priorPrice > 5 || priorPrice / rawPrice > 5))
-          ? priorPrice  // FMP price looks wrong — keep CSV price, still show daily change
-          : rawPrice;
         // Also apply any resolved ticker/type from this run
         const extra = resolvedTickerMap[p.isin]
           ? { fmpTicker: resolvedTickerMap[p.isin].ticker, type: resolvedTickerMap[p.isin].type, tickerSource: resolvedTickerMap[p.isin].source }
           : {};
+        const source = extra.tickerSource || p.tickerSource;
+        const sanityThreshold = (source === 'name') ? 3 : 5;
+        const priceSuspicious = priorPrice > 0 && rawPrice > 0 &&
+          (rawPrice / priorPrice > sanityThreshold || priorPrice / rawPrice > sanityThreshold);
+        const price = priceSuspicious ? priorPrice : rawPrice;
+        // If name-fallback price is suspicious, mark for resolve badge
+        if (priceSuspicious && source === 'name') extra._priceSuspicious = true;
         return {...p, ...extra, currentPrice: price, dailyChange: q.change ?? null};
       }));
       setLastUpdated(new Date());
@@ -10082,12 +10098,12 @@ export default function App() {
             </div>
             {/* StockDetail overlaid when coming from screener */}
             {nav==="stock" && prevNav==="screener" && selectedPos && (
-              <StockDetail pos={selectedPos} onBack={()=>{setNav('screener');setSelectedPos(null);}} transactions={transactions} onTransfer={t=>setTransferModal(t)}/>
+              <StockDetail pos={selectedPos} onBack={()=>{setNav('screener');setSelectedPos(null);}} transactions={transactions} onTransfer={t=>setTransferModal(t)} setManualResolvePos={setManualResolvePos}/>
             )}
           </div>
           {/* StockDetail for all other navigation sources */}
           {nav==="stock" && prevNav!=="screener" && selectedPos && (
-            <StockDetail pos={selectedPos} onBack={()=>{setNav(prevNav||'dashboard');setSelectedPos(null);}} transactions={transactions} onTransfer={t=>setTransferModal(t)}/>
+            <StockDetail pos={selectedPos} onBack={()=>{setNav(prevNav||'dashboard');setSelectedPos(null);}} transactions={transactions} onTransfer={t=>setTransferModal(t)} setManualResolvePos={setManualResolvePos}/>
           )}
           {nav==="compare"&&<CompareView/>}
           {nav==="news"&&<NewsFeed positions={positions}/> }

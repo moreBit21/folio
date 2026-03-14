@@ -209,26 +209,31 @@ create table isin_ticker_map (
 4. Name fallback (`/search-name` progressive) → if success, use it + **save to `isin_ticker_map`**
 5. Manual resolve prompt → user enters ticker, validated via FMP `/quote` → **save to `isin_ticker_map`**
 
-**Ticker override (✏️ edit icon):**
+**Ticker override (✏️ edit icon) — ✅ DONE v122b:**
 
-> **TODO (v122):** Any position can have its ticker manually overridden — not just unresolved ones.
-> This is needed because FMP's ISIN database can be outdated (e.g. Block Inc. changed ticker from SQ→XYZ in June 2024, but FMP `/search-isin` for `US8522341036` still returns `SQ`, which now belongs to a different company returning $83 instead of Block's $60).
+> ~~TODO (v122)~~ **IMPLEMENTED:** Any position can have its ticker manually overridden — not just unresolved ones.
+> This handles FMP's stale ISIN database (e.g. Block Inc. SQ→XYZ) and wrong name-fallback matches.
 >
-> **Implementation:**
-> - In the stock detail view header, show the current resolved ticker (e.g. `SQ`) with a small ✏️ edit icon next to it
-> - Click ✏️ → opens the same search modal as the resolve flow (search by name or ticker, auto-try suffixes, clickable results with RECOMMENDED badge)
-> - User picks the correct ticker → saves to `fmpTicker` + updates `isin_ticker_map` in Supabase with `source: 'manual'`
-> - The override is permanent — survives page reloads, and benefits all future users with the same ISIN
+> **Implementation (v122b):**
+> - [x] StockDetail header shows the current resolved ticker with a ✏️ edit icon next to it
+> - [x] Click ✏️ → opens the same search modal as the resolve flow
+> - [x] User picks the correct ticker → saves to `fmpTicker` + updates `isin_ticker_map` in Supabase with `source: 'manual'`
+> - [x] The override is permanent — survives page reloads, and benefits all future users with the same ISIN
 >
 > **Known FMP stale ISIN cases:**
 > - `US8522341036` → FMP returns `SQ` (old Square ticker, now a different company). Correct ticker: `XYZ` (Block Inc.)
 > - More cases expected as companies rename/reticker. The manual override + isin_ticker_map system handles all of these generically.
 >
 > **Known name-fallback wrong-product cases:**
-> - `IE000AON7ET1` (ARK Space & Defense UCITS ETF, European, ~€4.39/unit) → name fallback found `ARKX` (US-listed ARK Space ETF, $30.74). FMP only has the US version — the European UCITS product doesn't exist in FMP's database at all (not via ISIN, not via name). The name fallback picked the only result, which is the wrong product at 7× the price.
-> - **This is a category of problem:** European UCITS ETFs that don't exist in FMP, where a US version with a similar name does exist. The name fallback will always pick the wrong one, and because it returns a price, the resolve badge doesn't show.
-> - **Fix needed (v122):** When the name fallback resolves a position and the resulting price is dramatically different from the CSV import price (e.g. >3× ratio), flag it as suspicious — either show the resolve badge or log a warning. The existing 5× sanity check in setPositions catches extreme cases but 7× just barely misses at the 5× threshold. Consider lowering to 3× for name-fallback-sourced resolutions.
-> - Also: the ✏️ ticker override (separate from resolve badge) would let the user fix this regardless.
+> - `IE000AON7ET1` (ARK Space & Defense UCITS ETF, European, ~€4.39/unit) → name fallback found `ARKX` (US-listed ARK Space ETF, $30.74). FMP only has the US version.
+> - **This is a category of problem:** European UCITS ETFs that don't exist in FMP, where a US version with a similar name does exist.
+>
+> **Price sanity check — ✅ DONE v122b:**
+> - [x] Name-fallback resolutions now use **3× threshold** (was 5×) — catches ARKX EU/US mismatch (7× ratio)
+> - [x] ISIN/map/manual resolutions still use 5× (more reliable sources)
+> - [x] When a name-fallback price trips the sanity check, `_priceSuspicious: true` flagged on position
+> - [x] Portfolio table resolve badge now also shows for `_priceSuspicious` positions
+> - [x] The ✏️ ticker override lets the user fix any remaining cases manually
 
 **Local cache:** `localStorage` cache of the map with 7-day TTL (same pattern as learned parser cache) to avoid Supabase round-trips on every page load.
 
