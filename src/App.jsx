@@ -8847,7 +8847,7 @@ export default function App() {
   }, [showAddMenu]);
   const [showImport,   setShowImport]   = useState(false);
   const [range,        setRange]        = useState("1Y");
-  const [activeBrokers,setActiveBrokers]= useState({"Bitvavo":true,"Smartbroker+":true,"Trade Republic":true,"Manual":true});
+  const [activeBrokers,setActiveBrokers]= useState({});
   const [activeBM,     setActiveBM]     = useState(["sp500"]);
   const [fBroker,      setFBroker]      = useState("All");
   const [fType,        setFType]        = useState("All");
@@ -10176,14 +10176,14 @@ export default function App() {
                   {priceLoading && <span className="mono shimmer" style={{fontSize:9,color:"var(--text3)"}}>● syncing</span>}
                 </div>
                 <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
-                  {["All",...BROKERS_LIST].map(b=>(
+                  {["All",...[...new Set(positions.filter(p=>p.qty>0).map(p=>p.broker).filter(Boolean))]].map(b=>(
                     <button key={b} className="pill" onClick={()=>setFBroker(b)}
-                      style={{padding:"3px 9px",fontSize:9,...(fBroker===b?{color:"var(--green)",background:"var(--green-dim)",borderColor:"rgba(58,154,181,0.3)"}:{})}}>{b}</button>
+                      style={{padding:"3px 9px",fontSize:9,...(fBroker===b?{color:"var(--accent)",background:"var(--accent-dim)",borderColor:"var(--accent-border)"}:{})}}>{b}</button>
                   ))}
                   <div style={{width:1,background:"var(--border)",margin:"0 2px"}}/>
-                  {["All","stock","etf","crypto"].map(t=>(
+                  {["All",...[...new Set(positions.filter(p=>p.qty>0).map(p=>p.type).filter(Boolean))]].map(t=>(
                     <button key={t} className="pill" onClick={()=>setFType(t)}
-                      style={{padding:"3px 9px",fontSize:9,textTransform:"uppercase",...(fType===t?{color:"var(--green)",background:"var(--green-dim)",borderColor:"rgba(58,154,181,0.3)"}:{})}}>{t}</button>
+                      style={{padding:"3px 9px",fontSize:9,textTransform:"uppercase",...(fType===t?{color:"var(--accent)",background:"var(--accent-dim)",borderColor:"var(--accent-border)"}:{})}}>{t==='etf'?'ETF':t==='etc'?'ETC':t}</button>
                   ))}
                 </div>
               </div>
