@@ -8939,9 +8939,9 @@ export default function App() {
                 // Re-run inferType to reclassify derivatives that were previously tagged as "stock"
                 const correctedType = inferType(p.fmpTicker || p.symbol, p.isin, p.name, null);
                 const { fmpTicker, ...rest } = p;
-                return { currentPrice: 0, ...rest, type: correctedType };
+                return { ...rest, type: correctedType, currentPrice: rest.currentPrice || rest.avgPrice || 0 };
               }
-              return { currentPrice: 0, ...p };
+              return { ...p, currentPrice: p.currentPrice || p.avgPrice || 0 };
             });
             if (needsMigration) {
               console.log('[folio] v110 migration: cleared fmpTicker + re-ran inferType on all positions');
@@ -9017,6 +9017,9 @@ export default function App() {
   const fetchQuotes = useCallback(async (tickers) => {
     if (!tickers.length) return {};
     const map = {};
+    let premiumErrors = 0;
+    let emptyResults = 0;
+    let networkErrors = 0;
     // FMP free plan: single ticker per request — run concurrently (max 5 at once)
     const CONCURRENCY = 5;
     for (let i = 0; i < tickers.length; i += CONCURRENCY) {
@@ -9026,6 +9029,7 @@ export default function App() {
         try {
           const data = await fmpGet('/quote?symbol=' + encodeURIComponent(ticker));
           const arr = Array.isArray(data) ? data : (data ? [data] : []);
+          if (arr.length === 0) { emptyResults++; return; }
           arr.forEach(q => {
             if (!q?.symbol) return;
             let chg = q.changePercentage ?? q.changesPercentage ?? q.changePercent ?? null;
@@ -9034,8 +9038,14 @@ export default function App() {
             }
             map[q.symbol] = { price: q.price, change: chg, mktcap: q.marketCap, prevClose: q.previousClose, exchange: q.exchange };
           });
-        } catch(e) { /* silent fail per ticker */ }
+        } catch(e) {
+          if (e.message === 'Premium') premiumErrors++;
+          else networkErrors++;
+        }
       }));
+    }
+    if (premiumErrors > 0 || networkErrors > 0 || emptyResults > 0) {
+      console.log(`[folio] fetchQuotes: ${Object.keys(map).length} OK, ${premiumErrors} Premium-blocked, ${emptyResults} empty, ${networkErrors} errors (of ${tickers.length} tickers)`);
     }
     return map;
   }, [fmpGet]);
@@ -9247,14 +9257,22 @@ export default function App() {
       if(qmapEntries.length > 0) {
         console.log('[folio] qmap sample:', qmapEntries.slice(0,5).map(([k,v])=>`${k}:price=${v.price?.toFixed(2)},chg=${v.change?.toFixed(2)}`).join(' | '));
       } else {
-        console.warn('[folio] qmap is EMPTY - FMP returned nothing for these tickers');
+        console.warn('[folio] qmap is EMPTY - FMP returned nothing for these tickers. European tickers (.DE, .F, .MI) require FMP Premium plan. Positions will use CSV import prices as fallback.');
       }
       setPositions(prev=>prev.map(p=>{
         if(p.type==='crypto'||p.type==='derivative') return p;
         const resolvedTicker = resolvedTickerMap[p.isin]?.ticker;
         const t = resolvedTicker || p.fmpTicker || getT(p);
         const q = qmap[t] || qmap[t?.split('.')[0]] || qmap[p.symbol];
-        if(!q?.price) return { currentPrice: p.currentPrice ?? 0, ...p };
+        if(!q?.price) {
+          // FMP returned nothing (Premium-blocked or not in database)
+          // Keep existing price, or fall back to avgPrice from CSV import
+          const keepPrice = p.currentPrice > 0 ? p.currentPrice : (p.avgPrice || 0);
+          const extra2 = resolvedTickerMap[p.isin]
+            ? { fmpTicker: resolvedTickerMap[p.isin].ticker, type: resolvedTickerMap[p.isin].type, tickerSource: resolvedTickerMap[p.isin].source }
+            : {};
+          return {...p, ...extra2, currentPrice: keepPrice };
+        }
         const rawPrice = (p.isin?.startsWith('US') || (!t?.includes('.') && p.type!=='etf'))
           ? q.price / eurUsd  // USD stocks → EUR
           : (q.exchange === 'NYSE' || q.exchange === 'NASDAQ' || q.exchange === 'AMEX')
