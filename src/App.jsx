@@ -3,6 +3,8 @@ import ReactDOM from "react-dom";
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, AreaChart, ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid } from "recharts";
 
+const FOLIOLOGIC_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAAWVElEQVR42sVZd3yVVdKeOW+5Lb1Aegg1BAglIEVCEoQQERHBG+VDsG5cS9aCuuiCl0tZ27IoiAuIAkvRJR+LK0V6aFKE0DuEkkraTXL7fcuZ74/ErGtb0f2+7/397j/3Pe+ZeWbmzDMzB+A/8dhsDIiw7/PPd08pKHyJiBgAwKj587uNXbgwDgDgPpstrEvB07OGTpsWDgDY+vvVD/uPADh/HgGRfBqEuUWcl/BEQSERiccCfNtBt/9jCRG+vl62rFFVZ5gDBgQAAiL4/wbwTysWFenT3nwz/Mqi9w9FeBr2dZE9Q/ouX5urms3Jiijm3fW3DWlJRn/XUD2wYOd8u2Py5MmRgNiCgAj/LwF8WxgBAIHNxoiKxWUXr+2Jeqzgoyn90h54qTM9W9fQ3Cua+/QgkeByVXWHj7LCsvqjeX50n+xtxefKP0EAgIwMqQ1I2663B0i8TQAEYBUAivRJNltIutlLv/+93ZUH/iSvqnXzSYb0+Seu9xo/ODvT4Ja2xGPTW+5AoMEfkXD4kUWVpgqX86BHoVizoF3iRAIiqs9OmxZZazC4imbOVGHmTARE/r/igbzCQsO7775rQSzSAQD2Vdx69q1L7pL+j/+2WyoYm4iAorhLcaEwcGfJiaevTX38zCCT15ppDtx7/jf5jls+11wiHhth1FSNkCREvfvTT49bU9N05mxtwzBAJMFu50t27AgtWLJE+s8BsNkYAID75q1O767aeDMmPfNDAkCvovVp4tjlkhLY9t4TowKMaJ/JKMrxsl+pdmoDEQA+W7jn+o5PjtcREbp9aq/UWFRJlCUZce398/7YucKprHcBxnqUQL+p26otse/M/2LW1yUXg02m8G+FE5LNxtatswq/DIDdzgGAze6bdpl0/WRUpOXpieNGTlFEgzMOPRpKYnL8zNUTc6ODn2j2CqWp7QxypzC4/puMMWYP4Ff1uncjIlL/FKEsLMwkOd36rhore3PX6RsvyqKO0YJCLi93nS1dMyMsIfJeUpQd7z3ySG3BkgKpeGa2AACEdjvPz2/x/C8NIcqx2zXHxUMjokNN1gnDYo/JknGzIApikuwDd0CP/fuCBZXvWAamRxK8unZS1Cd/9zt/o6pgUFRKTeg7cthTeQnvcL8+2X95/wiYuQfUgB7aIYSQFB2Djea9g1IMWzuKfHzd7JlTdCJY+tRSNce+V1tHJBTPH91n89vDxxHZ2E9llZ/KPEREmNw3+09eDXWjbDxUXjJnU9Jji6enh3tfjOGhA7fHdHpNEBmWv/ryZJ04RKdnrzELWr7KgXFRfvVWye55BcXFUZuPn9ggc/Z5//Lj15olYcWpGvl5x5olK5LSh+W4POpIY6gxNSW2S8HCR11DfU7HmOa6poFGUHs2+4W/32s7OqHYBmKOHbTb8QBBRoZUBEUsoPN0RYdXXD7P38NSn99VNjp+bk58aI+XrRkVTkW9q5zJD7ebPft4cU1xUEDFf7SPkMWIIIG5vNLW8R9/2HHDviPna8Ew1OPzjty04K8bZsaxlIY1S1aEpQ1bVa/w3X7Z8JrLGxiVnRHrJiRRRP6EQaKehAiiaPpbizpZtxFCBEi0ThBLStR8zNfDguXFwFXoEKm7o0JZpuX1XQtefvkv5R9eQiMHMId6GrVmQ1Dfp5Yf/b3zQvG6DpHC2q7thdneC9vOHalses8vCdGhfqemabrW8Y9/zJ0i97GHdB3+KBPh4U6Ruhu4BqEW01q73e53uKVbJBrcpmALKCgqaAg/BACwB/bynxNCCAB09uw6OXdT+S6/JGlRuvrx9d9PXR3VM3O9T4PxQ9OM4PYqir/REHto1GBnOBoOhZipvwF0tdItHfbMei3rCl2W08TUwPkLmwy9V5bc6Brkj6wSw6UgDd+JgqYHa3Tjnk67t8ZHxFhG7D/jAU5wtf6st/fFbX0nRpv5svJq7weN9c2nkKvPZT+3qw8BIbYQ6L/1AIHVKvTuma/ohB4witk+ia8KnfN+fu2Z/RMiRHjswBn3+k5xpu3TX0qX0W7XekWZpjZ7IdA5HKVYSXMKADQ0/cndkd0Hf5iaOiYQL/nUyFBZUjx6WaZZXzogho2rts14NHtA1JXTpcpWUZDfqK+J6VtbkvNiUqxlWZ2Hvdkn/7PCnGe+XCaYEscDEHxX+Z8+xK35/+6QkB4nPNqmLglSksHZvL9JazfJMDA14sDQ4RcRMUBE2DN79D1TQqW9C3Mfbn8nnf1znwha+cGcwxVeDBwGrqrtgzvH5j0W/dyFQFDn+kD8H0qmPVWWlpYVI0Wa0k/t37r9G0Wcl2yfBJnosZPnHK/2vfuDdwsL8wyZmcHaj6XQn5uFgIjEAatWPTBWO+Pc4IyPuC4YVqHH0xApGV4pm1q4PChtqIcIXZ2DhElHj+7ZBQCQ0H/kswIoC1VVRwpgRv3F/cd1AOAA0G1oXmFto/8dswzVlSf2dFy/6vXY3OzwIiNT7hy/sFTfWCq9woqWzOdttrQxewsf/XwARIB33jc2tq5J6aM2eYIj3d7zJddKzkzbtCb8o5OVpZERGK43efRewXFpexZ8vEVDsZPAyD9oSGofZcjAblVFx0+HKxcu+xX9WuZv/3DHxlsXP20XGjTPv2SlUuYX9iMBuNzqRvXSUy9y1bXV0ezrPHr2cedRZ1BITIihPPL0lelMlCtjY00nthcVOW63lGAANiwrd62oqfNvblLosysG8+mQ7sMO7JmzElPMQfmeJu14d5OvYWBXDAbAvaEhEoSbwHilwvPgOYf7H57hPawju7DMF/rJ96yvujzbYQkZ3ch5j9om/9jEKBGam9x8yj2JCNC4t7TSmTLotWPOo9ViiOlaJbh2lyRWNPlW3nS4d16+3jCnxcq3U0rYbIBo5+3DzdNF5H5N59AxCv2pCfKdjah9WvLSMztf7p56V3T84JwZo35TktOz82uayneldQiCjASpLCTgagxX68fNXrrnyCMLdl+36N4R8eiBJo/hyoh+oeD1a00P5sa5Pp7ec8zB43UxQ1475i+F8JAkpQl6Sk3QIVrUNU0DibSa2HZhbxMAAqTRbZ4BG0Ow817Dx9xbUetcRICJHduJ0D1R9v0uq0O3h8qTJzpFfLu97tk3Oi5pzLtPPukaeve4rvu39L4x4a3AsIxO4eqfbRvnkE5nH5o1/uqlSmfvXVPtU+bOLYwe0I0WjBwWPW7jkUY2+aObzNU+UUyNN/G0CyV4ttQNVc1IssVUlhwX9FDJli+OtBqa3+4hRgAgBAC+5X1Dh9+t61uti1GhJsuxhvNbbulUZur79trXTejtOjSYvzFzXPgss8nwJYY/twIAoEvv3DsaNP8Rrqu+yUM7dl24bE3F8uU247AUx+KOcfIjHx7wwrOf1gAkJIAQEwlc08HgcYNa79Kk8GAxIcr8QencOYXUSqiAcFseQASgEe/M6XO+ITBNJ4hMb4d7Dvxh7lxFJYh54um5boUGoaKee7BryNJ5U0L/ZO7YbhQEdLh11bF4cY/pzy7uMyorKkTfHfD54OoFPWbT8kzsFOT4706JljtnbXXxObu8OHxoIkzsAchcDthSZYLPG9tDuAnIECSDS5XrQgzCluyoiFmrp0y5DkT4ve7tBwHYbAzsdprw3nu99tQ0nVJEhHijDhF+p/euyODs90tqlpNR7BEteKFbpAD2EeEwoHcEfPK3a97EeAuOzIoxlZ2v3eYK7vTA1Nc/X+bya5fXvNjtE5+veUf7KGPnN1ZWBRaVWgxxd3anhdlA0f56Ri4nxKp1sKYqDBZ70iApxgxOZoBKFgqWpmbnvRFBPZYVFFQCEXwXhPgD9T8BAAQ0rSoMqdATUIZ4dLmye0Lmu0euHNAsMp5p8gZkRaaolwfLwQMSBWHqihvqnz+6agpS/fj+C121R4dHjLp68/jBrR/l5t44ei7G03Tra7OJRT+9sAbWnRMMpuFdoEox4qITLvxtjA/Mfi/c8ojg4iL4FY2O3yJoFwJfR4neC7IsfOUzmZxtcXG7RIYA8MTSBSk7q5qXPJQSNvGtRwobPlw2q1tuSuWXESFyh0fWNdGpMi8L6poC5aWuMmVfSdzz+TEw9Z5w8VpFUx1TFbMsomXqOi8Vl7gvJD825mRSgvhfPcz+wNprjLw+3Zhs0sChS+AgE5gCbi42OtigxMhBO2e/dYR+RUuJaTabTFarcM7pCXPLhpGLr2k9Tq0qTLgvuXQT51pK1qI6CA4xU+mbPdTJ/Sxg6tP908yOkZPe+e8G8XdLy7UQUY32+lTL48uateLzmnfaPZ0frDNYAgMiFPhwlCgee1CGGDPwawEzKCRCqKAR+gOM1zc4kpjhCq1bJ0BBgfRThhZ+Cl3d3r06nLdi7fYZ1XzAneMSxeZBr3Qse/KMU+g+bpVbrxWCWdEEA7tU4xPmnBD5LRcf2s86bF7jvmOmQ9eoz+VqVf3ihMpPVBuknmE07erYe9o7/OobZ6v9ehDoQprYKFa6OB5vNIJFJNBQ0LUGBwaTvvXgXz5YSQAMVq3SflVTb7OdFxUAGBXctGJJ2s2czy6p6WNW++lWcJwQ1CkBHtxjgHt2B8PVZoFEGbH45I2ZveKjPggPFqD4os5OV6EUISvNd4wcsrWsrM4OXh/3qAwLvxKh/+Zg2FBtBrNEoDEBuM+L6PFgdJBlKf9PTCWKbVmi3V6krPtTboY9ouS14gseZ8Ees8aTkyE4MRqaAgBHnWbwgwRmgRj5FfArWlbYmEwvqGqZxSgIJoMAjNPBSx07xmmSGAtcBUlgzCIBuLgIPl0ABgQEoGsNTYKJa0fOLv9oBwAwKPrxKvTfAlhSkCHl2PdqX749LDOK+Q8pXJz7xpU0q8kkiQIDXdM5CAAQIiGICKACIhDnhIKpgonBxOkagQCEDFDXrzTqSjwwRojACTgQAYgIwIAARIE0RyOJziZIaRf+AiJysFrxF3uAbMCeWlqibntr2N1I2j90kiZmPFu8UFzz1vZoCd9XaxtE7vWpIAigEwIhAraOShEBBCYjtY0IERCBBGTfmhl+sx4ARQl0l0ejxmaxXZDZdmLx4sNgtQo/x/o/CIBsNoZ24Nvfzpmo6/oCFINGjpy6a/2xJRmSZrUKN9esmBpK2hdK9S2JPB6VCSK1FeCMMdQ1JSLgcjGBJQNxAM6Bo5DSziCVga4jtI7eCQFQFEl3uVS1tkGKFnFlxZoVs+g2lP8eAAJAtNup+ANrjEY0RgXD0FEvby8ptmWJ/Z8qUaGoiCMiL54x1hpNfL1SdUtS6+uBIegoipyMBi6b5KOBXYeRC2IyEOfEOSgId/R21N4QdbWOMwkZEzki0wI1dahV10jtUV9SvuqTxzRODIqKfvlstLXnpD11abWjp+2ZdN8fdteQzcZy7Hu1NoxE0LNnvlJXtOaBOIM4E2rrNF9FtaA2O0lAZLHxUfPOXa+7h1BEIuJIug6iIWbXmq1p4cFBHzJZRqXRQf6b5aJYX+9MssjPVK9d+VtsYVkCgNu6OPjJjqyVvenHvkMAynnllX5nK2tedyk0wWKSDk8JMuQvKz5zRtd5CCISEnJCJsiCfnbOey+NeH3l5lMBny8izCit7hUT+eb2+fOvtk68+e0q/8MArK2dzw/HIYLV+o2bCbKyRNi7VxMAoP8zzw8MC8Oy0p2nHmrw0izSNAsga9mfdGCi6EoONU2S01OuSiBJB/+y4DT/Rt6PxryNAdj5L/LAbV6StQkqLCw0XK+vD2506vH1jQ4JOATaR4b4E5La1ztE0bt14cJAm6HS0gjsdv5rJOO3mxfGEHpm3T0eRaHm9I6NX1Hr/9+8zxx1f2yDSokm5r5VsnNn2dA8a7Sua3hox4ZasFoFWLeOf7vcLSwsNBy66ehAAa+zZNuG6m+Pa35ccUKAmZiVtYf5jWEJSSFyedFPZKXWQ2xDm83GYtOzPvb4tIl19e4tXYfk5rS+Z5CWJgEA+rk+qN7h3FdxyzeJAPBGbe2nN2sbNzMEgNpaBMxnAACdO+cZsrKyxJPXKrPLb1YeqaiqnwoACHl5BrDbW5TPyhLbDGhta9gZABKAnTsoaHBZjev65Xp/KgAApFnlfxrbxr7nBYEhRPUY5o5LH9o1I3dMau+s+8JaZ0JtBZ+AALHpmZejegyeDgAwYow16Y68sWnfmSH9y+YRqYN2R3Yf/Od/sRr7vnyGLdR2/8MPt0u/a2xfxhCGjbl/QJrVKn93zfcaGoYIaUNzXy+rdUtBFst7JkGeq8vk6HDHiDVdh4ymDv1H1PbsZ5y+MXaTP24Dk4nAV1AwKXbryfppFgmqAOB85qj7Y8sa3LNSh40xJPXP8aTExMzYu+lTByKTW1tr6JGT29vt0l4xyEZd0dTy3D4p9o+WLlU79M9+hkmGIbquuU5erkmyGMXdnfuPGHKtyjkoITZiGgBUdh444jECuAsY8xtF8ZNz+7ccBLC1mIKIwGIUdzIATRKkz9NTgktLq+sOqgGtyix7n/MGlDuPHXYuFWcBRwBEFAwAlmafx9OjyR3IFxHgcnXDRn8gYEg0mAsDAb3D+Wvl6xCAE+dM17lGtE6oq/PtBg7n24WHveDx+PI3Hrk4Y+CIu3t5/NqiLglxL6qqdtDj8Q2+sP/LeSCyCo3Dw8nRFtZx4PC73V7lg/bB5le5psuNTveSFk+cR/YNe4wKuI8jAK9vqv3qTKkTdcJOFqNx1am9e5sEhqsCijZOEBhwIBWB5KVLl3q5xk8jMIfKi42KyjNEBst37ixqlkW2goDlcCJGACoywT8gb3VnjVNE+3ahfz2weW2jJIrrA4qeL4iGUE3TPd0TwtxGSXARcPP0N2yixWw4SlpAT4iMDDhdypOEuOPgzi+qggzGmfFRERNaMkURbwvGbYGAxAB0kyxJomCSgQBI5K1khhwRofV2XSNOCgAACii2XIvGEwKBILSECifiAAQGSeQAoIqSwHU/6QgAJoPc2ocTRwYhB77ccDjYYjyw8euLbxGw3BCL8W673a75Fd1CRCBFSjoHYsR5KADAmQObrx3d9fnltsz5DQA1KCqaGAsVUeq8+9FxFQJQud+rPJyXlxfCSZ9skIVNy16YZAFkcYwJMbaCAjMia49IyXDuJMmScFLj7PG8SZNCdKIpTIC9b94/3oSCkGgyGnseX9SvDBEcV27WPjBihDVU07UHTKK4PHtsfgdFg06qXy0DYmcMJrPKEABJDQdBFo6dKIuLDjau5kzI7jwwd0Ja5r3Duw0eOT8rK0sAACZ80+sHR8c96ufkkyUhflvZ1RJRZKv9GoxzqDgKEW7mZ/V9tuhcbZ7Lp5hlgWmKQfbXOz3dGGN1G7++UR5msbzn9gVym5sDowHQNSA5+fFd9fUDAjomyQzVTcebjwX86ipANqlZU0dJgnB05bw3Zuw7fDSyyel5yOX3dVFV3s/l115KTu2hck1L9KrkU/xKaOnXOxe3S+riDCj6Mzrp3UUBFpUcKK74WUT83bT4a9e33hi2CU7ol/VZUsbwRdhKOrG9h30Z1ydnyQ8RLsOfrkaxdQLM/lkegICIHKCNdL69BluGAm0khADW1vVW4Tvr24iKABgiEqSlyQCAQQbDap3T4MSM4euT7xi5XpbE2o7x5mkt32WJrbIIsrJE3lJgsm/r/T+jUcv5wjv45gAAAABJRU5ErkJggg==';
+
 const FONTS = `@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400;1,600&family=Open+Sans:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@300;400;500;600&display=swap');`;
 
 // Helper: read current theme colors from DOM — works in any component without prop drilling
@@ -115,7 +117,7 @@ const CSS = `
     color:var(--text3);background:transparent;border:none;transition:all 0.15s;
     flex:1;
   }
-  .mob-nav-btn.active{color:var(--green)}
+  .mob-nav-btn.active{color:var(--accent)}
   .mob-nav-btn span.icon{font-size:18px;line-height:1}
 `;
 
@@ -256,13 +258,13 @@ const ALLOC_COLORS  = ["#4aaec0","#627eea","#f7931a","#9945ff","#d4c06a","#76b90
 const BROKERS_OPT   = ["Bitvavo","Smartbroker+","Trade Republic","Manual"];
 const ASSET_TYPES   = ["stock","etf","crypto"];
 const NAV_ITEMS     = [
-  {id:"dashboard", label:"Dashboard", icon:"⬡"},
-  {id:"portfolio", label:"Portfolio",  icon:"◈"},
+  {id:"dashboard", label:"Dashboard", icon:"📊"},
+  {id:"portfolio", label:"Portfolio",  icon:"💼"},
   {id:"charts",    label:"Charts",     icon:"📈"},
-  {id:"watchlist", label:"Watchlist",  icon:"★"},
-  {id:"screener",  label:"Screener",   icon:"⊞"},
+  {id:"watchlist", label:"Watchlist",  icon:"👁"},
+  {id:"screener",  label:"Screener",   icon:"🔍"},
   {id:"compare",   label:"Compare",    icon:"⇌"},
-  {id:"news",      label:"News Feed",  icon:"◎"},
+  {id:"news",      label:"News Feed",  icon:"📰"},
   {id:"settings",  label:"Settings",   icon:"⚙"},
 ];
 
@@ -8654,9 +8656,10 @@ export function AuthGate({ children }) {
       `}</style>
       <div style={{width:'100%',maxWidth:400}}>
         <div style={{textAlign:'center',marginBottom:36}}>
-          <div style={{fontFamily:"'Cormorant Garamond',serif",fontStyle:'italic',
-            fontSize:32,color:'#e8f0f7',letterSpacing:'-0.02em',marginBottom:4}}>foliologic</div>
-          <div style={{fontSize:9,color:'#3d5060',letterSpacing:'0.18em'}}>EU INVESTOR PLATFORM</div>
+          <img src={FOLIOLOGIC_LOGO} width={56} height={56} alt="" style={{borderRadius:12,marginBottom:12}}/>
+          <div style={{fontFamily:"'Cormorant Garamond',serif",
+            fontSize:32,fontWeight:700,color:'#e0ddd6',letterSpacing:'-0.02em',marginBottom:4}}>foliologic</div>
+          <div style={{fontSize:9,color:'#3d5060',letterSpacing:'0.18em'}}>INTELLIGENT WEALTH NAVIGATION</div>
         </div>
         <div style={{background:'#0d1821',border:'1px solid #1e2d3d',borderRadius:12,padding:32}}>
           <div style={{fontSize:11,color:'#7a9ab5',letterSpacing:'0.1em',marginBottom:24}}>
@@ -9829,7 +9832,8 @@ export default function App() {
     <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',
       background:'var(--bg)',fontFamily:"'IBM Plex Mono',monospace",flexDirection:'column',gap:12}}>
       <style>{FONTS}{CSS}</style>
-      <div style={{fontFamily:"'Cormorant Garamond',serif",fontStyle:'italic',fontSize:28,color:'var(--text)'}}>foliologic</div>
+      <img src={FOLIOLOGIC_LOGO} width={48} height={48} alt="" style={{borderRadius:10}}/>
+      <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:28,fontWeight:700,color:'var(--text)'}}>foliologic</div>
       <div style={{fontSize:9,color:'var(--text3)',letterSpacing:'0.15em'}}>LOADING YOUR PORTFOLIO…</div>
     </div>
   );
@@ -9841,10 +9845,12 @@ export default function App() {
 
         {/* ── Sidebar ── */}
         <div className="sidebar" style={{width:220,flexShrink:0,background:"var(--surface)",borderRight:"1px solid var(--border)",display:"flex",flexDirection:"column",padding:"20px 12px"}}>
-          <div style={{padding:"4px 14px 24px"}}>
-            <div className="serif" style={{fontSize:20,letterSpacing:"-0.02em"}}>folio<span style={{color:"var(--green)"}}>.</span></div>
-            <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.12em",marginTop:2}}>EU INVESTOR PLATFORM</div>
-            <div className="mono" style={{fontSize:8,color:"var(--accent)",letterSpacing:"0.08em",marginTop:2,opacity:0.7}}>v122 · foliologic brand + ticker override + price sanity</div>
+          <div style={{padding:"4px 14px 24px",display:"flex",alignItems:"center",gap:12}}>
+            <img src={FOLIOLOGIC_LOGO} width={36} height={36} alt="foliologic" style={{borderRadius:8}}/>
+            <div>
+              <div className="serif" style={{fontSize:18,fontWeight:700,color:"var(--text)"}}>foliologic</div>
+              <div className="mono" style={{fontSize:8,color:"var(--accent)",letterSpacing:"0.08em",opacity:0.7}}>v122f</div>
+            </div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {NAV_ITEMS.map(item=>(
@@ -9856,16 +9862,10 @@ export default function App() {
           <div style={{flex:1}}/>
           <div style={{padding:"0 14px"}}>
             <div style={{borderTop:"1px solid var(--border)",paddingTop:14,marginBottom:12}}>
-              <div className="mono" style={{fontSize:9,color:"var(--text3)",letterSpacing:"0.1em",marginBottom:8}}>CONNECTED BROKERS</div>
-              {BROKERS_LIST.map(b=>(
-                <div key={b} style={{display:"flex",alignItems:"center",gap:6,marginBottom:5}}>
-                  <span className="ldot" style={{width:5,height:5}}/><span style={{fontSize:11,color:"var(--text2)"}}>{b}</span>
-                </div>
-              ))}
-            </div>
-            <div style={{background:"var(--green-dim)",border:"1px solid rgba(58,154,181,0.2)",borderRadius:6,padding:"8px 10px"}}>
-              <div className="mono" style={{fontSize:9,color:"var(--green)",letterSpacing:"0.1em"}}>PRO PLAN</div>
-              <div style={{fontSize:11,color:"var(--text2)",marginTop:2}}>All features unlocked</div>
+              <div style={{background:"var(--accent-dim)",border:"1px solid var(--accent-border)",borderRadius:6,padding:"8px 10px"}}>
+                <div className="mono" style={{fontSize:9,color:"var(--accent)",letterSpacing:"0.1em"}}>PRO PLAN</div>
+                <div style={{fontSize:11,color:"var(--text2)",marginTop:2}}>All features unlocked</div>
+              </div>
             </div>
           </div>
           {/* Sign out */}
