@@ -3494,8 +3494,8 @@ function calcCanonicalHealthScore(d) {
 
   const nmGood = isTech?0.15:isRetail?0.04:isEnergy?0.06:0.08;
   const nmOk   = isTech?0.06:isRetail?0.01:isEnergy?0.02:0.03;
-  const deGood = isFinance?8:isTech?0.5:1;
-  const deOk   = isFinance?15:isTech?1.5:2;
+  const deGood = isFinance?8:isEnergy||isRetail?1.5:1.0;
+  const deOk   = isFinance?15:isEnergy||isRetail?3.0:2.0;
 
   // Profitability
   const profitScores = [
@@ -3553,7 +3553,7 @@ function calcCanonicalHealthScore(d) {
   // Valuation
   const peFair=isTech?30:isHealth2?22:isFinance?15:20;
   const peOk  =isTech?45:isHealth2?35:isFinance?20:30;
-  const pe=d.peRatio, ev=d.evEbitda, peg=d.pegRatio;
+  const pe=d.peRatio, ev=d.evEbitda ?? last.evEbitda, peg=d.pegRatio;
   const valScores=[
     pe !=null?(pe <=peFair?2:pe <=peOk?1:0):null,
     ev !=null?(ev <=10   ?2:ev <=18  ?1:0):null,
